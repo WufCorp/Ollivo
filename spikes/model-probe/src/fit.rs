@@ -192,13 +192,14 @@ fn speed(gpu_bytes: u64, cpu_bytes: u64, hw: &Hardware) -> Option<f64> {
 
 fn diffusion(m: &ModelInfo, hw: &Hardware) -> Verdict {
     let f = m.family.as_str();
-    // Память на вычисления при типичном разрешении (эмпирически, уточнить в фазе 0).
+    // Память на вычисления при типичном разрешении. Замер на GTX 1080 (фаза 0):
+    // SD 1.5 512² — пик 3,1 ГБ при весах 1,6 ГБ; SDXL 1024² — пик 6,5 ГБ при весах 4,8 ГБ.
     let activ = if f.starts_with("SD 1") || f.starts_with("SD 2") {
         GIB + GIB / 2
     } else if m.kind == Kind::Video {
         5 * GIB
     } else if f.starts_with("SDXL") {
-        3 * GIB
+        GIB * 7 / 4
     } else {
         GIB * 5 / 2
     };
@@ -221,6 +222,9 @@ fn diffusion(m: &ModelInfo, hw: &Hardware) -> Verdict {
     let need = model + activ;
     let mut v = if hw.gpu.is_some() && need <= budget {
         verdict(Light::Green, "поместится в видеокарту")
+    } else if hw.gpu.is_some() && need <= budget + GIB {
+        // ComfyUI (DynamicVRAM) сам подгружает недостающие веса по ходу — скорость почти не страдает.
+        verdict(Light::Green, "поместится впритык")
     } else if model + hw.vram_total.min(activ) <= hw.ram_avail + budget {
         verdict(Light::Yellow, "поместится частично — генерация будет заметно медленнее")
     } else {

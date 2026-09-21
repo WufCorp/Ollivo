@@ -12,7 +12,7 @@ wf = {
   "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": "blurry, low quality"}},
   "4": {"class_type": "EmptyLatentImage", "inputs": {"width": size, "height": size, "batch_size": 1}},
   "5": {"class_type": "KSampler", "inputs": {"model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0],
-        "latent_image": ["4", 0], "seed": 42, "steps": 20, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+        "latent_image": ["4", 0], "seed": int(time.time()), "steps": 20, "cfg": 7.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
   "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
   "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0], "filename_prefix": "probe"}},
 }
@@ -22,7 +22,8 @@ stop = False
 def watch_vram():
     while not stop:
         out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], capture_output=True, text=True).stdout
-        peak[0] = max(peak[0], int(out.strip() or 0))
+        if out.strip().isdigit():  # под нагрузкой nvidia-smi иногда не отвечает
+            peak[0] = max(peak[0], int(out.strip()))
         time.sleep(0.25)
 
 base = int(subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"], capture_output=True, text=True).stdout)
