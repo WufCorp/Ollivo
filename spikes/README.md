@@ -14,3 +14,11 @@ cargo run --release -- [--json] [--vram ГБ] [--ram ГБ] <файлы...>
 ## llama-server
 `llama-server/chat.py <порт> [вопрос]` — потоковый запрос к `llama-server` (OpenAI API), замер времени до первого токена и скорости.
 Сборки llama.cpp и модели лежат вне репозитория, в `D:\gui_Ai_lab`. Результаты — в Obsidian, заметка «Фаза 0».
+
+## comfyui
+`comfyui/txt2img.py [чекпойнт] [размер] [описание]` — картинка через API ComfyUI (без веб-интерфейса):
+отправляет workflow в `/prompt`, ждёт `/history`, замеряет время и пик видеопамяти через nvidia-smi.
+ComfyUI запускается так (окружение — в `D:\gui_Ai_lab`):
+```
+python main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --extra-model-paths-config extra_model_paths.yaml --output-directory <папка>
+```
