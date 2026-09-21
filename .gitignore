@@ -1,0 +1,6 @@
+target/
+node_modules/
+*.gguf
+*.safetensors
+*.bin
+.env
