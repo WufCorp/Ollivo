@@ -381,6 +381,37 @@ export interface ChatDone {
   error: string | null;
 }
 
+// --- История разговоров ---
+
+/** Строка в списке разговоров: без самих реплик. */
+export interface ChatSummary {
+  id: string;
+  title: string;
+  /** Unix-секунды. */
+  updated: number;
+  /** Сколько реплик. */
+  messages: number;
+}
+
+export interface Chat {
+  id: string;
+  title: string;
+  created: number;
+  updated: number;
+  /** Модель, на которой шёл разговор. */
+  model: string | null;
+  messages: Msg[];
+}
+
+export const chatsList = () => invoke<ChatSummary[]>("chats_list");
+
+export const chatsGet = (id: string) => invoke<Chat | null>("chats_get", { id });
+
+/** Без `id` заводит новый разговор и возвращает его с номером и названием. */
+export const chatsSave = (chat: Chat) => invoke<Chat>("chats_save", { chat });
+
+export const chatsRemove = (id: string) => invoke<void>("chats_remove", { id });
+
 /** Просит ответ на весь разговор: текст придёт кусками в `onLlmToken`. */
 export const llmChat = (messages: Msg[]) => invoke<void>("llm_chat", { messages });
 

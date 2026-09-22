@@ -1,3 +1,4 @@
+mod chats;
 mod download;
 mod engines;
 mod gguf;
@@ -34,6 +35,8 @@ struct Core {
     supervisor: process::Supervisor,
     /// Найденное обновление программы ждёт согласия пользователя.
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
+    /// Разговоры: по файлу на разговор.
+    chats: chats::Store,
     /// Модели, которые человек добавил: пути и разобранные заголовки.
     library: library::Library,
     /// Запущенная текстовая модель (одна за раз).
@@ -574,6 +577,29 @@ async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
     Ok(())
 }
 
+/// Список разговоров, новые сверху.
+#[tauri::command]
+fn chats_list(core: CoreState<'_>) -> Vec<chats::Summary> {
+    core.chats.list()
+}
+
+/// Разговор целиком; `None` — такого нет.
+#[tauri::command]
+fn chats_get(core: CoreState<'_>, id: String) -> Option<chats::Chat> {
+    core.chats.get(&id)
+}
+
+/// Сохраняет разговор. Без `id` — заводит новый и возвращает с номером и названием.
+#[tauri::command]
+fn chats_save(core: CoreState<'_>, chat: chats::Chat) -> Result<chats::Chat, String> {
+    core.chats.save(chat)
+}
+
+#[tauri::command]
+fn chats_remove(core: CoreState<'_>, id: String) -> Result<(), String> {
+    core.chats.remove(&id)
+}
+
 /// Чем закончился ответ: числа или ошибка.
 #[derive(serde::Serialize, Clone)]
 struct ChatDone {
@@ -685,6 +711,7 @@ pub fn run() {
                 settings,
                 manifest: manifest::Manifest::bundled(),
                 library: library::Library::open(config_dir.join("models.json")),
+                chats: chats::Store::new(config_dir.join("chats")),
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
@@ -717,6 +744,10 @@ pub fn run() {
             llm_status,
             llm_start,
             llm_stop,
+            chats_list,
+            chats_get,
+            chats_save,
+            chats_remove,
             llm_chat,
             llm_chat_stop,
             update_check,
