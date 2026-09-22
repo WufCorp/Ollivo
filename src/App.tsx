@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { settingsGet } from "./api";
+import { settingsGet, updateCheck, type UpdateAvailable } from "./api";
 import Computer from "./pages/Computer";
 import Settings from "./pages/Settings";
 import Wizard from "./pages/Wizard";
@@ -11,9 +11,17 @@ type Tab = keyof typeof TABS;
 export default function App() {
   const [setupDone, setSetupDone] = useState<boolean | null>(null);
   const [tab, setTab] = useState<Tab>("computer");
+  const [update, setUpdate] = useState<UpdateAvailable | null>(null);
 
   useEffect(() => {
-    settingsGet().then((v) => setSetupDone(v.settings.setup_done));
+    settingsGet().then((v) => {
+      setSetupDone(v.settings.setup_done);
+      // Тихая проверка при запуске, если разрешена. Ошибку не показываем:
+      // человек не просил проверять, а интернета может и не быть.
+      if (v.settings.setup_done && v.settings.updates.auto_check) {
+        updateCheck().then(setUpdate, () => {});
+      }
+    });
   }, []);
 
   if (setupDone === null) return null;
@@ -32,6 +40,24 @@ export default function App() {
           </nav>
         )}
       </header>
+      {update && setupDone && (
+        <div className="update-bar">
+          <span>
+            Есть версия {update.version}. Обновление займёт минуту.
+          </span>
+          <button
+            onClick={() => {
+              setTab("settings");
+              setUpdate(null);
+            }}
+          >
+            Посмотреть
+          </button>
+          <button className="link" onClick={() => setUpdate(null)}>
+            Позже
+          </button>
+        </div>
+      )}
       {!setupDone ? (
         <Wizard onDone={() => setSetupDone(true)} />
       ) : tab === "computer" ? (

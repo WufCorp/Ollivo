@@ -25,11 +25,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Russian", "English"]
+        "languages": [
+          "Russian",
+          "English"
+        ]
       }
     },
     "icon": [
@@ -38,6 +43,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "publisher": "Ollivo"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://s3.twcstorage.ru/prisma-prava/ollivo/updates/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE0MTU3QjlFMTU2Qzk0RTUKUldUbGxHd1ZubnNWRk8yakxFSEFLZWtRQXp1Y3JkczFrMWxRZ0t5YlFxVUt0b01UdXUxRlFvM0EK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { settingsGet, settingsSave, type Settings as SettingsData } from "../api";
 import HfForm from "../components/HfForm";
 import ProxyForm from "../components/ProxyForm";
+import UpdateCard from "../components/UpdateCard";
 
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -74,6 +75,9 @@ export default function Settings() {
           hasToken={hasToken}
         />
       </div>
+
+      <h2>Обновления Ollivo</h2>
+      <UpdateCard settings={settings.updates} onChange={(updates) => update({ updates })} />
 
       <div className="actions save">
         <button onClick={save}>Сохранить</button>
