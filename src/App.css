@@ -542,6 +542,129 @@ button.link {
   background: rgba(128, 128, 128, 0.09);
 }
 
+/* Разметка в ответе модели: заголовки, списки, таблицы, код. */
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md blockquote {
+  margin: 8px 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 14px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.md ul,
+.md ol {
+  padding-left: 22px;
+}
+
+.md li + li {
+  margin-top: 2px;
+}
+
+.md a {
+  color: #4a5bdc;
+}
+
+@media (prefers-color-scheme: dark) {
+  .md a {
+    color: #93a1ff;
+  }
+}
+
+.md blockquote {
+  border-left: 3px solid rgba(128, 128, 128, 0.35);
+  padding-left: 10px;
+  opacity: 0.85;
+}
+
+.md code {
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  background: rgba(128, 128, 128, 0.16);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.md table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.md th,
+.md td {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+/* Код блоком: шапка с языком и «Копировать», длинные строки прокручиваются. */
+.code {
+  margin: 10px 0;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.code-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.code-top button.copy {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.code pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.code pre code {
+  padding: 0;
+  background: none;
+}
+
+/* Под последним ответом: «Копировать» и «Ответить заново». */
+.after {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
 .ask textarea {
   width: 100%;
   box-sizing: border-box;
