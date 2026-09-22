@@ -446,3 +446,48 @@ button.link {
 .model-title .light {
   font-size: 18px;
 }
+
+/* --- Чат --- */
+
+.talk {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+
+.line {
+  padding: 12px 14px;
+  border-radius: 12px;
+  max-width: 85%;
+}
+
+.line.you {
+  align-self: flex-end;
+  background: rgba(99, 102, 241, 0.14);
+}
+
+.line.bot {
+  align-self: flex-start;
+  background: rgba(128, 128, 128, 0.09);
+}
+
+.ask textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.ask .actions {
+  margin-top: 10px;
+}
+
+.grow-right {
+  margin-left: auto;
+}
