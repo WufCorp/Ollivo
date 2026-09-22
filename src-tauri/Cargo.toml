@@ -1,6 +1,6 @@
 [package]
 name = "ollivo"
-version = "0.0.1"
+version = "0.0.2"
 description = "Ollivo — локальные ИИ-модели в одном окне"
 authors = ["WufCorp"]
 edition = "2021"
