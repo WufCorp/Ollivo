@@ -33,7 +33,7 @@ function summary(m: Model): string {
     .join(" · ");
 }
 
-export default function Models() {
+export default function Models({ onGoToChat }: { onGoToChat: () => void }) {
   const [models, setModels] = useState<Model[] | null>(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -155,7 +155,7 @@ export default function Models() {
         </div>
       )}
 
-      <RunningModel />
+      <RunningModel onGoToChat={onGoToChat} />
 
       {models?.length === 0 && <p className="muted">Пока ни одной модели.</p>}
 

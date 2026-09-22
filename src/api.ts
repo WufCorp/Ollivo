@@ -362,19 +362,41 @@ export interface LlmState {
   error: string | null;
 }
 
-export interface LlmAnswer {
-  text: string;
+/** Реплика разговора. Роли как у OpenAI. */
+export interface Msg {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** Числа по ответу: сколько токенов и как быстро. */
+export interface LlmStats {
   tokens: number;
-  /** Токенов в секунду. */
   speed: number;
   prompt_ms: number;
 }
+
+/** Итог ответа: числа или ошибка. */
+export interface ChatDone {
+  stats: LlmStats | null;
+  error: string | null;
+}
+
+/** Просит ответ на весь разговор: текст придёт кусками в `onLlmToken`. */
+export const llmChat = (messages: Msg[]) => invoke<void>("llm_chat", { messages });
+
+/** «Остановить»: обрывает ответ, написанное остаётся. */
+export const llmChatStop = () => invoke<void>("llm_chat_stop");
+
+export const onLlmToken = (cb: (text: string) => void): Promise<UnlistenFn> =>
+  listen<string>("llm://token", (e) => cb(e.payload));
+
+export const onLlmAnswer = (cb: (d: ChatDone) => void): Promise<UnlistenFn> =>
+  listen<ChatDone>("llm://answer", (e) => cb(e.payload));
 
 export const llmStatus = () => invoke<LlmState>("llm_status");
 export const llmStart = (model: string, ctx?: number) =>
   invoke<void>("llm_start", { config: ctx ? { model, ctx } : { model } });
 export const llmStop = () => invoke<void>("llm_stop");
-export const llmAsk = (prompt: string) => invoke<LlmAnswer>("llm_ask", { prompt });
 
 export const onLlmState = (cb: (s: LlmState) => void): Promise<UnlistenFn> =>
   listen<LlmState>("llm://state", (e) => cb(e.payload));

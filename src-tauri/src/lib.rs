@@ -38,6 +38,8 @@ struct Core {
     library: library::Library,
     /// Запущенная текстовая модель (одна за раз).
     llm: tokio::sync::Mutex<Option<llm::Llm>>,
+    /// Отмена текущего ответа в чате («Остановить»).
+    chat: Mutex<CancellationToken>,
     /// Отмена текущей загрузки модели: `llm_start` держит `llm` всё время загрузки,
     /// поэтому остановка и новый запуск сначала отменяют её через этот токен.
     llm_loading: Mutex<CancellationToken>,
@@ -564,6 +566,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> 
 #[tauri::command]
 async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
     core.llm_loading.lock().unwrap().cancel();
+    core.chat.lock().unwrap().cancel();
     if let Some(l) = core.llm.lock().await.take() {
         l.handle.stop().await;
     }
@@ -571,13 +574,43 @@ async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
     Ok(())
 }
 
+/// Чем закончился ответ: числа или ошибка.
+#[derive(serde::Serialize, Clone)]
+struct ChatDone {
+    stats: Option<llm::Stats>,
+    error: Option<String>,
+}
+
+/// Ответ на весь разговор. Текст идёт кусками в `llm://token`, итог — `llm://answer`.
+/// Разговор целиком присылает окно: движок ничего не помнит между запросами.
 #[tauri::command]
-async fn llm_ask(core: CoreState<'_>, prompt: String) -> Result<llm::Answer, String> {
+async fn llm_chat(app: AppHandle, core: CoreState<'_>, messages: Vec<llm::Msg>) -> Result<(), String> {
     let port = match core.llm.try_lock() {
         Ok(slot) => slot.as_ref().map(|l| l.port).ok_or("модель не запущена")?,
         Err(_) => return Err("модель ещё загружается".into()),
     };
-    llm::ask(port, &prompt, 256).await
+    let cancel = CancellationToken::new();
+    // Новый вопрос обрывает недоговорённый ответ.
+    std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
+    let done = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let res = llm::chat(port, &messages, &cancel, |text| {
+            let _ = app.emit("llm://token", text);
+        })
+        .await;
+        let payload = match res {
+            Ok(stats) => ChatDone { stats: Some(stats), error: None },
+            Err(e) => ChatDone { stats: None, error: Some(e) },
+        };
+        let _ = done.emit("llm://answer", payload);
+    });
+    Ok(())
+}
+
+/// «Остановить»: обрывает ответ, написанное остаётся.
+#[tauri::command]
+fn llm_chat_stop(core: CoreState<'_>) {
+    core.chat.lock().unwrap().cancel();
 }
 
 /// Прокси из настроек — чтобы обновления ходили тем же путём, что и загрузки.
@@ -658,6 +691,7 @@ pub fn run() {
                 update: tokio::sync::Mutex::new(None),
                 llm: tokio::sync::Mutex::new(None),
                 llm_loading: Mutex::new(CancellationToken::new()),
+                chat: Mutex::new(CancellationToken::new()),
             }));
             Ok(())
         })
@@ -683,7 +717,8 @@ pub fn run() {
             llm_status,
             llm_start,
             llm_stop,
-            llm_ask,
+            llm_chat,
+            llm_chat_stop,
             update_check,
             update_install,
         ])
