@@ -359,6 +359,9 @@ export interface LlmState {
   port: number | null;
   /** Секунд от запуска до готовности. */
   started_in: number | null;
+  /** С чем запустили: память разговора в токенах и слоёв на видеокарте. */
+  ctx: number | null;
+  gpu_layers: number | null;
   error: string | null;
 }
 
@@ -425,8 +428,9 @@ export const onLlmAnswer = (cb: (d: ChatDone) => void): Promise<UnlistenFn> =>
   listen<ChatDone>("llm://answer", (e) => cb(e.payload));
 
 export const llmStatus = () => invoke<LlmState>("llm_status");
-export const llmStart = (model: string, ctx?: number) =>
-  invoke<void>("llm_start", { config: ctx ? { model, ctx } : { model } });
+/** Слои и контекст ядро подбирает само; числа передаются только из режима «Профи». */
+export const llmStart = (model: string, manual?: { ctx?: number; gpu_layers?: number }) =>
+  invoke<void>("llm_start", { config: { model, ...manual } });
 export const llmStop = () => invoke<void>("llm_stop");
 
 export const onLlmState = (cb: (s: LlmState) => void): Promise<UnlistenFn> =>

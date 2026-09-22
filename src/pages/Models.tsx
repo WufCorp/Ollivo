@@ -192,7 +192,7 @@ export default function Models({ onGoToChat }: { onGoToChat: () => void }) {
 
             <div className="actions">
               {m.info.kind === "llm" && m.info.engine === "llama_cpp" && !m.missing && (
-                <button onClick={() => llmStart(m.path, m.verdict?.ctx ?? undefined)} disabled={busyNow || isRunning}>
+                <button onClick={() => llmStart(m.path)} disabled={busyNow || isRunning}>
                   {isRunning ? "Запущена" : "Запустить"}
                 </button>
               )}
