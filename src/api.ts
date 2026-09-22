@@ -204,6 +204,8 @@ export interface EngineRepair extends InstalledEngine {
 export interface EngineFinished {
   id: string;
   error: string | null;
+  /** `net` | `disk` | `broken` | `other`. */
+  kind: string | null;
   /** После «Починить» — `EngineRepair`. */
   result: (InstalledEngine & Partial<Omit<EngineRepair, keyof InstalledEngine>>) | null;
 }
