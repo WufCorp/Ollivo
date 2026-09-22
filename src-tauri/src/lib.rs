@@ -406,12 +406,36 @@ struct LlmState {
     model: Option<PathBuf>,
     port: Option<u16>,
     started_in: Option<f64>,
+    /// С чем запустили: память разговора в токенах и слоёв на видеокарте.
+    ctx: Option<u32>,
+    gpu_layers: Option<u32>,
     error: Option<String>,
 }
 
 impl LlmState {
     fn of(state: &'static str) -> Self {
-        Self { state, model: None, port: None, started_in: None, error: None }
+        Self {
+            state,
+            model: None,
+            port: None,
+            started_in: None,
+            ctx: None,
+            gpu_layers: None,
+            error: None,
+        }
+    }
+
+    /// Состояние запущенной модели.
+    fn ready(l: &llm::Llm) -> Self {
+        Self {
+            state: "ready",
+            model: Some(l.model.clone()),
+            port: Some(l.port),
+            started_in: Some(l.started_in.as_secs_f64()),
+            ctx: Some(l.ctx),
+            gpu_layers: Some(l.gpu_layers),
+            error: None,
+        }
     }
 }
 
@@ -495,20 +519,47 @@ async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
     // Занято — значит, идёт загрузка (llm_start держит слот до конца), ждать её не будем.
     let Ok(slot) = core.llm.try_lock() else { return Ok(LlmState::of("starting")) };
     Ok(match slot.as_ref() {
-        Some(l) => LlmState {
-            state: "ready",
-            model: Some(l.model.clone()),
-            port: Some(l.port),
-            started_in: Some(l.started_in.as_secs_f64()),
-            error: None,
-        },
+        Some(l) => LlmState::ready(l),
         None => LlmState::of("stopped"),
     })
 }
 
+/// Что прислало окно: путь к модели. Числа подбирает ядро; они приходят только
+/// из режима «Профи», когда человек выставил их сам.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct StartRequest {
+    model: PathBuf,
+    #[serde(default)]
+    ctx: Option<u32>,
+    #[serde(default)]
+    gpu_layers: Option<u32>,
+}
+
+/// Подбирает настройки запуска под то, что сейчас свободно: сколько слоёв уйдёт
+/// на видеокарту и сколько токенов поместится в память разговора. Считается перед
+/// самым запуском, когда прошлая модель уже выгружена, — иначе видеопамять
+/// выглядит занятой и слоёв выйдет меньше, чем можно.
+fn plan(core: &Core, req: &StartRequest) -> llm::Config {
+    // Модели нет в библиотеке (запустили мимо списка) — пусть llama.cpp
+    // подбирает слои сам, у него это тоже умеет (fit).
+    let mut cfg = llm::Config { model: req.model.clone(), ctx: 4096, gpu_layers: 999 };
+    if let Some(entry) = core.library.find(&req.model) {
+        let v = probe::assess(&entry.info, &hardware::detect());
+        if let Some(ctx) = v.ctx {
+            cfg.ctx = ctx as u32;
+        }
+        if let Some(layers) = v.gpu_layers {
+            cfg.gpu_layers = layers as u32;
+        }
+    }
+    cfg.ctx = req.ctx.unwrap_or(cfg.ctx);
+    cfg.gpu_layers = req.gpu_layers.unwrap_or(cfg.gpu_layers);
+    cfg
+}
+
 /// Запускает модель; уже запущенная останавливается. Итог — событием `llm://state`.
 #[tauri::command]
-async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> Result<(), String> {
+async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) -> Result<(), String> {
     let root = core.data_dir();
     let engine = engines::installed(&root, "llama.cpp")
         .into_iter()
@@ -526,18 +577,20 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> 
             old.handle.stop().await;
         }
         emit_llm(&app, LlmState { model: Some(config.model.clone()), ..LlmState::of("starting") });
-        match llm::start(&core.supervisor, &engine, &config, &root.join("logs"), &cancel).await {
+        // Разбор заголовка и NVML блокируют поток — считаем настройки в стороне.
+        let cfg = {
+            let (core, config) = (core.clone(), config.clone());
+            match tauri::async_runtime::spawn_blocking(move || plan(&core, &config)).await {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    emit_llm(&app, LlmState { error: Some(e.to_string()), ..LlmState::of("crashed") });
+                    return;
+                }
+            }
+        };
+        match llm::start(&core.supervisor, &engine, &cfg, &root.join("logs"), &cancel).await {
             Ok(l) => {
-                emit_llm(
-                    &app,
-                    LlmState {
-                        state: "ready",
-                        model: Some(l.model.clone()),
-                        port: Some(l.port),
-                        started_in: Some(l.started_in.as_secs_f64()),
-                        error: None,
-                    },
-                );
+                emit_llm(&app, LlmState::ready(&l));
                 // Сторож: движок упал сам — сообщаем с хвостом лога.
                 let (handle, app2, core2) = (l.handle.clone(), app.clone(), core.clone());
                 *slot = Some(l);

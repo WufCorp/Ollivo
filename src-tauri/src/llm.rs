@@ -15,22 +15,24 @@ use tokio_util::sync::CancellationToken;
 /// Большая модель с медленного диска грузится долго (SDXL в фазе 0 — до 150 с).
 const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug, Clone, serde::Deserialize)]
+/// Настройки запуска. Подбираются заранее под свободную видеопамять
+/// (`plan` в `lib.rs`), здесь уже готовые числа.
+#[derive(Debug, Clone)]
 pub struct Config {
     pub model: PathBuf,
-    /// Контекст в токенах. Простой режим — 8192 (решение фазы 0).
-    #[serde(default = "default_ctx")]
+    /// Память разговора в токенах: сколько модель помнит.
     pub ctx: u32,
-}
-
-fn default_ctx() -> u32 {
-    8192
+    /// Сколько слоёв считает видеокарта; 0 — всё на процессоре.
+    pub gpu_layers: u32,
 }
 
 pub struct Llm {
     pub handle: Handle,
     pub port: u16,
     pub model: PathBuf,
+    /// С чем запустили: окно показывает это в карточке модели.
+    pub ctx: u32,
+    pub gpu_layers: u32,
     pub started_in: Duration,
 }
 
@@ -56,8 +58,8 @@ fn args(cfg: &Config, port: u16) -> Vec<String> {
         cfg.ctx.to_string(),
         "--no-webui".into(),
     ];
-    // Все слои на видеокарту; если не влезет, llama.cpp подберёт сам (fit).
-    a.extend(["-ngl".into(), "999".into()]);
+    // Сколько слоёв уйдёт на видеокарту, посчитано заранее по свободной памяти.
+    a.extend(["-ngl".into(), cfg.gpu_layers.to_string()]);
     a
 }
 
@@ -101,7 +103,14 @@ pub async fn start(
             return Err(CANCELLED.to_string());
         }
     }
-    Ok(Llm { handle, port, model: cfg.model.clone(), started_in: started.elapsed() })
+    Ok(Llm {
+        handle,
+        port,
+        model: cfg.model.clone(),
+        ctx: cfg.ctx,
+        gpu_layers: cfg.gpu_layers,
+        started_in: started.elapsed(),
+    })
 }
 
 /// Реплика разговора. Роли как у OpenAI: `system`, `user`, `assistant`.
@@ -233,11 +242,13 @@ mod tests {
 
     #[test]
     fn args_bind_localhost_without_webui() {
-        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192 };
+        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192, gpu_layers: 21 };
         let a = args(&cfg, 5000).join(" ");
         assert!(a.contains("--host 127.0.0.1 --port 5000"));
         assert!(a.contains("--no-webui"));
         assert!(a.contains(r"-m D:\Ollivo\models\m.gguf"));
+        // Подобранные настройки доходят до движка.
+        assert!(a.contains("-c 8192") && a.contains("-ngl 21"), "{a}");
     }
 
     /// Настоящий llama-server из D:\Ollivo с моделью 0.5B: запуск, вопрос, остановка.
@@ -247,7 +258,7 @@ mod tests {
     async fn real_start_ask_stop() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-llm-test"), &CancellationToken::new())
             .await
@@ -267,7 +278,7 @@ mod tests {
     async fn real_chat_stream() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-chat-test"), &CancellationToken::new())
             .await
@@ -310,7 +321,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from("llama-server.exe"),
         };
-        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096 };
+        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999 };
         let err = start(&Supervisor::new(), &engine, &cfg, &std::env::temp_dir(), &CancellationToken::new())
             .await
             .err()
@@ -333,7 +344,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from(r"C:\Windows\System32\PING.EXE"),
         };
-        let cfg = Config { model, ctx: 4096 };
+        let cfg = Config { model, ctx: 4096, gpu_layers: 999 };
         let sup = Supervisor::new();
         let cancel = CancellationToken::new();
         let c = cancel.clone();
