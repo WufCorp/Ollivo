@@ -208,7 +208,36 @@ struct Finished<T: Clone> {
     id: String,
     /// `None` — успешно; `Some("paused")` — поставлено на паузу.
     error: Option<String>,
+    /// Вид ошибки для интерфейса: `net` | `disk` | `broken` | `other`.
+    kind: Option<&'static str>,
     result: Option<T>,
+}
+
+/// Вид ошибки загрузки: интерфейс решает по нему, что сказать и что предложить.
+fn download_kind(e: &download::Error) -> &'static str {
+    match e {
+        download::Error::Net(_) => "net",
+        download::Error::Status(s) if *s >= 500 || *s == 429 => "net",
+        download::Error::Io(_) => "disk",
+        download::Error::Hash { .. } => "broken",
+        _ => "other",
+    }
+}
+
+/// Итог установки или починки движка для события `engine://finished`.
+fn engine_outcome<T>(res: Result<T, engines::Error>) -> (Option<String>, Option<&'static str>, Option<T>) {
+    match res {
+        Ok(done) => (None, None, Some(done)),
+        Err(engines::Error::Download(download::Error::Cancelled)) => (Some("paused".into()), None, None),
+        Err(e) => {
+            let kind = match &e {
+                engines::Error::Download(d) => download_kind(d),
+                engines::Error::Io(_) => "disk",
+                engines::Error::Unpack(..) | engines::Error::NoExe(_) => "broken",
+            };
+            (Some(e.to_string()), Some(kind), None)
+        }
+    }
 }
 
 /// Запускает загрузку в фоне. Прогресс — событие `download://progress`,
@@ -230,12 +259,12 @@ fn download_start(
         };
         let res = core.downloader().download(&request, &cancel, &on_progress).await;
         core.finish(&id);
-        let error = match res {
-            Ok(()) => None,
-            Err(download::Error::Cancelled) => Some("paused".into()),
-            Err(e) => Some(e.to_string()),
+        let (error, kind) = match res {
+            Ok(()) => (None, None),
+            Err(download::Error::Cancelled) => (Some("paused".into()), None),
+            Err(e) => (Some(e.to_string()), Some(download_kind(&e))),
         };
-        let _ = app.emit("download://finished", Finished::<()> { id, error, result: None });
+        let _ = app.emit("download://finished", Finished::<()> { id, error, kind, result: None });
     });
     Ok(())
 }
@@ -307,12 +336,8 @@ async fn engine_install(
         let root = core.data_dir();
         let res = engines::install(&core.downloader(), &root, &engine, &chosen, &cancel, &on_progress).await;
         core.finish(&task);
-        let (error, result) = match res {
-            Ok(done) => (None, Some(done)),
-            Err(engines::Error::Download(download::Error::Cancelled)) => (Some("paused".into()), None),
-            Err(e) => (Some(e.to_string()), None),
-        };
-        let _ = app.emit("engine://finished", Finished { id, error, result });
+        let (error, kind, result) = engine_outcome(res);
+        let _ = app.emit("engine://finished", Finished { id, error, kind, result });
     });
     Ok(())
 }
@@ -353,12 +378,8 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
         };
         let res = engines::repair(&core.downloader(), &root, &engine, &chosen, &cancel, &on_progress).await;
         core.finish(&task);
-        let (error, result) = match res {
-            Ok(done) => (None, Some(done)),
-            Err(engines::Error::Download(download::Error::Cancelled)) => (Some("paused".into()), None),
-            Err(e) => (Some(e.to_string()), None),
-        };
-        let _ = app.emit("engine://finished", Finished { id, error, result });
+        let (error, kind, result) = engine_outcome(res);
+        let _ = app.emit("engine://finished", Finished { id, error, kind, result });
     });
     Ok(())
 }

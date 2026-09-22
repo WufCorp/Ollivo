@@ -21,7 +21,10 @@ export function useEngine(id: string) {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [progress, setProgress] = useState<EngineProgress | null>(null);
   const [paused, setPaused] = useState(false);
+  /** Последний прогресс: на паузе показываем, сколько уже скачано. */
+  const [last, setLast] = useState<EngineProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<string | null>(null);
   /** Итог последней «Починить» — для сообщения пользователю. */
   const [repaired, setRepaired] = useState<string | null>(null);
 
@@ -30,12 +33,17 @@ export function useEngine(id: string) {
   useEffect(() => {
     refresh();
     const subs = [
-      onEngineProgress((p) => p.id === id && setProgress(p)),
+      onEngineProgress((p) => {
+        if (p.id !== id) return;
+        setProgress(p);
+        setLast(p);
+      }),
       onEngineFinished((f) => {
         if (f.id !== id) return;
         setProgress(null);
         setPaused(f.error === "paused");
         setError(f.error && f.error !== "paused" ? f.error : null);
+        setErrorKind(f.kind);
         const r = f.result;
         if (r?.reinstalled !== undefined) {
           setRepaired(
@@ -52,6 +60,7 @@ export function useEngine(id: string) {
 
   const install = () => {
     setError(null);
+    setErrorKind(null);
     setPaused(false);
     setProgress({ id, stage: "download", done: 0, total: status?.size ?? 0, speed: 0 });
     engineInstall(id).catch((e) => {
@@ -75,7 +84,7 @@ export function useEngine(id: string) {
 
   const installed = status?.installed.find((i) => i.version === status.version) ?? null;
 
-  return { status, installed, progress, paused, error, repaired, install, repair, pause };
+  return { status, installed, progress, last, paused, error, errorKind, repaired, install, repair, pause };
 }
 
 const plural = (n: number) => {

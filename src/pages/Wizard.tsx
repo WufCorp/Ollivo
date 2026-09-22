@@ -13,7 +13,9 @@ import {
   type Settings,
   type SetupInfo,
 } from "../api";
-import EngineCard from "../components/EngineCard";
+import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
+import InstallScreen, { type InstallError } from "../components/InstallScreen";
+import { useEngine } from "../useEngine";
 import ProxyForm, { CheckList } from "../components/ProxyForm";
 
 const STEPS = ["Проверка", "Папка", "Сеть", "Движок"] as const;
@@ -251,15 +253,84 @@ function NetStep({ next }: { next: () => void }) {
   );
 }
 
+/** Через сколько секунд сами повторяем загрузку, если пропал интернет. */
+const NET_RETRY = 15;
+
 function EngineStep({ next }: { next: () => void }) {
-  const [ready, setReady] = useState(false);
+  const { status, installed, progress, last, paused, error, errorKind, install, pause } = useEngine("llama.cpp");
+  const [started, setStarted] = useState(false);
+  const [retryIn, setRetryIn] = useState<number | null>(null);
+
+  const start = () => {
+    setStarted(true);
+    setRetryIn(null);
+    install();
+  };
+
+  // Пропал интернет — повторяем сами (загрузка продолжится с того же места).
+  useEffect(() => {
+    if (errorKind !== "net" || !error) return setRetryIn(null);
+    setRetryIn(NET_RETRY);
+    const t = setInterval(() => setRetryIn((s) => (s == null ? s : s - 1)), 1000);
+    const online = () => setRetryIn(0);
+    window.addEventListener("online", online);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("online", online);
+    };
+  }, [error, errorKind]);
+  useEffect(() => {
+    if (retryIn !== null && retryIn <= 0) start();
+  }, [retryIn]);
+
+  // Прогресс на кнопке в панели задач Windows — видно, даже если окно свёрнуто.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const total = progress?.total ?? 0;
+    const bar = installed
+      ? { status: ProgressBarStatus.None }
+      : error
+        ? { status: ProgressBarStatus.Error, progress: 100 }
+        : paused
+          ? { status: ProgressBarStatus.Paused, progress: total ? Math.round((progress!.done / total) * 100) : 0 }
+          : progress && total && progress.stage === "download"
+            ? { status: ProgressBarStatus.Normal, progress: Math.round((progress.done / total) * 100) }
+            : progress
+              ? { status: ProgressBarStatus.Indeterminate }
+              : { status: ProgressBarStatus.None };
+    win.setProgressBar(bar).catch(() => {});
+  }, [progress, paused, error, installed]);
+
+  if (!status) return <p className="muted">Смотрю, что уже установлено…</p>;
+
+  const err: InstallError | null = error ? { text: error, kind: errorKind, retryIn } : null;
+
   return (
     <>
       <h2>Движок чата</h2>
       <p className="muted">Программа, которая запускает текстовые модели. Скачается один раз.</p>
-      <EngineCard id="llama.cpp" onInstalled={() => setReady(true)} />
+      <InstallScreen
+        items={[
+          {
+            id: "llama.cpp",
+            title: "Движок чата",
+            why: "запускает текстовые модели на вашей видеокарте",
+            technical: `llama.cpp ${status.version}${status.build ? `, сборка ${status.build}` : ""}`,
+            size: status.size,
+            state: installed ? "done" : error ? "error" : progress ? "active" : "waiting",
+            // На паузе и после ошибки — последний прогресс: сколько уже скачано.
+            progress: progress ?? last,
+          },
+        ]}
+        started={started || !!progress}
+        paused={paused}
+        error={err}
+        onStart={start}
+        onPause={pause}
+      />
+      {!status.build && <p className="error">Для этого компьютера нет подходящей сборки: нужна видеокарта NVIDIA или Vulkan.</p>}
       <div className="actions">
-        <button onClick={next} disabled={!ready}>
+        <button onClick={next} disabled={!installed}>
           Дальше
         </button>
       </div>

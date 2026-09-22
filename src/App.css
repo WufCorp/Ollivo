@@ -319,3 +319,74 @@ pre.log {
   max-height: 200px;
   overflow: auto;
 }
+
+.install-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.install-steps li {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.install-steps .icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  text-align: center;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.install-steps li.done .icon {
+  color: #2e8b57;
+}
+
+.install-steps li.error .icon {
+  color: #c0392b;
+}
+
+.install-steps li.waiting {
+  opacity: 0.6;
+}
+
+/* Живой кружок: шаг идёт, программа не зависла. */
+.install-steps li.active .icon {
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  margin: 4px 3px 0;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.install-total progress {
+  width: 100%;
+}
+
+.install-total p {
+  margin: 4px 0 0;
+}
+
+.hint {
+  font-style: italic;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  opacity: 0.6;
+  text-decoration: underline;
+}
