@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  chatsGet,
+  chatsSave,
   llmChat,
   llmChatStop,
   llmStatus,
   onLlmAnswer,
   onLlmState,
   onLlmToken,
+  type Chat as Talk,
   type LlmState,
   type LlmStats,
   type Msg,
@@ -13,18 +16,35 @@ import {
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
-/** Реплика в окне: у ответа модели ещё есть числа и пометка «пишет». */
+/** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
   stats?: LlmStats | null;
   error?: string | null;
 }
 
-export default function Chat({ onGoToModels }: { onGoToModels: () => void }) {
+export default function Chat({
+  chatId,
+  onSaved,
+  onGoToModels,
+}: {
+  /** Открытый разговор; `null` — новый, ещё не сохранённый. */
+  chatId: string | null;
+  onSaved: (chat: Talk) => void;
+  onGoToModels: () => void;
+}) {
   const [llm, setLlm] = useState<LlmState | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [answering, setAnswering] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
+
+  // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
+  const linesRef = useRef<Line[]>([]);
+  linesRef.current = lines;
+  const wasAnswering = useRef(false);
+  /** Разговор, который мы сами только что записали, — перечитывать его не надо. */
+  const savedId = useRef<string | null>(null);
 
   useEffect(() => {
     llmStatus().then(setLlm);
@@ -51,6 +71,40 @@ export default function Chat({ onGoToModels }: { onGoToModels: () => void }) {
       subs.forEach((s) => s.then((un) => un()));
     };
   }, []);
+
+  // Открыли другой разговор в меню (или начали новый).
+  useEffect(() => {
+    if (chatId === savedId.current) return;
+    if (!chatId) {
+      setLines([]);
+      setTitle("");
+      return;
+    }
+    chatsGet(chatId).then((c) => {
+      if (!c) return;
+      setLines(c.messages);
+      setTitle(c.title);
+    });
+  }, [chatId]);
+
+  // Ответ дописан (или его оборвали) — сохраняем разговор целиком.
+  useEffect(() => {
+    if (wasAnswering.current && !answering) {
+      const messages = linesRef.current
+        .filter((l) => l.content.trim())
+        .map(({ role, content }) => ({ role, content }));
+      if (messages.length) {
+        chatsSave({ id: chatId ?? "", title, created: 0, updated: 0, model: llm?.model ?? null, messages }).then(
+          (saved) => {
+            savedId.current = saved.id;
+            setTitle(saved.title);
+            onSaved(saved);
+          },
+        );
+      }
+    }
+    wasAnswering.current = answering;
+  }, [answering]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -103,8 +157,6 @@ export default function Chat({ onGoToModels }: { onGoToModels: () => void }) {
 
   return (
     <>
-      <h2>Чат</h2>
-
       <div className="talk">
         {lines.length === 0 && <p className="muted">Спросите что угодно — модель отвечает прямо на вашем компьютере.</p>}
         {lines.map((l, i) => (
@@ -135,11 +187,6 @@ export default function Chat({ onGoToModels }: { onGoToModels: () => void }) {
           ) : (
             <button onClick={send} disabled={!draft.trim()}>
               Отправить
-            </button>
-          )}
-          {lines.length > 0 && !answering && (
-            <button className="secondary" onClick={() => setLines([])}>
-              Начать заново
             </button>
           )}
           <span className="muted small grow-right">{fileName(llm.model ?? "")}</span>

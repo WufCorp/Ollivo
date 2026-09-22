@@ -14,10 +14,71 @@
   }
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
 }
 
+/* Окно целиком: слева меню, справа страница. */
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.side {
+  flex: none;
+  width: 190px;
+  box-sizing: border-box;
+  padding: 22px 12px;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+  overflow-y: auto;
+}
+
+.side h1 {
+  font-size: 20px;
+  padding: 0 10px;
+  margin-bottom: 18px;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Чат прокручивает только ленту, а не всю страницу. */
+.main.chat {
+  overflow: hidden;
+}
+
+.content {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 24px 32px;
+}
+
+/* Полоска обновления сверху, остальное место — странице. */
+.main.chat .content {
+  flex: 1;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 20px;
+}
+
+.content > h2:first-child {
+  margin-top: 0;
+}
+
+/* Мастер первого запуска — одна колонка на весь экран. */
 .page {
   max-width: 640px;
   margin: 0 auto;
@@ -63,7 +124,8 @@ header {
 
 nav {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 2px;
 }
 
 h2 {
@@ -104,7 +166,9 @@ button.tab {
 
 button.tab {
   border: none;
-  opacity: 0.65;
+  opacity: 0.7;
+  text-align: left;
+  padding: 8px 10px;
 }
 
 button.tab.active {
@@ -395,7 +459,10 @@ button.link {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 16px;
+  flex: none;
+  width: min(680px, 100%);
+  box-sizing: border-box;
+  margin: 16px auto 0;
   padding: 10px 14px;
   border-radius: 8px;
   background: rgba(99, 102, 241, 0.12);
@@ -450,10 +517,13 @@ button.link {
 /* --- Чат --- */
 
 .talk {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin: 8px 0 16px;
+  padding: 4px 0 16px;
 }
 
 .line {
@@ -490,4 +560,53 @@ button.link {
 
 .grow-right {
   margin-left: auto;
+}
+
+/* --- Разговоры в меню --- */
+
+.chats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.chats button.new {
+  opacity: 0.85;
+  margin-bottom: 4px;
+}
+
+.chat-row {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.chat-row button.tab {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-row.active {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.chat-row.active button.tab {
+  opacity: 1;
+}
+
+.chat-row button.forget {
+  visibility: hidden;
+  padding: 0 8px;
+  text-decoration: none;
+}
+
+.chat-row:hover button.forget {
+  visibility: visible;
 }
