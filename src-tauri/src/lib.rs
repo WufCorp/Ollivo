@@ -7,6 +7,7 @@ mod llm;
 mod net;
 mod process;
 mod settings;
+mod update;
 mod setup;
 #[cfg(test)]
 mod testserver;
@@ -26,6 +27,8 @@ struct Core {
     running: Mutex<HashMap<String, CancellationToken>>,
     /// Все движки — в одном Job Object: закроется Ollivo — закроются и они.
     supervisor: process::Supervisor,
+    /// Найденное обновление программы ждёт согласия пользователя.
+    update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     /// Запущенная текстовая модель (одна за раз).
     llm: tokio::sync::Mutex<Option<llm::Llm>>,
     /// Отмена текущей загрузки модели: `llm_start` держит `llm` всё время загрузки,
@@ -499,11 +502,62 @@ async fn llm_ask(core: CoreState<'_>, prompt: String) -> Result<llm::Answer, Str
     llm::ask(port, &prompt, 256).await
 }
 
+/// Прокси из настроек — чтобы обновления ходили тем же путём, что и загрузки.
+fn proxy_url(s: &settings::Settings) -> Option<url::Url> {
+    s.proxy.url(&net::load_password()).ok().flatten().and_then(|u| u.parse().ok())
+}
+
+/// Ищет обновление в выбранном канале. `None` — установлена свежая версия.
+#[tauri::command]
+async fn update_check(app: AppHandle, core: CoreState<'_>) -> Result<Option<update::Available>, String> {
+    let s = core.settings.get();
+    let core = core.inner().clone();
+    let found = update::check(&app, &s.updates.channel, proxy_url(&s)).await?;
+    let info = found.as_ref().map(|u| update::Available {
+        version: u.version.clone(),
+        current: u.current_version.clone(),
+        notes: u.body.clone(),
+        date: u.date.map(|d| d.to_string()),
+    });
+    *core.update.lock().await = found;
+    Ok(info)
+}
+
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+    done: u64,
+    total: Option<u64>,
+}
+
+/// Ставит найденное обновление и перезапускает программу.
+/// Прогресс — `update://progress`, ошибка — `update://failed`.
+#[tauri::command]
+async fn update_install(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    let core = core.inner().clone();
+    let found = core.update.lock().await.take().ok_or("обновление не найдено")?;
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let on_progress = move |done, total| {
+            let _ = app2.emit("update://progress", UpdateProgress { done, total });
+        };
+        match update::install(&found, on_progress).await {
+            // Движки закроются сами: они в Job Object, привязанном к этому процессу.
+            Ok(()) => app.restart(),
+            Err(e) => {
+                let _ = app.emit("update://failed", e);
+            }
+        }
+    });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("settings.json");
             let settings = settings::Store::open(path);
@@ -516,6 +570,7 @@ pub fn run() {
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
+                update: tokio::sync::Mutex::new(None),
                 llm: tokio::sync::Mutex::new(None),
                 llm_loading: Mutex::new(CancellationToken::new()),
             }));
@@ -540,6 +595,8 @@ pub fn run() {
             llm_start,
             llm_stop,
             llm_ask,
+            update_check,
+            update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

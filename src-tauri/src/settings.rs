@@ -16,6 +16,22 @@ pub struct Settings {
     pub hf: HfSettings,
     /// Мастер первого запуска пройден.
     pub setup_done: bool,
+    pub updates: UpdateSettings,
+}
+
+/// Обновления программы. Выключенная проверка = ни одного сетевого запроса.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    pub auto_check: bool,
+    /// `stable` — всем, `beta` — свежее и рискованнее.
+    pub channel: String,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { auto_check: true, channel: "stable".into() }
+    }
 }
 
 pub struct Store {

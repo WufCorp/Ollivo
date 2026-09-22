@@ -85,11 +85,17 @@ export interface HfSettings {
   custom_url: string;
 }
 
+export interface UpdateSettings {
+  auto_check: boolean;
+  channel: "stable" | "beta";
+}
+
 export interface Settings {
   data_dir: string | null;
   proxy: ProxySettings;
   hf: HfSettings;
   setup_done: boolean;
+  updates: UpdateSettings;
 }
 
 export interface SettingsView {
@@ -263,3 +269,29 @@ export const llmAsk = (prompt: string) => invoke<LlmAnswer>("llm_ask", { prompt 
 
 export const onLlmState = (cb: (s: LlmState) => void): Promise<UnlistenFn> =>
   listen<LlmState>("llm://state", (e) => cb(e.payload));
+
+// --- Обновления программы ---
+
+export interface UpdateAvailable {
+  version: string;
+  current: string;
+  notes: string | null;
+  date: string | null;
+}
+
+export interface UpdateProgress {
+  done: number;
+  total: number | null;
+}
+
+/** null — установлена свежая версия. */
+export const updateCheck = () => invoke<UpdateAvailable | null>("update_check");
+
+/** Ставит найденное обновление; по окончании программа перезапустится сама. */
+export const updateInstall = () => invoke<void>("update_install");
+
+export const onUpdateProgress = (cb: (p: UpdateProgress) => void): Promise<UnlistenFn> =>
+  listen<UpdateProgress>("update://progress", (e) => cb(e.payload));
+
+export const onUpdateFailed = (cb: (error: string) => void): Promise<UnlistenFn> =>
+  listen<string>("update://failed", (e) => cb(e.payload));
