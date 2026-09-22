@@ -28,6 +28,9 @@ struct Core {
     supervisor: process::Supervisor,
     /// Запущенная текстовая модель (одна за раз).
     llm: tokio::sync::Mutex<Option<llm::Llm>>,
+    /// Отмена текущей загрузки модели: `llm_start` держит `llm` всё время загрузки,
+    /// поэтому остановка и новый запуск сначала отменяют её через этот токен.
+    llm_loading: Mutex<CancellationToken>,
 }
 
 impl Core {
@@ -336,7 +339,9 @@ fn emit_llm(app: &AppHandle, s: LlmState) {
 
 #[tauri::command]
 async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
-    Ok(match core.llm.lock().await.as_ref() {
+    // Занято — значит, идёт загрузка (llm_start держит слот до конца), ждать её не будем.
+    let Ok(slot) = core.llm.try_lock() else { return Ok(LlmState::of("starting")) };
+    Ok(match slot.as_ref() {
         Some(l) => LlmState {
             state: "ready",
             model: Some(l.model.clone()),
@@ -357,13 +362,18 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> 
         .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version))
         .ok_or("движок чата не установлен")?;
     let core = core.inner().clone();
+    let cancel = CancellationToken::new();
+    std::mem::replace(&mut *core.llm_loading.lock().unwrap(), cancel.clone()).cancel();
     tauri::async_runtime::spawn(async move {
         let mut slot = core.llm.lock().await;
+        if cancel.is_cancelled() {
+            return; // пока ждали, запустили другую модель или нажали «Остановить»
+        }
         if let Some(old) = slot.take() {
             old.handle.stop().await;
         }
         emit_llm(&app, LlmState { model: Some(config.model.clone()), ..LlmState::of("starting") });
-        match llm::start(&core.supervisor, &engine, &config, &root.join("logs")).await {
+        match llm::start(&core.supervisor, &engine, &config, &root.join("logs"), &cancel).await {
             Ok(l) => {
                 emit_llm(
                     &app,
@@ -395,6 +405,8 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> 
                     );
                 });
             }
+            // Отменили: итог сообщит тот, кто отменил (llm_stop или новый llm_start).
+            Err(e) if e == llm::CANCELLED => {}
             Err(e) => emit_llm(&app, LlmState { error: Some(e), ..LlmState::of("crashed") }),
         }
     });
@@ -403,6 +415,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> 
 
 #[tauri::command]
 async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    core.llm_loading.lock().unwrap().cancel();
     if let Some(l) = core.llm.lock().await.take() {
         l.handle.stop().await;
     }
@@ -412,7 +425,10 @@ async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
 
 #[tauri::command]
 async fn llm_ask(core: CoreState<'_>, prompt: String) -> Result<llm::Answer, String> {
-    let port = core.llm.lock().await.as_ref().map(|l| l.port).ok_or("модель не запущена")?;
+    let port = match core.llm.try_lock() {
+        Ok(slot) => slot.as_ref().map(|l| l.port).ok_or("модель не запущена")?,
+        Err(_) => return Err("модель ещё загружается".into()),
+    };
     llm::ask(port, &prompt, 256).await
 }
 
@@ -434,6 +450,7 @@ pub fn run() {
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
                 llm: tokio::sync::Mutex::new(None),
+                llm_loading: Mutex::new(CancellationToken::new()),
             }));
             Ok(())
         })
