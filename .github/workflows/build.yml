@@ -1,0 +1,53 @@
+# Проверка и сборка установщика Windows на каждый push и PR в main.
+# Публикация релизов и автообновление — отдельно, вместе с S3 (см. заметку «Фаза 1»).
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Зависимости интерфейса
+        run: npm ci
+
+      - name: Проверка типов и сборка интерфейса
+        run: npm run build
+
+      - name: Тесты ядра
+        working-directory: src-tauri
+        # Тесты с настоящими моделями и сетью помечены #[ignore] и здесь не идут.
+        run: cargo test --locked
+
+      - name: Установщик NSIS
+        run: npx tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollivo-setup-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
