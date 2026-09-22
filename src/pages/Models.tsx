@@ -9,10 +9,12 @@ import {
   modelsAdd,
   modelsList,
   modelsRemove,
+  modelsScan,
   onLlmState,
   type AddedModel,
   type LlmState,
   type Model,
+  type ScanReport,
 } from "../api";
 import RunningModel from "../components/RunningModel";
 
@@ -36,6 +38,7 @@ export default function Models() {
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rejected, setRejected] = useState<AddedModel[]>([]);
+  const [scanned, setScanned] = useState<ScanReport | null>(null);
   const [running, setRunning] = useState<LlmState | null>(null);
 
   const refresh = () => modelsList().then(setModels);
@@ -70,6 +73,23 @@ export default function Models() {
     }
   };
 
+  /** Поиск по известным местам; `dir` — ещё и папка, которую выбрал человек. */
+  const search = async (dir?: string) => {
+    setBusy(true);
+    setRejected([]);
+    try {
+      setScanned(await modelsScan(dir ? [dir] : []));
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickFolder = async () => {
+    const dir = await open({ directory: true });
+    if (typeof dir === "string") await search(dir);
+  };
+
   const pick = async () => {
     const picked = await open({ multiple: true, filters: [{ name: "Модели", extensions: EXTENSIONS }] });
     if (Array.isArray(picked)) await add(picked);
@@ -86,11 +106,39 @@ export default function Models() {
 
       <div className={over ? "dropzone over" : "dropzone"}>
         <p>Перетащите сюда файл модели — я сама разберусь, что это и пойдёт ли она на вашем компьютере.</p>
-        <button onClick={pick} disabled={busy}>
-          {busy ? "Смотрю файл…" : "Выбрать файл"}
-        </button>
-        <p className="muted small">Подходят файлы .gguf и .safetensors — например, скачанные с HuggingFace.</p>
+        <div className="actions center">
+          <button onClick={pick} disabled={busy}>
+            {busy ? "Смотрю…" : "Выбрать файл"}
+          </button>
+          <button className="secondary" onClick={() => search()} disabled={busy}>
+            Найти уже скачанные
+          </button>
+          <button className="secondary" onClick={pickFolder} disabled={busy}>
+            Указать папку
+          </button>
+        </div>
+        <p className="muted small">
+          Подходят файлы .gguf и .safetensors — например, скачанные с HuggingFace. «Найти уже скачанные» смотрит
+          в папках LM Studio, Ollama и ComfyUI: оттуда модели берутся как есть, второй раз качать не надо.
+        </p>
       </div>
+
+      {scanned && (
+        <div className="card">
+          <p>
+            {scanned.added > 0
+              ? `Нашла новых моделей: ${scanned.added}.`
+              : "Новых моделей не нашлось."}
+            {scanned.already > 0 && ` Уже были в списке: ${scanned.already}.`}
+          </p>
+          {scanned.sources.length > 0 && <p className="muted small">Смотрела: {scanned.sources.join(", ")}.</p>}
+          <div className="actions">
+            <button className="secondary" onClick={() => setScanned(null)}>
+              Понятно
+            </button>
+          </div>
+        </div>
+      )}
 
       {rejected.length > 0 && (
         <div className="card">
@@ -115,10 +163,10 @@ export default function Models() {
         const busyNow = running?.state === "starting";
         const isRunning = running?.model === m.path && running.state !== "stopped";
         return (
-          <div className="card model" key={m.path}>
+          <div className="card model" key={m.path} title={m.path}>
             <p className="model-title">
               <span className="light">{m.missing ? "⚠️" : LIGHTS[m.verdict?.light ?? "none"]}</span>
-              {m.file}
+              {m.title ?? m.file}
             </p>
             <p className="muted small">{summary(m)}</p>
 

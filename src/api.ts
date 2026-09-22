@@ -307,6 +307,8 @@ export interface Model {
   mtime: number;
   /** Когда добавили, unix-секунды. */
   added: number;
+  /** Понятное имя, если по имени файла не разобрать (у Ollama файлы — по хешу). */
+  title: string | null;
   info: ModelInfo;
   file: string;
   kind_ru: string;
@@ -321,7 +323,21 @@ export interface AddedModel {
   error: string | null;
 }
 
+/** Итог поиска моделей по папкам. */
+export interface ScanReport {
+  added: number;
+  /** Уже были в списке. */
+  already: number;
+  /** Не наш формат или файл не открылся. */
+  skipped: number;
+  /** Известные места, которые нашлись на этом ПК: «LM Studio», «Ollama»… */
+  sources: string[];
+}
+
 export const modelsList = () => invoke<Model[]>("models_list");
+
+/** Ищет модели в известных местах (LM Studio, Ollama, ComfyUI) и в указанных папках. */
+export const modelsScan = (dirs: string[] = []) => invoke<ScanReport>("models_scan", { dirs });
 
 export const modelsAdd = (paths: string[]) => invoke<AddedModel[]>("models_add", { paths });
 

@@ -9,6 +9,7 @@ mod llm;
 mod net;
 mod probe;
 mod process;
+mod scan;
 mod safetensors;
 mod settings;
 mod update;
@@ -420,6 +421,15 @@ struct Added {
     error: Option<String>,
 }
 
+/// Итог поиска: что нашли и где искали.
+#[derive(serde::Serialize)]
+struct ScanReport {
+    #[serde(flatten)]
+    report: library::Report,
+    /// Названия известных мест, которые нашлись на этом ПК («LM Studio», «Ollama»…).
+    sources: Vec<String>,
+}
+
 /// Библиотека моделей со «светофором» на текущем железе.
 #[tauri::command]
 async fn models_list(core: CoreState<'_>) -> Result<Vec<library::Model>, String> {
@@ -439,9 +449,31 @@ async fn models_add(core: CoreState<'_>, paths: Vec<PathBuf>) -> Result<Vec<Adde
             .into_iter()
             .map(|p| Added {
                 file: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                error: core.library.add(&p).err(),
+                error: core.library.add(&p, None).err(),
             })
             .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Ищет модели там, где их уже скачали другие программы (LM Studio, Ollama, ComfyUI),
+/// плюс в папках, которые указал человек. Файлы не копируются.
+#[tauri::command]
+async fn models_scan(core: CoreState<'_>, dirs: Vec<PathBuf>) -> Result<ScanReport, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = scan::sources(&core.data_dir());
+        let mut places: Vec<PathBuf> = known.iter().map(|s| s.dir.clone()).collect();
+        places.extend(dirs);
+        let mut found = vec![];
+        for dir in &places {
+            found.extend(scan::scan(dir));
+        }
+        ScanReport {
+            report: core.library.add_found(found),
+            sources: known.into_iter().map(|s| s.title).collect(),
+        }
     })
     .await
     .map_err(|e| e.to_string())
@@ -646,6 +678,7 @@ pub fn run() {
             engine_repair,
             models_list,
             models_add,
+            models_scan,
             models_remove,
             llm_status,
             llm_start,

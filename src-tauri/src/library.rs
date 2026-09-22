@@ -7,6 +7,7 @@
 
 use crate::hardware::Hardware;
 use crate::probe::{self, Kind, ModelInfo, Verdict};
+use crate::scan::Found;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -21,6 +22,9 @@ pub struct Entry {
     pub mtime: u64,
     /// Когда добавили, unix-секунды.
     pub added: u64,
+    /// Понятное имя, если по имени файла не разобрать (у Ollama файлы — по хешу).
+    #[serde(default)]
+    pub title: Option<String>,
     pub info: ModelInfo,
 }
 
@@ -61,6 +65,16 @@ fn same_file(a: &Path, b: &Path) -> bool {
     a.as_os_str().to_string_lossy().to_lowercase() == b.as_os_str().to_string_lossy().to_lowercase()
 }
 
+/// Итог поиска моделей по папкам.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Report {
+    pub added: usize,
+    /// Уже были в списке.
+    pub already: usize,
+    /// Не наш формат или файл не открылся.
+    pub skipped: usize,
+}
+
 pub struct Library {
     path: PathBuf,
     entries: Mutex<Vec<Entry>>,
@@ -88,18 +102,43 @@ impl Library {
 
     /// Добавляет файл: читает заголовок и запоминает. Уже добавленный — обновляет.
     /// Ошибка — только если файл не открылся или формат не наш.
-    pub fn add(&self, path: &Path) -> Result<Entry, String> {
+    pub fn add(&self, path: &Path, title: Option<String>) -> Result<Entry, String> {
         let (size, mtime) = stat(path).ok_or_else(|| format!("файл не найден: {}", path.display()))?;
         let info = probe::probe(path).map_err(|e| format!("{e:#}"))?;
         let mut entries = self.entries.lock().unwrap();
-        let added = entries.iter().find(|e| same_file(&e.path, path)).map_or_else(now, |e| e.added);
-        let entry = Entry { path: path.to_path_buf(), size, mtime, added, info };
+        let old = entries.iter().find(|e| same_file(&e.path, path));
+        let added = old.map_or_else(now, |e| e.added);
+        // Имя, данное при поиске, не теряем, если файл добавляют ещё раз вручную.
+        let title = title.or_else(|| old.and_then(|e| e.title.clone()));
+        let entry = Entry { path: path.to_path_buf(), size, mtime, added, title, info };
         entries.retain(|e| !same_file(&e.path, path));
         entries.push(entry.clone());
         let list = entries.clone();
         drop(entries);
         self.save(&list).map_err(|e| format!("не записать список моделей: {e}"))?;
         Ok(entry)
+    }
+
+    /// Добавляет найденное поиском. Уже известные файлы не перечитываем — их
+    /// может быть много, а заголовок большого GGUF читается не мгновенно.
+    pub fn add_found(&self, found: Vec<Found>) -> Report {
+        let mut r = Report::default();
+        for f in found {
+            let known = self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| same_file(&e.path, &f.path) && stat(&f.path) == Some((e.size, e.mtime)));
+            if known {
+                r.already += 1;
+            } else if self.add(&f.path, f.title).is_ok() {
+                r.added += 1;
+            } else {
+                r.skipped += 1;
+            }
+        }
+        r
     }
 
     pub fn remove(&self, path: &Path) -> Result<(), String> {
@@ -185,9 +224,9 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model).unwrap();
+        lib.add(&model, None).unwrap();
         // Повторное добавление не плодит дубли.
-        lib.add(&model).unwrap();
+        lib.add(&model, None).unwrap();
         let list = lib.list(&hw());
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].file, "model.gguf");
@@ -209,8 +248,8 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model).unwrap();
-        lib.add(&dir.join("MODEL.GGUF")).unwrap();
+        lib.add(&model, None).unwrap();
+        lib.add(&dir.join("MODEL.GGUF"), None).unwrap();
         assert_eq!(lib.list(&hw()).len(), 1);
     }
 
@@ -220,7 +259,7 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model).unwrap();
+        lib.add(&model, None).unwrap();
         std::fs::remove_file(&model).unwrap();
         let list = lib.list(&hw());
         assert_eq!(list.len(), 1);
@@ -234,7 +273,7 @@ mod tests {
         let junk = dir.join("readme.txt");
         std::fs::write(&junk, "не модель").unwrap();
         let lib = Library::open(dir.join("models.json"));
-        assert!(lib.add(&junk).is_err());
+        assert!(lib.add(&junk, None).is_err());
         assert!(lib.list(&hw()).is_empty());
     }
 }

@@ -427,6 +427,10 @@ button.link {
   margin: 10px 0 0;
 }
 
+.actions.center {
+  justify-content: center;
+}
+
 .card.model {
   margin-top: 14px;
 }
