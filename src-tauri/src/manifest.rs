@@ -72,9 +72,10 @@ impl Manifest {
 
 impl Engine {
     /// Сборка для этого ПК: `wanted`, если она задана и пойдёт, иначе первая
-    /// подходящая из `prefer`.
-    pub fn pick(&self, hw: Build, wanted: Option<Build>) -> Option<&EngineBuild> {
-        let find = |b: Build| self.builds.iter().find(|x| x.build == b && b.runs_on(hw));
+    /// подходящая из `prefer`. `vulkan` — есть ли в системе `vulkan-1.dll`.
+    pub fn pick(&self, hw: Build, vulkan: bool, wanted: Option<Build>) -> Option<&EngineBuild> {
+        let ok = |b: Build| b.runs_on(hw) && (b != Build::Vulkan || vulkan);
+        let find = |b: Build| self.builds.iter().find(|x| x.build == b && ok(b));
         wanted.and_then(find).or_else(|| self.prefer.iter().find_map(|b| find(*b)))
     }
 }
@@ -107,12 +108,15 @@ mod tests {
         let m = Manifest::bundled();
         let llama = m.engine("llama.cpp").unwrap();
         // По умолчанию чат на Vulkan (решение фазы 0).
-        assert_eq!(llama.pick(Build::Cuda12, None).unwrap().build, Build::Vulkan);
+        assert_eq!(llama.pick(Build::Cuda12, true, None).unwrap().build, Build::Vulkan);
         // Ускоритель CUDA 12 на GTX 10xx — можно, CUDA 13 — нельзя.
-        assert_eq!(llama.pick(Build::Cuda12, Some(Build::Cuda12)).unwrap().build, Build::Cuda12);
-        assert_eq!(llama.pick(Build::Cuda12, Some(Build::Cuda13)).unwrap().build, Build::Vulkan);
-        assert_eq!(llama.pick(Build::Cuda13, Some(Build::Cuda13)).unwrap().build, Build::Cuda13);
-        assert_eq!(llama.pick(Build::Vulkan, Some(Build::Cuda12)).unwrap().build, Build::Vulkan);
+        assert_eq!(llama.pick(Build::Cuda12, true, Some(Build::Cuda12)).unwrap().build, Build::Cuda12);
+        assert_eq!(llama.pick(Build::Cuda12, true, Some(Build::Cuda13)).unwrap().build, Build::Vulkan);
+        assert_eq!(llama.pick(Build::Cuda13, true, Some(Build::Cuda13)).unwrap().build, Build::Cuda13);
+        assert_eq!(llama.pick(Build::Vulkan, true, Some(Build::Cuda12)).unwrap().build, Build::Vulkan);
+        // Нет Vulkan в системе — ставим CUDA; нет ни того, ни другого — нечего ставить.
+        assert_eq!(llama.pick(Build::Cuda12, false, None).unwrap().build, Build::Cuda12);
+        assert!(llama.pick(Build::Vulkan, false, None).is_none());
     }
 
     #[test]

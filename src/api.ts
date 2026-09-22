@@ -78,15 +78,25 @@ export interface ProxySettings {
   username: string;
 }
 
+export type HfSource = "official" | "mirror" | "custom";
+
+export interface HfSettings {
+  source: HfSource;
+  custom_url: string;
+}
+
 export interface Settings {
   data_dir: string | null;
   proxy: ProxySettings;
+  hf: HfSettings;
+  setup_done: boolean;
 }
 
 export interface SettingsView {
   settings: Settings;
-  /** Пароль прокси сохранён в диспетчере учётных данных Windows. */
+  /** Пароль прокси и токен HF сохранены в диспетчере учётных данных Windows. */
   proxy_has_password: boolean;
+  hf_has_token: boolean;
   /** Папка данных: выбранная или предложенная по умолчанию. */
   data_dir: string;
 }
@@ -104,9 +114,55 @@ export interface ProxyReport {
 
 export const settingsGet = () => invoke<SettingsView>("settings_get");
 
-/** `proxyPassword`: undefined — не менять сохранённый, "" — удалить. */
-export const settingsSave = (settings: Settings, proxyPassword?: string) =>
-  invoke<void>("settings_save", { settings, proxyPassword: proxyPassword ?? null });
+/** Секреты: undefined — не менять сохранённый, "" — удалить. */
+export const settingsSave = (settings: Settings, secrets: { proxyPassword?: string; hfToken?: string } = {}) =>
+  invoke<void>("settings_save", {
+    settings,
+    proxyPassword: secrets.proxyPassword ?? null,
+    hfToken: secrets.hfToken ?? null,
+  });
+
+export interface TokenCheck {
+  ok: boolean;
+  message: string;
+}
+
+/** `token`: undefined — взять сохранённый. */
+export const hfCheckToken = (hf: HfSettings, token?: string) =>
+  invoke<TokenCheck>("hf_check_token", { hf, token: token ?? null });
+
+// --- Мастер первого запуска ---
+
+export type CheckStatus = "ok" | "warn" | "fail";
+
+export interface SetupCheck {
+  id: string;
+  title: string;
+  status: CheckStatus;
+  message: string;
+  fix: "vcredist" | null;
+}
+
+export interface DiskChoice {
+  mount: string;
+  path: string;
+  free: number;
+  total: number;
+  enough: boolean;
+  recommended: boolean;
+}
+
+export interface SetupInfo {
+  hardware: Hardware;
+  checks: SetupCheck[];
+  disks: DiskChoice[];
+  setup_done: boolean;
+}
+
+export const setupCheck = () => invoke<SetupInfo>("setup_check");
+export const setupChooseDir = (path: string) => invoke<void>("setup_choose_dir", { path });
+export const setupFinish = () => invoke<void>("setup_finish");
+export const vcredistInstall = () => invoke<void>("vcredist_install");
 
 /** `password`: undefined — взять сохранённый. */
 export const proxyTest = (proxy: ProxySettings, password?: string) =>
