@@ -242,7 +242,7 @@ mod tests {
     async fn llama_real() {
         let m = crate::manifest::Manifest::bundled();
         let e = m.engine("llama.cpp").unwrap();
-        let b = e.pick(crate::hardware::detect().cuda_build, None).unwrap();
+        let b = e.pick(crate::hardware::detect().cuda_build, true, None).unwrap();
         let root = tmp_root("real");
         let started = std::time::Instant::now();
         let got = install(&Downloader::new(), &root, e, b, &CancellationToken::new(), &|_| {}).await.unwrap();

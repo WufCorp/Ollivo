@@ -194,3 +194,110 @@ select option {
   flex-direction: column;
   gap: 4px;
 }
+
+.actions.save {
+  margin-top: 24px;
+}
+
+.steps {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 8px;
+  counter-reset: step;
+}
+
+.steps li {
+  counter-increment: step;
+  font-size: 13px;
+  opacity: 0.45;
+}
+
+.steps li::before {
+  content: counter(step) ". ";
+}
+
+.steps li:not(:last-child)::after {
+  content: " —";
+  margin-left: 8px;
+}
+
+.steps li.active {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.steps li.passed {
+  opacity: 0.75;
+}
+
+.wizard .actions {
+  margin-top: 24px;
+}
+
+.setup-checks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setup-checks li {
+  display: flex;
+  gap: 10px;
+}
+
+.setup-checks .icon {
+  width: 20px;
+  flex: none;
+  font-weight: 700;
+  text-align: center;
+}
+
+.setup-checks li.ok .icon {
+  color: #2e8b57;
+}
+
+.setup-checks li.warn .icon {
+  color: #d68910;
+}
+
+.setup-checks li.fail .icon {
+  color: #c0392b;
+}
+
+.setup-checks button {
+  margin-top: 6px;
+}
+
+.disks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+label.disk {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+label.disk.selected {
+  border-color: #4a5bdc;
+}
+
+.badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: rgba(74, 91, 220, 0.18);
+}

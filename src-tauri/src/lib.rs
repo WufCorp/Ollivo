@@ -1,9 +1,11 @@
 mod download;
 mod engines;
 mod hardware;
+mod hf;
 mod manifest;
 mod net;
 mod settings;
+mod setup;
 #[cfg(test)]
 mod testserver;
 
@@ -50,8 +52,10 @@ impl Core {
     }
 }
 
-fn build_downloader(proxy: &net::ProxySettings) -> Result<download::Downloader, String> {
-    Ok(download::Downloader::with_proxy(proxy.reqwest(&net::load_password())?))
+/// Загрузчик по настройкам: прокси + токен HF (только для хоста HF/зеркала).
+fn build_downloader(s: &settings::Settings) -> Result<download::Downloader, String> {
+    let proxy = s.proxy.reqwest(&net::load_password())?;
+    Ok(download::Downloader::with_proxy(proxy).with_bearer(s.hf.token_hosts(), hf::load_token()))
 }
 
 type CoreState<'a> = State<'a, Arc<Core>>;
@@ -64,8 +68,9 @@ async fn hardware_info() -> hardware::Hardware {
 #[derive(serde::Serialize)]
 struct SettingsView {
     settings: settings::Settings,
-    /// Пароль прокси сохранён в диспетчере учётных данных (сам пароль не отдаём).
+    /// Пароль прокси и токен HF сохранены в диспетчере учётных данных (сами не отдаём).
     proxy_has_password: bool,
+    hf_has_token: bool,
     data_dir: PathBuf,
 }
 
@@ -73,22 +78,28 @@ struct SettingsView {
 fn settings_get(core: CoreState<'_>) -> SettingsView {
     SettingsView {
         settings: core.settings.get(),
-        proxy_has_password: net::has_password(),
+        proxy_has_password: !net::load_password().is_empty(),
+        hf_has_token: !hf::load_token().is_empty(),
         data_dir: core.data_dir(),
     }
 }
 
-/// `proxy_password`: `None` — не менять сохранённый, `""` — удалить.
+/// Секреты: `None` — не менять сохранённый, `""` — удалить.
 #[tauri::command]
 fn settings_save(
     core: CoreState<'_>,
     settings: settings::Settings,
     proxy_password: Option<String>,
+    hf_token: Option<String>,
 ) -> Result<(), String> {
+    settings.hf.base()?;
     if let Some(p) = &proxy_password {
-        net::store_password(p)?;
+        net::secret::store(net::secret::PROXY_PASSWORD, p)?;
     }
-    let downloader = build_downloader(&settings.proxy)?;
+    if let Some(t) = &hf_token {
+        net::secret::store(net::secret::HF_TOKEN, t.trim())?;
+    }
+    let downloader = build_downloader(&settings)?;
     core.settings.set(settings).map_err(|e| e.to_string())?;
     *core.downloader.write().unwrap() = Arc::new(downloader);
     Ok(())
@@ -99,6 +110,81 @@ fn settings_save(
 async fn proxy_test(proxy: net::ProxySettings, password: Option<String>) -> net::TestReport {
     let password = password.unwrap_or_else(net::load_password);
     net::test(&proxy, &password).await
+}
+
+/// Проверка токена HF через текущие прокси и зеркало. `token: None` — сохранённый.
+#[tauri::command]
+async fn hf_check_token(
+    core: CoreState<'_>,
+    hf: hf::HfSettings,
+    token: Option<String>,
+) -> Result<hf::TokenCheck, String> {
+    let base = hf.base()?;
+    let token = token.map(|t| t.trim().to_string()).unwrap_or_else(hf::load_token);
+    let dl = core.downloader();
+    Ok(hf::check_token(dl.client(), &base, &token).await)
+}
+
+#[derive(serde::Serialize)]
+struct SetupInfo {
+    hardware: hardware::Hardware,
+    checks: Vec<setup::Check>,
+    disks: Vec<setup::DiskChoice>,
+    setup_done: bool,
+}
+
+#[tauri::command]
+async fn setup_check(core: CoreState<'_>) -> Result<SetupInfo, String> {
+    let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
+    Ok(SetupInfo {
+        checks: setup::checks(&hw),
+        disks: setup::disk_choices(&hw.disks),
+        hardware: hw,
+        setup_done: core.settings.get().setup_done,
+    })
+}
+
+#[tauri::command]
+fn setup_choose_dir(core: CoreState<'_>, path: PathBuf) -> Result<(), String> {
+    setup::prepare_dir(&path)?;
+    let mut s = core.settings.get();
+    s.data_dir = Some(path);
+    core.settings.set(s).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn setup_finish(core: CoreState<'_>) -> Result<(), String> {
+    let mut s = core.settings.get();
+    s.setup_done = true;
+    core.settings.set(s).map_err(|e| e.to_string())
+}
+
+/// Скачивает официальный установщик VC++ и запускает его (Windows спросит права администратора).
+#[tauri::command]
+async fn vcredist_install(core: CoreState<'_>) -> Result<(), String> {
+    let dest = std::env::temp_dir().join("ollivo-vc_redist.x64.exe");
+    let _ = std::fs::remove_file(&dest);
+    let req = download::Request {
+        urls: vec![setup::VC_REDIST_URL.into()],
+        dest: dest.clone(),
+        sha256: None,
+        connections: 4,
+        chunk_size: 8 << 20,
+    };
+    core.downloader()
+        .download(&req, &CancellationToken::new(), &|_| {})
+        .await
+        .map_err(|e| format!("не скачался установщик Microsoft: {e}"))?;
+    let exe = dest.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || setup::run_vc_redist(&exe))
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&dest);
+    res?;
+    if !setup::has_vc_runtime() {
+        return Err("установщик отработал, но библиотек всё ещё нет — перезагрузите компьютер".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -168,7 +254,7 @@ struct EngineStatus {
 async fn engine_status(core: CoreState<'_>, id: String) -> Result<EngineStatus, String> {
     let engine = core.manifest.engine(&id).ok_or("нет такого движка")?;
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
-    let pick = engine.pick(hw.cuda_build, None);
+    let pick = engine.pick(hw.cuda_build, setup::has_vulkan(), None);
     Ok(EngineStatus {
         id: engine.id.clone(),
         title: engine.title.clone(),
@@ -197,7 +283,10 @@ async fn engine_install(
 ) -> Result<(), String> {
     let engine = core.manifest.engine(&id).ok_or("нет такого движка")?.clone();
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
-    let chosen = engine.pick(hw.cuda_build, build).ok_or("нет сборки для этого ПК")?.clone();
+    let chosen = engine
+        .pick(hw.cuda_build, setup::has_vulkan(), build)
+        .ok_or("нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan")?
+        .clone();
     let task = format!("engine:{id}");
     let cancel = core.start(&task)?;
     let core = core.inner().clone();
@@ -228,7 +317,7 @@ pub fn run() {
             let settings = settings::Store::open(path);
             // Кривые настройки прокси не должны мешать запуску: тогда без прокси,
             // а ошибку пользователь увидит при проверке в настройках.
-            let downloader = build_downloader(&settings.get().proxy).unwrap_or_default();
+            let downloader = build_downloader(&settings.get()).unwrap_or_default();
             app.manage(Arc::new(Core {
                 settings,
                 manifest: manifest::Manifest::bundled(),
@@ -242,6 +331,11 @@ pub fn run() {
             settings_get,
             settings_save,
             proxy_test,
+            hf_check_token,
+            setup_check,
+            setup_choose_dir,
+            setup_finish,
+            vcredist_install,
             download_start,
             task_pause,
             engine_status,

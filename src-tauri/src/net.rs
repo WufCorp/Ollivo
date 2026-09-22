@@ -66,29 +66,32 @@ impl ProxySettings {
     }
 }
 
-const KEYRING_SERVICE: &str = "Ollivo";
-const KEYRING_USER: &str = "proxy";
+/// Секреты в диспетчере учётных данных Windows: запись «Ollivo / <name>».
+pub mod secret {
+    const SERVICE: &str = "Ollivo";
+    pub const PROXY_PASSWORD: &str = "proxy";
+    pub const HF_TOKEN: &str = "huggingface";
+
+    pub fn load(name: &str) -> String {
+        keyring::Entry::new(SERVICE, name).and_then(|e| e.get_password()).unwrap_or_default()
+    }
+
+    /// Пустая строка — удалить.
+    pub fn store(name: &str, value: &str) -> Result<(), String> {
+        let entry = keyring::Entry::new(SERVICE, name).map_err(|e| e.to_string())?;
+        if value.is_empty() {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            entry.set_password(value).map_err(|e| e.to_string())
+        }
+    }
+}
 
 pub fn load_password() -> String {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .and_then(|e| e.get_password())
-        .unwrap_or_default()
-}
-
-pub fn has_password() -> bool {
-    !load_password().is_empty()
-}
-
-pub fn store_password(password: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
-    if password.is_empty() {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
-    } else {
-        entry.set_password(password).map_err(|e| e.to_string())
-    }
+    secret::load(secret::PROXY_PASSWORD)
 }
 
 #[derive(Debug, Clone, Serialize)]

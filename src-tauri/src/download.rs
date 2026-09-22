@@ -93,6 +93,8 @@ pub struct Downloader {
     client: reqwest::Client,
     /// Без перенаправлений: HuggingFace кладёт SHA256 в заголовки ответа 302.
     probe_client: reqwest::Client,
+    /// Токен и хосты, которым его можно отправлять (HF и зеркало).
+    bearer: Option<(Vec<String>, String)>,
 }
 
 impl Downloader {
@@ -124,6 +126,30 @@ impl Downloader {
         Self {
             client: build(reqwest::redirect::Policy::limited(10)),
             probe_client: build(reqwest::redirect::Policy::none()),
+            bearer: None,
+        }
+    }
+
+    /// Токен добавляется только к запросам на `hosts`. На CDN, куда HF перенаправляет,
+    /// он не уходит: адреса перенаправлений мы проходим сами (`probe`), а reqwest
+    /// снимает заголовок при переходе на другой хост.
+    pub fn with_bearer(mut self, hosts: Vec<String>, token: String) -> Self {
+        self.bearer = (!token.is_empty() && !hosts.is_empty()).then_some((hosts, token));
+        self
+    }
+
+    /// Клиент для API-запросов (с тем же прокси).
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    fn get(&self, client: &reqwest::Client, url: reqwest::Url) -> reqwest::RequestBuilder {
+        let req = client.get(url.clone());
+        match &self.bearer {
+            Some((hosts, token)) if url.host_str().is_some_and(|h| hosts.iter().any(|x| x == h)) => {
+                req.bearer_auth(token)
+            }
+            _ => req,
         }
     }
 
@@ -200,8 +226,7 @@ impl Downloader {
         let mut sha256 = None;
         for _ in 0..10 {
             let resp = self
-                .probe_client
-                .get(url.clone())
+                .get(&self.probe_client, url.clone())
                 .header(reqwest::header::RANGE, "bytes=0-0")
                 .send()
                 .await?;
@@ -339,9 +364,9 @@ impl Downloader {
         written: &mut u64,
         cancel: &CancellationToken,
     ) -> Result<(), Error> {
+        let url = reqwest::Url::parse(url).map_err(|e| Error::Other(e.to_string()))?;
         let resp = self
-            .client
-            .get(url)
+            .get(&self.client, url)
             .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
             .send()
             .await?;
@@ -382,7 +407,8 @@ impl Downloader {
     ) -> Result<(), Error> {
         let counter = AtomicU64::new(0);
         let work = async {
-            let resp = self.client.get(url).send().await?;
+            let url = reqwest::Url::parse(url).map_err(|e| Error::Other(e.to_string()))?;
+            let resp = self.get(&self.client, url).send().await?;
             if !resp.status().is_success() {
                 return Err(Error::Status(resp.status().as_u16()));
             }
@@ -593,6 +619,20 @@ mod tests {
         dl.download(&req, &CancellationToken::new(), &|_| {}).await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         assert!(proxy.requests.load(Ordering::SeqCst) > 1);
+    }
+
+    #[tokio::test]
+    async fn bearer_only_to_its_host() {
+        let data = body(200_000);
+        for (host, expect) in [("127.0.0.1", "Bearer hf_x"), ("huggingface.co", "")] {
+            let srv = serve(data.clone(), true, 0);
+            let dl = Downloader::new().with_bearer(vec![host.into()], "hf_x".into());
+            let dest = tmp(&format!("bearer-{host}"));
+            let req = request(vec![srv.url.clone()], dest, None);
+            dl.download(&req, &CancellationToken::new(), &|_| {}).await.unwrap();
+            let seen = srv.auth.lock().unwrap().clone();
+            assert!(seen.iter().all(|a| a == expect), "{host}: {seen:?}");
+        }
     }
 
     #[tokio::test]

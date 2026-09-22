@@ -1,6 +1,7 @@
 //! Настройки программы: `settings.json` в папке настроек (`%APPDATA%\ru.ollivo.app`).
 //! Секретов здесь нет — пароль прокси лежит в диспетчере учётных данных Windows.
 
+use crate::hf::HfSettings;
 use crate::net::ProxySettings;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -12,6 +13,9 @@ pub struct Settings {
     /// Папка данных: движки, модели, загрузки. `None` — ещё не выбрана мастером.
     pub data_dir: Option<PathBuf>,
     pub proxy: ProxySettings,
+    pub hf: HfSettings,
+    /// Мастер первого запуска пройден.
+    pub setup_done: bool,
 }
 
 pub struct Store {

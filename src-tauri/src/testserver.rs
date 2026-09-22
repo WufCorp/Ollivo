@@ -4,36 +4,44 @@ use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Мини-сервер: отдаёт `body`, понимает Range, умеет сбоить.
 pub struct Server {
     pub url: String,
     pub requests: Arc<AtomicUsize>,
+    /// Заголовки `Authorization` всех запросов (пусто — не было).
+    pub auth: Arc<Mutex<Vec<String>>>,
 }
 
 pub fn serve(body: Vec<u8>, ranges: bool, fail_every: usize) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
     let requests = Arc::new(AtomicUsize::new(0));
-    let (body, count) = (Arc::new(body), requests.clone());
+    let auth = Arc::new(Mutex::new(Vec::new()));
+    let (body, count, auth_log) = (Arc::new(body), requests.clone(), auth.clone());
     std::thread::spawn(move || {
         for stream in listener.incoming() {
-            let (body, count) = (body.clone(), count.clone());
+            let (body, count, auth_log) = (body.clone(), count.clone(), auth_log.clone());
             std::thread::spawn(move || {
                 let mut stream = stream.unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut range = None;
+                let mut authorization = String::new();
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
                         break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("authorization:") {
+                        authorization = line[14..].trim().to_string();
                     }
                     if let Some(v) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
                         let (a, b) = v.trim().split_once('-').unwrap();
                         range = Some((a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()));
                     }
                 }
+                auth_log.lock().unwrap().push(authorization);
                 let n = count.fetch_add(1, Ordering::SeqCst) + 1;
                 if fail_every > 0 && n % fail_every == 0 {
                     let _ = stream.write_all(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -55,7 +63,7 @@ pub fn serve(body: Vec<u8>, ranges: bool, fail_every: usize) -> Server {
             });
         }
     });
-    Server { url, requests }
+    Server { url, requests, auth }
 }
 
 pub fn body(len: usize) -> Vec<u8> {
