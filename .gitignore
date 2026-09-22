@@ -1,6 +1,17 @@
-target/
+# Сборка
 node_modules/
+dist/
+target/
+*.local
+*.log
+
+# Модели и секреты — не в репозиторий
 *.gguf
 *.safetensors
 *.bin
 .env
+
+# Редакторы
+.vscode/*
+!.vscode/extensions.json
+.idea
