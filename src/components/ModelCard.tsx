@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { llmAsk, llmStart, llmStatus, llmStop, onLlmState, type LlmAnswer, type LlmState } from "../api";
 
-const fileName = (p: string) => p.split(/[\/]/).pop() ?? p;
+const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 /** Временная проверка движка: выбрать .gguf, запустить, задать вопрос. Чат — фаза 2. */
 export default function ModelCard() {
@@ -78,12 +78,12 @@ export default function ModelCard() {
       {error && <p className="error">{error}</p>}
 
       <div className="actions">
-        <button className={state.state === "ready" ? "secondary" : ""} onClick={pick} disabled={state.state === "starting"}>
-          {state.state === "ready" ? "Другая модель" : "Выбрать модель"}
+        <button className={state.state === "stopped" || state.state === "crashed" ? "" : "secondary"} onClick={pick}>
+          {state.state === "stopped" || state.state === "crashed" ? "Выбрать модель" : "Другая модель"}
         </button>
-        {state.state === "ready" && (
+        {(state.state === "ready" || state.state === "starting") && (
           <button className="secondary" onClick={() => llmStop()}>
-            Остановить
+            {state.state === "starting" ? "Отменить" : "Остановить"}
           </button>
         )}
       </div>

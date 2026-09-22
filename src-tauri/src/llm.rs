@@ -9,6 +9,7 @@ use crate::process::{self, Handle, Supervisor};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 /// Большая модель с медленного диска грузится долго (SDXL в фазе 0 — до 150 с).
 const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
@@ -59,7 +60,18 @@ fn args(cfg: &Config, port: u16) -> Vec<String> {
     a
 }
 
-pub async fn start(sup: &Supervisor, engine: &Installed, cfg: &Config, logs: &Path) -> Result<Llm, String> {
+/// Ошибка `start`, когда загрузку отменили (`cancel`): движок уже остановлен.
+pub const CANCELLED: &str = "отменено";
+
+/// Запускает llama-server и ждёт загрузки модели. `cancel` прерывает ожидание
+/// в любой момент — большая модель грузится минутами, и «Остановить» не должно ждать.
+pub async fn start(
+    sup: &Supervisor,
+    engine: &Installed,
+    cfg: &Config,
+    logs: &Path,
+    cancel: &CancellationToken,
+) -> Result<Llm, String> {
     if !cfg.model.is_file() {
         return Err(format!("файл модели не найден: {}", cfg.model.display()));
     }
@@ -71,13 +83,23 @@ pub async fn start(sup: &Supervisor, engine: &Installed, cfg: &Config, logs: &Pa
     };
     let started = Instant::now();
     let handle = sup.spawn(&spec).map_err(|e| format!("движок не запустился: {e}"))?;
-    let base = format!("http://127.0.0.1:{port}");
-    if let Err(e) = process::wait_ready(&handle, &format!("{base}/health"), LOAD_TIMEOUT).await {
+    let health = format!("http://127.0.0.1:{port}/health");
+    let ready = tokio::select! {
+        r = process::wait_ready(&handle, &health, LOAD_TIMEOUT) => r.map_err(|e| e.to_string()),
+        _ = cancel.cancelled() => Err(CANCELLED.to_string()),
+    };
+    if let Err(e) = ready {
         handle.stop().await;
-        return Err(e.to_string());
+        return Err(e);
     }
     // Прогрев: ошибка здесь не критична — модель уже загружена.
-    let _ = ask(port, "Hi", 1).await;
+    tokio::select! {
+        _ = ask(port, "Hi", 1) => {}
+        _ = cancel.cancelled() => {
+            handle.stop().await;
+            return Err(CANCELLED.to_string());
+        }
+    }
     Ok(Llm { handle, port, model: cfg.model.clone(), started_in: started.elapsed() })
 }
 
@@ -135,7 +157,9 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096 };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-llm-test")).await.unwrap();
+        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-llm-test"), &CancellationToken::new())
+            .await
+            .unwrap();
         println!("готов за {:.1} с, порт {}", llm.started_in.as_secs_f64(), llm.port);
         let a = ask(llm.port, "Столица Франции? Одно слово.", 16).await.unwrap();
         println!("{a:?}");
@@ -154,7 +178,39 @@ mod tests {
             exe: PathBuf::from("llama-server.exe"),
         };
         let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096 };
-        let err = start(&Supervisor::new(), &engine, &cfg, &std::env::temp_dir()).await.err().unwrap();
+        let err = start(&Supervisor::new(), &engine, &cfg, &std::env::temp_dir(), &CancellationToken::new())
+            .await
+            .err()
+            .unwrap();
         assert!(err.contains("не найден"));
+    }
+
+    /// Отмена во время загрузки: не ждём таймаута, процесс остановлен.
+    /// Вместо llama-server — ping, который никогда не ответит на /health.
+    #[tokio::test]
+    async fn cancel_during_load_stops_engine() {
+        let dir = std::env::temp_dir().join(format!("ollivo-llm-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("m.gguf");
+        std::fs::write(&model, b"GGUF").unwrap();
+        let engine = Installed {
+            id: "llama.cpp".into(),
+            version: "b1".into(),
+            build: crate::hardware::Build::Vulkan,
+            dir: PathBuf::new(),
+            exe: PathBuf::from(r"C:\Windows\System32\PING.EXE"),
+        };
+        let cfg = Config { model, ctx: 4096 };
+        let sup = Supervisor::new();
+        let cancel = CancellationToken::new();
+        let c = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            c.cancel();
+        });
+        let t = Instant::now();
+        let err = start(&sup, &engine, &cfg, &dir.join("logs"), &cancel).await.err().unwrap();
+        assert_eq!(err, CANCELLED);
+        assert!(t.elapsed() < Duration::from_secs(5));
     }
 }
