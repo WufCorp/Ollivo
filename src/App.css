@@ -1,0 +1,55 @@
+:root {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #1a1a1a;
+  background: #f7f7f5;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #eaeaea;
+    background: #1c1c1e;
+  }
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.muted {
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+.error {
+  color: #c0392b;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 24px;
+  margin-top: 32px;
+}
+
+.facts dt {
+  opacity: 0.6;
+}
+
+.facts dd {
+  margin: 0;
+}
