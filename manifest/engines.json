@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "engines": [
+    {
+      "id": "llama.cpp",
+      "title": "Движок чата",
+      "version": "b11081",
+      "exe": "llama-server.exe",
+      "prefer": ["vulkan", "cuda12", "cuda13"],
+      "builds": [
+        {
+          "build": "vulkan",
+          "files": [
+            {
+              "name": "llama-b11081-bin-win-vulkan-x64.zip",
+              "urls": ["https://github.com/ggml-org/llama.cpp/releases/download/b11081/llama-b11081-bin-win-vulkan-x64.zip"],
+              "sha256": "4259a1dda3ef3fcfd8b007a16329d5bdcef07da8f5f95fddd85ff2954263f01a",
+              "size": 31935070
+            }
+          ]
+        },
+        {
+          "build": "cuda12",
+          "files": [
+            {
+              "name": "llama-b11081-bin-win-cuda-12.4-x64.zip",
+              "urls": ["https://github.com/ggml-org/llama.cpp/releases/download/b11081/llama-b11081-bin-win-cuda-12.4-x64.zip"],
+              "sha256": "07cf4359031fb6f461c2eb26378eef0aa4ade535c98e034f3e7f195f6f2206ea",
+              "size": 253987246
+            },
+            {
+              "name": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+              "urls": ["https://github.com/ggml-org/llama.cpp/releases/download/b11081/cudart-llama-bin-win-cuda-12.4-x64.zip"],
+              "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+              "size": 391443627
+            }
+          ]
+        },
+        {
+          "build": "cuda13",
+          "files": [
+            {
+              "name": "llama-b11081-bin-win-cuda-13.4-x64.zip",
+              "urls": ["https://github.com/ggml-org/llama.cpp/releases/download/b11081/llama-b11081-bin-win-cuda-13.4-x64.zip"],
+              "sha256": "fefb4d9751d36cbb5b82042729470fddf3a47841aa8c91025cd7de1dc2767e58",
+              "size": 150094545
+            },
+            {
+              "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+              "urls": ["https://github.com/ggml-org/llama.cpp/releases/download/b11081/cudart-llama-bin-win-cuda-13.4-x64.zip"],
+              "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668",
+              "size": 423535356
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 //! Железо ПК: видеокарта (NVML), память, диски. Отсюда мастер первого запуска
 //! и манифест выбирают сборки движков.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Gpu {
@@ -24,12 +24,23 @@ pub struct Disk {
 
 /// Какую сборку движков ставить. Решение из фазы 0: CUDA 13 не работает
 /// на Maxwell/Pascal/Volta (CC < 7.5), для них — CUDA 12 и torch cu126.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Build {
     Cuda13,
     Cuda12,
     Vulkan,
+}
+
+impl Build {
+    /// Пойдёт ли сборка `self` на ПК, для которого ядро выбрало `hw`.
+    pub fn runs_on(self, hw: Build) -> bool {
+        match self {
+            Build::Vulkan => true,
+            Build::Cuda12 => hw != Build::Vulkan,
+            Build::Cuda13 => hw == Build::Cuda13,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,7 +111,7 @@ fn cuda_build(cc: Option<(u32, u32)>, cuda_driver: i32) -> Build {
     }
 }
 
-fn detect_disks() -> Vec<Disk> {
+pub fn detect_disks() -> Vec<Disk> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let mut out: Vec<Disk> = disks
         .list()
