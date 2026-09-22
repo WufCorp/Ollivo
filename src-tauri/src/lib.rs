@@ -317,6 +317,52 @@ async fn engine_install(
     Ok(())
 }
 
+/// «Починить» движок в фоне: сверка файлов (`engine://progress`, этап `verify`),
+/// при поломке — переустановка. Итог — `engine://finished` с полями `broken` и `reinstalled`.
+/// Чинит ту сборку текущей версии, что стоит; не стоит ни одной — ставит сборку для этого ПК.
+#[tauri::command]
+async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Result<(), String> {
+    let engine = core.manifest.engine(&id).ok_or("нет такого движка")?.clone();
+    let root = core.data_dir();
+    let current = engines::installed(&root, &id).into_iter().find(|i| i.version == engine.version);
+    let chosen = match current.and_then(|i| engine.builds.iter().find(|b| b.build == i.build)) {
+        Some(b) => b.clone(),
+        None => {
+            let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
+            engine
+                .pick(hw.cuda_build, setup::has_vulkan(), None)
+                .ok_or("нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan")?
+                .clone()
+        }
+    };
+    // Движок чата держит свои файлы открытыми — перед починкой останавливаем.
+    if id == "llama.cpp" {
+        core.llm_loading.lock().unwrap().cancel();
+        if let Some(l) = core.llm.lock().await.take() {
+            l.handle.stop().await;
+            emit_llm(&app, LlmState::of("stopped"));
+        }
+    }
+    let task = format!("engine:{id}");
+    let cancel = core.start(&task)?;
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let (progress_app, progress_id) = (app.clone(), id.clone());
+        let on_progress = move |progress| {
+            let _ = progress_app.emit("engine://progress", EngineProgress { id: progress_id.clone(), progress });
+        };
+        let res = engines::repair(&core.downloader(), &root, &engine, &chosen, &cancel, &on_progress).await;
+        core.finish(&task);
+        let (error, result) = match res {
+            Ok(done) => (None, Some(done)),
+            Err(engines::Error::Download(download::Error::Cancelled)) => (Some("paused".into()), None),
+            Err(e) => (Some(e.to_string()), None),
+        };
+        let _ = app.emit("engine://finished", Finished { id, error, result });
+    });
+    Ok(())
+}
+
 #[derive(Clone, serde::Serialize)]
 struct LlmState {
     /// `starting` | `ready` | `stopped` | `crashed`.
@@ -468,6 +514,7 @@ pub fn run() {
             task_pause,
             engine_status,
             engine_install,
+            engine_repair,
             llm_status,
             llm_start,
             llm_stop,

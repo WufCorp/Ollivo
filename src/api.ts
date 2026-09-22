@@ -195,16 +195,25 @@ export interface EngineProgress {
   speed: number;
 }
 
+/** Итог «Починить»: установленный движок + что было не так. */
+export interface EngineRepair extends InstalledEngine {
+  broken: string[];
+  reinstalled: boolean;
+}
+
 export interface EngineFinished {
   id: string;
   error: string | null;
-  result: InstalledEngine | null;
+  /** После «Починить» — `EngineRepair`. */
+  result: (InstalledEngine & Partial<Omit<EngineRepair, keyof InstalledEngine>>) | null;
 }
 
 export const engineStatus = (id: string) => invoke<EngineStatus>("engine_status", { id });
 
 export const engineInstall = (id: string, build?: Build) =>
   invoke<void>("engine_install", { id, build: build ?? null });
+
+export const engineRepair = (id: string) => invoke<void>("engine_repair", { id });
 
 export const onEngineProgress = (cb: (p: EngineProgress) => void): Promise<UnlistenFn> =>
   listen<EngineProgress>("engine://progress", (e) => cb(e.payload));
