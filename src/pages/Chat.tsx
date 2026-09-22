@@ -13,6 +13,7 @@ import {
   type LlmStats,
   type Msg,
 } from "../api";
+import Answer, { copyText } from "../components/Answer";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -110,12 +111,9 @@ export default function Chat({
     bottom.current?.scrollIntoView({ block: "end" });
   }, [lines]);
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || answering) return;
-    const talk: Line[] = [...lines, { role: "user", content: text }];
+  /** Спрашивает модель по всему разговору; ответ придёт кусками в `onLlmToken`. */
+  const ask = async (talk: Line[]) => {
     setLines([...talk, { role: "assistant", content: "" }]);
-    setDraft("");
     setAnswering(true);
     try {
       await llmChat(talk.map(({ role, content }) => ({ role, content })));
@@ -123,6 +121,19 @@ export default function Chat({
       setAnswering(false);
       setLines((prev) => [...prev.slice(0, -1), { role: "assistant", content: "", error: String(e) }]);
     }
+  };
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text || answering) return;
+    setDraft("");
+    ask([...lines, { role: "user", content: text }]);
+  };
+
+  /** «Ответить заново»: убираем последний ответ и спрашиваем то же самое ещё раз. */
+  const again = () => {
+    if (answering || lines[lines.length - 1]?.role !== "assistant") return;
+    ask(lines.slice(0, -1));
   };
 
   const keys = (e: React.KeyboardEvent) => {
@@ -161,12 +172,27 @@ export default function Chat({
         {lines.length === 0 && <p className="muted">Спросите что угодно — модель отвечает прямо на вашем компьютере.</p>}
         {lines.map((l, i) => (
           <div key={i} className={l.role === "user" ? "line you" : "line bot"}>
-            <p className="answer">{l.content || (answering && i === lines.length - 1 ? "…" : "")}</p>
+            {l.role === "user" ? (
+              <p className="answer">{l.content}</p>
+            ) : (
+              <Answer text={l.content || (answering && i === lines.length - 1 ? "…" : "")} />
+            )}
             {l.error && <p className="error">{l.error}</p>}
             {l.stats && l.stats.tokens > 0 && (
               <p className="muted small">
                 {l.stats.tokens} токенов, {Math.round(l.stats.speed)} ток/с
               </p>
+            )}
+            {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
+            {l.role === "assistant" && !answering && i === lines.length - 1 && l.content.trim() && (
+              <div className="after">
+                <button className="link" onClick={() => copyText(l.content)}>
+                  Копировать
+                </button>
+                <button className="link" onClick={again}>
+                  Ответить заново
+                </button>
+              </div>
             )}
           </div>
         ))}
