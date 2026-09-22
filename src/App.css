@@ -301,3 +301,21 @@ label.disk.selected {
   font-size: 12px;
   background: rgba(74, 91, 220, 0.18);
 }
+
+.grow-input {
+  flex: 1;
+}
+
+.answer {
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+pre.log {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+}

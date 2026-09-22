@@ -3,7 +3,9 @@ mod engines;
 mod hardware;
 mod hf;
 mod manifest;
+mod llm;
 mod net;
+mod process;
 mod settings;
 mod setup;
 #[cfg(test)]
@@ -22,6 +24,10 @@ struct Core {
     /// Пересобирается при смене прокси; идущие загрузки доживают на старом клиенте.
     downloader: RwLock<Arc<download::Downloader>>,
     running: Mutex<HashMap<String, CancellationToken>>,
+    /// Все движки — в одном Job Object: закроется Ollivo — закроются и они.
+    supervisor: process::Supervisor,
+    /// Запущенная текстовая модель (одна за раз).
+    llm: tokio::sync::Mutex<Option<llm::Llm>>,
 }
 
 impl Core {
@@ -308,10 +314,113 @@ async fn engine_install(
     Ok(())
 }
 
+#[derive(Clone, serde::Serialize)]
+struct LlmState {
+    /// `starting` | `ready` | `stopped` | `crashed`.
+    state: &'static str,
+    model: Option<PathBuf>,
+    port: Option<u16>,
+    started_in: Option<f64>,
+    error: Option<String>,
+}
+
+impl LlmState {
+    fn of(state: &'static str) -> Self {
+        Self { state, model: None, port: None, started_in: None, error: None }
+    }
+}
+
+fn emit_llm(app: &AppHandle, s: LlmState) {
+    let _ = app.emit("llm://state", s);
+}
+
+#[tauri::command]
+async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
+    Ok(match core.llm.lock().await.as_ref() {
+        Some(l) => LlmState {
+            state: "ready",
+            model: Some(l.model.clone()),
+            port: Some(l.port),
+            started_in: Some(l.started_in.as_secs_f64()),
+            error: None,
+        },
+        None => LlmState::of("stopped"),
+    })
+}
+
+/// Запускает модель; уже запущенная останавливается. Итог — событием `llm://state`.
+#[tauri::command]
+async fn llm_start(app: AppHandle, core: CoreState<'_>, config: llm::Config) -> Result<(), String> {
+    let root = core.data_dir();
+    let engine = engines::installed(&root, "llama.cpp")
+        .into_iter()
+        .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version))
+        .ok_or("движок чата не установлен")?;
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let mut slot = core.llm.lock().await;
+        if let Some(old) = slot.take() {
+            old.handle.stop().await;
+        }
+        emit_llm(&app, LlmState { model: Some(config.model.clone()), ..LlmState::of("starting") });
+        match llm::start(&core.supervisor, &engine, &config, &root.join("logs")).await {
+            Ok(l) => {
+                emit_llm(
+                    &app,
+                    LlmState {
+                        state: "ready",
+                        model: Some(l.model.clone()),
+                        port: Some(l.port),
+                        started_in: Some(l.started_in.as_secs_f64()),
+                        error: None,
+                    },
+                );
+                // Сторож: движок упал сам — сообщаем с хвостом лога.
+                let (handle, app2, core2) = (l.handle.clone(), app.clone(), core.clone());
+                *slot = Some(l);
+                tauri::async_runtime::spawn(async move {
+                    let exit = handle.wait().await;
+                    if exit.by_us {
+                        return;
+                    }
+                    let mut slot = core2.llm.lock().await;
+                    if slot.as_ref().is_some_and(|l| l.handle.pid == handle.pid) {
+                        *slot = None;
+                    }
+                    let tail = process::log_tail(&handle.log, 15);
+                    emit_llm(
+                        &app2,
+                        LlmState { error: Some(format!("движок чата упал (код {:?})
+{tail}", exit.code)), ..LlmState::of("crashed") },
+                    );
+                });
+            }
+            Err(e) => emit_llm(&app, LlmState { error: Some(e), ..LlmState::of("crashed") }),
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    if let Some(l) = core.llm.lock().await.take() {
+        l.handle.stop().await;
+    }
+    emit_llm(&app, LlmState::of("stopped"));
+    Ok(())
+}
+
+#[tauri::command]
+async fn llm_ask(core: CoreState<'_>, prompt: String) -> Result<llm::Answer, String> {
+    let port = core.llm.lock().await.as_ref().map(|l| l.port).ok_or("модель не запущена")?;
+    llm::ask(port, &prompt, 256).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("settings.json");
             let settings = settings::Store::open(path);
@@ -323,6 +432,8 @@ pub fn run() {
                 manifest: manifest::Manifest::bundled(),
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
+                supervisor: process::Supervisor::new(),
+                llm: tokio::sync::Mutex::new(None),
             }));
             Ok(())
         })
@@ -340,6 +451,10 @@ pub fn run() {
             task_pause,
             engine_status,
             engine_install,
+            llm_status,
+            llm_start,
+            llm_stop,
+            llm_ask,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -224,3 +224,31 @@ export function formatBytes(b: number): string {
   if (gb >= 1) return `${gb.toFixed(1).replace(".", ",")} ГБ`;
   return `${Math.round(b / 2 ** 20)} МБ`;
 }
+
+// --- Текстовая модель (llama-server) ---
+
+export interface LlmState {
+  state: "starting" | "ready" | "stopped" | "crashed";
+  model: string | null;
+  port: number | null;
+  /** Секунд от запуска до готовности. */
+  started_in: number | null;
+  error: string | null;
+}
+
+export interface LlmAnswer {
+  text: string;
+  tokens: number;
+  /** Токенов в секунду. */
+  speed: number;
+  prompt_ms: number;
+}
+
+export const llmStatus = () => invoke<LlmState>("llm_status");
+export const llmStart = (model: string, ctx?: number) =>
+  invoke<void>("llm_start", { config: ctx ? { model, ctx } : { model } });
+export const llmStop = () => invoke<void>("llm_stop");
+export const llmAsk = (prompt: string) => invoke<LlmAnswer>("llm_ask", { prompt });
+
+export const onLlmState = (cb: (s: LlmState) => void): Promise<UnlistenFn> =>
+  listen<LlmState>("llm://state", (e) => cb(e.payload));
