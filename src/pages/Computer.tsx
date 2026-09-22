@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { BUILD_NAMES, formatBytes, hardwareInfo, type Hardware } from "../api";
 import EngineCard from "../components/EngineCard";
-import ModelCard from "../components/ModelCard";
 
 export default function Computer() {
   const [hw, setHw] = useState<Hardware | null>(null);
@@ -55,9 +54,6 @@ export default function Computer() {
 
       <h2>Движки</h2>
       <EngineCard id="llama.cpp" />
-
-      <h2>Проверка модели</h2>
-      <ModelCard />
     </>
   );
 }

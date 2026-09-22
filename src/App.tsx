@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { settingsGet, updateCheck, type UpdateAvailable } from "./api";
 import Computer from "./pages/Computer";
+import Models from "./pages/Models";
 import Settings from "./pages/Settings";
 import Wizard from "./pages/Wizard";
 import "./App.css";
 
-const TABS = { computer: "Компьютер", settings: "Настройки" } as const;
+const TABS = { models: "Модели", computer: "Компьютер", settings: "Настройки" } as const;
 type Tab = keyof typeof TABS;
 
 export default function App() {
   const [setupDone, setSetupDone] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<Tab>("computer");
+  const [tab, setTab] = useState<Tab>("models");
   const [update, setUpdate] = useState<UpdateAvailable | null>(null);
 
   useEffect(() => {
@@ -60,6 +61,8 @@ export default function App() {
       )}
       {!setupDone ? (
         <Wizard onDone={() => setSetupDone(true)} />
+      ) : tab === "models" ? (
+        <Models />
       ) : tab === "computer" ? (
         <Computer />
       ) : (

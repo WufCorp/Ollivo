@@ -1,11 +1,15 @@
 mod download;
 mod engines;
+mod gguf;
 mod hardware;
 mod hf;
+mod library;
 mod manifest;
 mod llm;
 mod net;
+mod probe;
 mod process;
+mod safetensors;
 mod settings;
 mod update;
 mod setup;
@@ -29,6 +33,8 @@ struct Core {
     supervisor: process::Supervisor,
     /// Найденное обновление программы ждёт согласия пользователя.
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
+    /// Модели, которые человек добавил: пути и разобранные заголовки.
+    library: library::Library,
     /// Запущенная текстовая модель (одна за раз).
     llm: tokio::sync::Mutex<Option<llm::Llm>>,
     /// Отмена текущей загрузки модели: `llm_start` держит `llm` всё время загрузки,
@@ -407,6 +413,46 @@ fn emit_llm(app: &AppHandle, s: LlmState) {
     let _ = app.emit("llm://state", s);
 }
 
+/// Итог добавления одного файла: `error` — почему не взяли.
+#[derive(serde::Serialize)]
+struct Added {
+    file: String,
+    error: Option<String>,
+}
+
+/// Библиотека моделей со «светофором» на текущем железе.
+#[tauri::command]
+async fn models_list(core: CoreState<'_>) -> Result<Vec<library::Model>, String> {
+    let core = core.inner().clone();
+    // Чтение заголовков и NVML — блокирующие, окно ждать не должно.
+    tauri::async_runtime::spawn_blocking(move || core.library.list(&hardware::detect()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Добавляет файлы (кнопка или перетаскивание). Что не вышло — вернём по каждому файлу.
+#[tauri::command]
+async fn models_add(core: CoreState<'_>, paths: Vec<PathBuf>) -> Result<Vec<Added>, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .into_iter()
+            .map(|p| Added {
+                file: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                error: core.library.add(&p).err(),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Убирает модель из списка. Сам файл остаётся на диске — он не наш.
+#[tauri::command]
+fn models_remove(core: CoreState<'_>, path: PathBuf) -> Result<(), String> {
+    core.library.remove(&path)
+}
+
 #[tauri::command]
 async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
     // Занято — значит, идёт загрузка (llm_start держит слот до конца), ждать её не будем.
@@ -565,14 +611,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let path = app.path().app_config_dir()?.join("settings.json");
-            let settings = settings::Store::open(path);
+            let config_dir = app.path().app_config_dir()?;
+            let settings = settings::Store::open(config_dir.join("settings.json"));
             // Кривые настройки прокси не должны мешать запуску: тогда без прокси,
             // а ошибку пользователь увидит при проверке в настройках.
             let downloader = build_downloader(&settings.get()).unwrap_or_default();
             app.manage(Arc::new(Core {
                 settings,
                 manifest: manifest::Manifest::bundled(),
+                library: library::Library::open(config_dir.join("models.json")),
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
@@ -597,6 +644,9 @@ pub fn run() {
             engine_status,
             engine_install,
             engine_repair,
+            models_list,
+            models_add,
+            models_remove,
             llm_status,
             llm_start,
             llm_stop,

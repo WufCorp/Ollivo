@@ -1,11 +1,13 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { llmAsk, llmStart, llmStatus, llmStop, onLlmState, type LlmAnswer, type LlmState } from "../api";
+import { llmAsk, llmStatus, llmStop, onLlmState, type LlmAnswer, type LlmState } from "../api";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
-/** Временная проверка движка: выбрать .gguf, запустить, задать вопрос. Чат — фаза 2. */
-export default function ModelCard() {
+/**
+ * Что сейчас загружено в видеокарту: состояние, вопрос-ответ, «Остановить».
+ * Временная проверка движка — настоящий чат будет отдельным экраном.
+ */
+export default function RunningModel() {
   const [state, setState] = useState<LlmState | null>(null);
   const [prompt, setPrompt] = useState("Привет! Кто ты? Ответь одним предложением.");
   const [answer, setAnswer] = useState<LlmAnswer | null>(null);
@@ -23,14 +25,6 @@ export default function ModelCard() {
     };
   }, []);
 
-  const pick = async () => {
-    const path = await open({ filters: [{ name: "Модель GGUF", extensions: ["gguf"] }] });
-    if (typeof path !== "string") return;
-    setError(null);
-    setAnswer(null);
-    llmStart(path).catch((e) => setError(String(e)));
-  };
-
   const ask = async () => {
     setAsking(true);
     setError(null);
@@ -43,7 +37,7 @@ export default function ModelCard() {
     }
   };
 
-  if (!state) return null;
+  if (!state || state.state === "stopped") return null;
 
   return (
     <div className="card form">
@@ -71,21 +65,18 @@ export default function ModelCard() {
         </>
       )}
 
-      {(state.state === "stopped" || state.state === "crashed") && (
-        <p className="muted">Выберите файл модели .gguf — например, скачанный с HuggingFace.</p>
+      {state.state === "crashed" && (
+        <>
+          <p className="error">Модель не запустилась.</p>
+          {state.error && <pre className="error log">{state.error}</pre>}
+        </>
       )}
-      {state.state === "crashed" && state.error && <pre className="error log">{state.error}</pre>}
       {error && <p className="error">{error}</p>}
 
       <div className="actions">
-        <button className={state.state === "stopped" || state.state === "crashed" ? "" : "secondary"} onClick={pick}>
-          {state.state === "stopped" || state.state === "crashed" ? "Выбрать модель" : "Другая модель"}
+        <button className="secondary" onClick={() => llmStop()}>
+          {state.state === "starting" ? "Отменить" : state.state === "crashed" ? "Понятно" : "Остановить"}
         </button>
-        {(state.state === "ready" || state.state === "starting") && (
-          <button className="secondary" onClick={() => llmStop()}>
-            {state.state === "starting" ? "Отменить" : "Остановить"}
-          </button>
-        )}
       </div>
     </div>
   );

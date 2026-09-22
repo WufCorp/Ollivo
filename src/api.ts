@@ -242,6 +242,99 @@ export function formatBytes(b: number): string {
   return `${Math.round(b / 2 ** 20)} МБ`;
 }
 
+// --- Библиотека моделей ---
+
+export type ModelKind =
+  | "llm"
+  | "projector"
+  | "image"
+  | "video"
+  | "speech_to_text"
+  | "vae"
+  | "lora"
+  | "control_net"
+  | "text_encoder"
+  | "upscaler"
+  | "unknown";
+
+/** Чем запускать. `needs_conversion` — формат не наш, нужна другая версия модели. */
+export type ModelEngine = "llama_cpp" | "comfy_ui" | "whisper_cpp" | "needs_conversion" | "none";
+
+/** Размеры текстовой модели — по ним считается память. */
+export interface LlmDims {
+  layers: number;
+  ctx_train: number;
+  embd: number;
+  heads: number;
+  heads_kv: number;
+  head_dim: number;
+  vocab: number;
+  layer_bytes: number;
+  other_bytes: number;
+}
+
+export interface ModelInfo {
+  format: string;
+  kind: ModelKind;
+  engine: ModelEngine;
+  family: string;
+  name: string | null;
+  license: string | null;
+  params: number;
+  weights_bytes: number;
+  core_params: number;
+  core_bytes: number;
+  precision: string;
+  llm: LlmDims | null;
+  contains: string[];
+  needs: string[];
+  notes: string[];
+}
+
+/** «Светофор»: пойдёт ли модель на этом ПК. `none` — это дополнение, а не модель. */
+export interface Verdict {
+  light: "green" | "yellow" | "red" | "none";
+  headline: string;
+  details: string[];
+  gpu_layers: number | null;
+  ctx: number | null;
+}
+
+export interface Model {
+  path: string;
+  size: number;
+  /** Дата изменения файла, unix-секунды. */
+  mtime: number;
+  /** Когда добавили, unix-секунды. */
+  added: number;
+  info: ModelInfo;
+  file: string;
+  kind_ru: string;
+  /** Файла нет на месте. */
+  missing: boolean;
+  verdict: Verdict | null;
+}
+
+/** Итог добавления одного файла: `error` — почему не взяли. */
+export interface AddedModel {
+  file: string;
+  error: string | null;
+}
+
+export const modelsList = () => invoke<Model[]>("models_list");
+
+export const modelsAdd = (paths: string[]) => invoke<AddedModel[]>("models_add", { paths });
+
+/** Убирает из списка; файл на диске остаётся. */
+export const modelsRemove = (path: string) => invoke<void>("models_remove", { path });
+
+export const LIGHTS: Record<Verdict["light"], string> = {
+  green: "🟢",
+  yellow: "🟡",
+  red: "🔴",
+  none: "⚪",
+};
+
 // --- Текстовая модель (llama-server) ---
 
 export interface LlmState {
