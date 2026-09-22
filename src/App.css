@@ -404,3 +404,41 @@ button.link {
 .update-bar span {
   flex: 1;
 }
+
+/* --- Библиотека моделей --- */
+
+.dropzone {
+  padding: 22px 18px;
+  border: 2px dashed rgba(128, 128, 128, 0.4);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.dropzone.over {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.dropzone p {
+  margin: 0 0 10px;
+}
+
+.dropzone p:last-child {
+  margin: 10px 0 0;
+}
+
+.card.model {
+  margin-top: 14px;
+}
+
+.model-title {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.model-title .light {
+  font-size: 18px;
+}
