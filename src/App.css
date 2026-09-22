@@ -43,7 +43,7 @@ h1 {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 10px 24px;
-  margin-top: 32px;
+  margin: 0;
 }
 
 .facts dt {
@@ -52,4 +52,145 @@ h1 {
 
 .facts dd {
   margin: 0;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+}
+
+h2 {
+  margin: 32px 0 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.small {
+  font-size: 13px;
+}
+
+.ok {
+  color: #2e8b57;
+}
+
+button {
+  font: inherit;
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: #4a5bdc;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.secondary,
+button.tab {
+  background: transparent;
+  color: inherit;
+  border-color: rgba(128, 128, 128, 0.35);
+}
+
+button.tab {
+  border: none;
+  opacity: 0.65;
+}
+
+button.tab.active {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.card {
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.09);
+}
+
+.card p {
+  margin: 0 0 10px;
+}
+
+progress {
+  width: 100%;
+  height: 8px;
+  margin-bottom: 10px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form p {
+  margin: -6px 0 0;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
+label.grow {
+  flex: 1;
+}
+
+label.port {
+  width: 90px;
+}
+
+input:not([type="checkbox"]),
+select {
+  font: inherit;
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+}
+
+select option {
+  color: #1a1a1a;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

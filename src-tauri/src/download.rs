@@ -97,19 +97,29 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new() -> Self {
+        Self::with_proxy(None)
+    }
+
+    /// `proxy: None` — напрямую, без системного прокси Windows: программа ходит
+    /// в сеть только так, как настроено в Ollivo.
+    pub fn with_proxy(proxy: Option<reqwest::Proxy>) -> Self {
         let ua = concat!("Ollivo/", env!("CARGO_PKG_VERSION"));
         // Только HTTP/1.1: по HTTP/2 все потоки шли бы через одно TCP-соединение,
         // и параллельная загрузка теряла бы смысл. Замер на HF: 1 поток — 0,6 МБ/с,
         // 8 потоков — 2,3 МБ/с (по HTTP/2 было те же 0,6).
         let build = |redirects| {
-            reqwest::Client::builder()
+            let b = reqwest::Client::builder()
                 .user_agent(ua)
                 .http1_only()
                 .redirect(redirects)
                 .connect_timeout(Duration::from_secs(20))
-                .read_timeout(Duration::from_secs(60))
-                .build()
-                .expect("HTTP-клиент")
+                .read_timeout(Duration::from_secs(60));
+            match proxy.clone() {
+                Some(p) => b.proxy(p),
+                None => b.no_proxy(),
+            }
+            .build()
+            .expect("HTTP-клиент")
         };
         Self {
             client: build(reqwest::redirect::Policy::limited(10)),
@@ -474,69 +484,7 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::TcpListener;
-    use std::sync::atomic::AtomicUsize;
-
-    /// Мини-сервер: отдаёт `body`, понимает Range, умеет сбоить.
-    struct Server {
-        url: String,
-        requests: Arc<AtomicUsize>,
-    }
-
-    fn serve(body: Vec<u8>, ranges: bool, fail_every: usize) -> Server {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
-        let requests = Arc::new(AtomicUsize::new(0));
-        let (body, count) = (Arc::new(body), requests.clone());
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let (body, count) = (body.clone(), count.clone());
-                std::thread::spawn(move || {
-                    let mut stream = stream.unwrap();
-                    let mut reader = BufReader::new(stream.try_clone().unwrap());
-                    let mut range = None;
-                    loop {
-                        let mut line = String::new();
-                        if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
-                            break;
-                        }
-                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
-                            let (a, b) = v.trim().split_once('-').unwrap();
-                            range = Some((a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()));
-                        }
-                    }
-                    let n = count.fetch_add(1, Ordering::SeqCst) + 1;
-                    if fail_every > 0 && n % fail_every == 0 {
-                        let _ = stream.write_all(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                        return;
-                    }
-                    let (head, data) = match range.filter(|_| ranges) {
-                        Some((a, b)) => (
-                            format!(
-                                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{}\r\nContent-Length: {}\r\n",
-                                body.len(),
-                                b - a + 1
-                            ),
-                            &body[a..=b],
-                        ),
-                        None => (format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n", body.len()), &body[..]),
-                    };
-                    let _ = stream.write_all(format!("{head}Connection: close\r\n\r\n").as_bytes());
-                    let _ = stream.write_all(data);
-                });
-            }
-        });
-        Server { url, requests }
-    }
-
-    fn body(len: usize) -> Vec<u8> {
-        (0..len).map(|i| (i * 31 % 251) as u8).collect()
-    }
-
-    fn sha(data: &[u8]) -> String {
-        hex::encode(Sha256::digest(data))
-    }
+    use crate::testserver::{body, serve, sha};
 
     fn request(urls: Vec<String>, dest: PathBuf, sha256: Option<String>) -> Request {
         Request { urls, dest, sha256, connections: 4, chunk_size: 64 * 1024 }
@@ -630,6 +578,21 @@ mod tests {
         let secs = started.elapsed().as_secs_f64();
         println!("{size} байт за {secs:.1} с, {:.1} МБ/с", size as f64 / secs / MIB as f64);
         assert_eq!(sha256_file(&dest).unwrap(), probe.sha256.unwrap());
+    }
+
+    #[tokio::test]
+    async fn goes_through_http_proxy() {
+        // Тестовый сервер играет роль прокси: сайта `nohost.invalid` не существует,
+        // так что файл может прийти только через прокси.
+        let data = body(300_000);
+        let proxy = serve(data.clone(), true, 0);
+        let addr = proxy.url.trim_end_matches("/file.bin").to_string();
+        let dl = Downloader::with_proxy(Some(reqwest::Proxy::all(&addr).unwrap()));
+        let dest = tmp("proxy");
+        let req = request(vec!["http://nohost.invalid/file.bin".into()], dest.clone(), Some(sha(&data)));
+        dl.download(&req, &CancellationToken::new(), &|_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert!(proxy.requests.load(Ordering::SeqCst) > 1);
     }
 
     #[tokio::test]
