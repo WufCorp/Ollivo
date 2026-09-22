@@ -704,6 +704,51 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     v
 }
 
+/// Прикидка для файла, которого ещё нет на диске: каталог знает только размер.
+/// Размеров модели (слои, головы) без заголовка не узнать, поэтому память разговора
+/// и рабочие буферы считаем долей от весов — точный расчёт будет после скачивания.
+/// `active_bytes` — сколько весов читается на каждый токен: у обычной модели это все
+/// веса, у модели «из частей» (MoE) — только работающая часть.
+pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
+    let budget = budget(hw);
+    let active = if active_bytes == 0 { weights } else { active_bytes.min(weights) };
+    // Контекст 4–8 тысяч токенов плюс буферы: на 7B это около гигабайта.
+    let overhead = 700 * MIB + weights / 8;
+    let need = weights + overhead;
+    let mut v = if hw.gpu.is_some() && need <= budget {
+        let mut v = verdict(Light::Green, "поместится в видеокарту целиком");
+        if let Some(tps) = speed(active, 0, hw) {
+            v.details.push(format!("скорость примерно {tps:.0} токенов/с"));
+        }
+        v
+    } else if need <= budget + hw.ram_avail {
+        // Часть слоёв на видеокарте, остальное в ОЗУ: скорость между двумя пределами.
+        let on_gpu = budget.saturating_sub(overhead).min(weights);
+        let share = on_gpu as f64 / weights.max(1) as f64;
+        let tps = speed((active as f64 * share) as u64, (active as f64 * (1.0 - share)) as u64, hw);
+        // Меньше трёх токенов в секунду — это слово в секунду: человек должен узнать
+        // об этом до того, как скачает десяток гигабайт.
+        let mut v = match tps {
+            Some(t) if t < 3.0 => verdict(Light::Yellow, "поместится, но отвечать будет очень медленно"),
+            _ if on_gpu == 0 => verdict(Light::Yellow, "только на процессоре — ответы будут медленными"),
+            _ => verdict(Light::Yellow, "поместится частично — будет медленнее"),
+        };
+        if let Some(t) = tps {
+            v.details.push(format!("скорость примерно {t:.1} токенов/с"));
+        }
+        v
+    } else {
+        verdict(Light::Red, "не хватит памяти — возьмите версию поменьше")
+    };
+    v.details.push(format!(
+        "нужно ~{}, свободно {} видеопамяти и {} оперативной",
+        fmt_bytes(need),
+        fmt_bytes(budget),
+        fmt_bytes(hw.ram_avail)
+    ));
+    v
+}
+
 /// Грубая оценка скорости генерации: на каждый токен читаются все веса.
 /// Эффективность ~60% от пиковой пропускной способности; ОЗУ считаем 40 ГБ/с.
 fn speed(gpu_bytes: u64, cpu_bytes: u64, hw: &Hardware) -> Option<f64> {

@@ -514,6 +514,37 @@ button.link {
   font-size: 18px;
 }
 
+/* Строка варианта модели в каталоге: «светофор», описание, кнопка. */
+.variant {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  margin-top: 10px;
+}
+
+.variant .light {
+  font-size: 18px;
+}
+
+.variant-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.variant-text p {
+  margin: 0 0 4px;
+}
+
+.variant progress {
+  margin: 6px 0 4px;
+}
+
+label.check.filter {
+  margin: 12px 0 4px;
+}
+
 /* --- Чат --- */
 
 .talk {
