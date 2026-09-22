@@ -32,6 +32,13 @@ pub struct Request {
     pub chunk_size: u64,
 }
 
+impl Request {
+    /// Обычная загрузка: откуда, куда и чем проверить.
+    pub fn new(urls: Vec<String>, dest: PathBuf, sha256: Option<String>) -> Self {
+        Self { urls, dest, sha256, connections: default_connections(), chunk_size: default_chunk() }
+    }
+}
+
 fn default_connections() -> usize {
     8
 }

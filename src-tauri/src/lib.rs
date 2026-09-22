@@ -1,3 +1,4 @@
+mod catalog;
 mod chats;
 mod download;
 mod engines;
@@ -37,6 +38,8 @@ struct Core {
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     /// Разговоры: по файлу на разговор.
     chats: chats::Store,
+    /// Подборка моделей для каталога.
+    catalog: catalog::Catalog,
     /// Модели, которые человек добавил: пути и разобранные заголовки.
     library: library::Library,
     /// Запущенная текстовая модель (одна за раз).
@@ -284,6 +287,13 @@ fn download_start(
     Ok(())
 }
 
+/// Какие фоновые задачи идут прямо сейчас. Нужно окну, когда экран открыли заново:
+/// события прогресса оно пропустило и без этого списка считало бы, что загрузки нет.
+#[tauri::command]
+fn tasks_running(core: CoreState<'_>) -> Vec<String> {
+    core.running.lock().unwrap().keys().cloned().collect()
+}
+
 /// Пауза загрузки или установки: недокачанное остаётся, повторный запуск продолжит.
 #[tauri::command]
 fn task_pause(core: CoreState<'_>, id: String) {
@@ -441,6 +451,158 @@ impl LlmState {
 
 fn emit_llm(app: &AppHandle, s: LlmState) {
     let _ = app.emit("llm://state", s);
+}
+
+/// Куда кладём скачанную модель: `<папка данных>\models\<автор>\<репозиторий>\<файл>`.
+/// Имена приходят с сервера, поэтому в путь пускаем только простые куски: ни `..`,
+/// ни дисков, ни вложенных папок — иначе чужой репозиторий записал бы файл куда угодно.
+fn model_dest(root: &std::path::Path, repo: &str, name: &str) -> Result<PathBuf, String> {
+    let plain = |s: &str| {
+        !s.is_empty()
+            && s.len() < 120
+            && !s.starts_with('.')
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    };
+    let (author, model) = repo.split_once('/').ok_or("непонятный репозиторий")?;
+    // Файл может лежать в подпапке репозитория — берём только имя.
+    let file = name.rsplit('/').next().unwrap_or(name);
+    if !plain(author) || !plain(model) || !plain(file) || !file.to_ascii_lowercase().ends_with(".gguf") {
+        return Err("непонятное имя файла".into());
+    }
+    Ok(root.join("models").join(author).join(model).join(file))
+}
+
+/// Вариант модели для окна: плюс путь, если файл уже скачан.
+#[derive(serde::Serialize)]
+struct VariantView {
+    #[serde(flatten)]
+    variant: catalog::Variant,
+    /// Файл уже лежит на диске — качать второй раз не надо.
+    downloaded: Option<PathBuf>,
+}
+
+impl VariantView {
+    fn new(root: &std::path::Path, repo: &str, variant: catalog::Variant) -> Self {
+        let downloaded = model_dest(root, repo, &variant.name).ok().filter(|p| p.is_file());
+        Self { variant, downloaded }
+    }
+}
+
+/// Модель из подборки: без списка файлов — вместо него готовые варианты.
+#[derive(serde::Serialize)]
+struct PickView {
+    id: String,
+    title: String,
+    vendor: String,
+    about: String,
+    tags: Vec<String>,
+    license: Option<String>,
+    repo: String,
+    params: u64,
+    variants: Vec<VariantView>,
+}
+
+/// Подборка проверенных моделей со «светофором» на этом ПК. Сеть не нужна.
+#[tauri::command]
+async fn catalog_picks(core: CoreState<'_>) -> Result<Vec<PickView>, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let hw = hardware::detect();
+        let root = core.data_dir();
+        core.catalog
+            .models
+            .iter()
+            .map(|m| PickView {
+                id: m.id.clone(),
+                title: m.title.clone(),
+                vendor: m.vendor.clone(),
+                about: m.about.clone(),
+                tags: m.tags.clone(),
+                license: m.license.clone(),
+                repo: m.repo.clone(),
+                params: m.params,
+                variants: m
+                    .variants(&hw)
+                    .into_iter()
+                    .map(|v| VariantView::new(&root, &m.repo, v))
+                    .collect(),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Поиск моделей по HuggingFace через выбранное зеркало и прокси.
+#[tauri::command]
+async fn catalog_search(core: CoreState<'_>, query: String) -> Result<Vec<catalog::Repo>, String> {
+    let base = core.settings.get().hf.base()?;
+    let dl = core.downloader();
+    catalog::search(dl.client(), &base, &hf::load_token(), &query).await
+}
+
+#[derive(serde::Serialize)]
+struct FilesView {
+    variants: Vec<VariantView>,
+    split: usize,
+}
+
+/// Что можно скачать из репозитория: варианты сжатия со «светофором».
+#[tauri::command]
+async fn catalog_files(core: CoreState<'_>, repo: String) -> Result<FilesView, String> {
+    let base = core.settings.get().hf.base()?;
+    let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
+    let dl = core.downloader();
+    let found = catalog::files(dl.client(), &base, &hf::load_token(), &repo, &hw).await?;
+    let root = core.data_dir();
+    Ok(FilesView {
+        variants: found.variants.into_iter().map(|v| VariantView::new(&root, &repo, v)).collect(),
+        split: found.split,
+    })
+}
+
+/// Скачивание модели в фоне. Прогресс — `download://progress`, итог — `download://finished`;
+/// id задачи возвращается сразу, им же ставится пауза. Скачанное сразу попадает в библиотеку.
+#[tauri::command]
+fn catalog_download(
+    app: AppHandle,
+    core: CoreState<'_>,
+    repo: String,
+    name: String,
+    sha256: Option<String>,
+    title: Option<String>,
+) -> Result<String, String> {
+    let base = core.settings.get().hf.base()?;
+    let dest = model_dest(&core.data_dir(), &repo, &name)?;
+    let request = download::Request::new(vec![hf::file_url(&base, &repo, "main", &name)], dest.clone(), sha256);
+    let id = format!("model:{repo}/{name}");
+    let cancel = core.start(&id)?;
+    let core = core.inner().clone();
+    let task = id.clone();
+    tauri::async_runtime::spawn(async move {
+        let (progress_app, progress_id) = (app.clone(), task.clone());
+        let on_progress = move |progress| {
+            let _ = progress_app
+                .emit("download://progress", DownloadProgress { id: progress_id.clone(), progress });
+        };
+        let res = core.downloader().download(&request, &cancel, &on_progress).await;
+        core.finish(&task);
+        let (error, kind, result) = match res {
+            // Заголовок читается с диска — это надолго, окно ждать не должно.
+            Ok(()) => {
+                let (lib, path) = (core.clone(), dest.clone());
+                match tauri::async_runtime::spawn_blocking(move || lib.library.add(&path, title)).await {
+                    Ok(Ok(_)) => (None, None, Some(dest)),
+                    Ok(Err(e)) => (Some(e), Some("broken"), None),
+                    Err(e) => (Some(e.to_string()), Some("other"), None),
+                }
+            }
+            Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
+            Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
+        };
+        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+    });
+    Ok(id)
 }
 
 /// Итог добавления одного файла: `error` — почему не взяли.
@@ -763,6 +925,7 @@ pub fn run() {
             app.manage(Arc::new(Core {
                 settings,
                 manifest: manifest::Manifest::bundled(),
+                catalog: catalog::Catalog::bundled(),
                 library: library::Library::open(config_dir.join("models.json")),
                 chats: chats::Store::new(config_dir.join("chats")),
                 downloader: RwLock::new(Arc::new(downloader)),
@@ -787,9 +950,14 @@ pub fn run() {
             vcredist_install,
             download_start,
             task_pause,
+            tasks_running,
             engine_status,
             engine_install,
             engine_repair,
+            catalog_picks,
+            catalog_search,
+            catalog_files,
+            catalog_download,
             models_list,
             models_add,
             models_scan,
@@ -808,4 +976,36 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Имена файлов и репозиториев приходят с чужого сервера: в путь не должно
+    /// пролезть ничего, кроме простого имени.
+    #[test]
+    fn download_path_stays_inside_models_folder() {
+        let root = std::path::Path::new(r"D:\Ollivo");
+        let ok = model_dest(root, "unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf").unwrap();
+        assert_eq!(ok, root.join("models").join("unsloth").join("Qwen3.5-9B-GGUF").join("Qwen3.5-9B-Q4_K_M.gguf"));
+        // Всё, что похоже на путь, схлопывается до имени файла и остаётся в своей папке.
+        for name in ["sub/dir/model-Q4_K_M.gguf", "C:/Windows/model-Q4_K_M.gguf"] {
+            let p = model_dest(root, "a/b", name).unwrap();
+            assert_eq!(p.parent().unwrap(), root.join("models").join("a").join("b"), "{name}");
+            assert_eq!(p.file_name().unwrap(), "model-Q4_K_M.gguf", "{name}");
+        }
+        // А что до имени файла не сводится — отвергаем.
+        for (repo, name) in [
+            ("../../etc", "model-Q4_K_M.gguf"),
+            ("a/..", "model-Q4_K_M.gguf"),
+            ("a/b", r"..\..\evil.gguf"),
+            ("a/b", r"C:\Windows\evil.gguf"),
+            ("a/b", ".hidden.gguf"),
+            ("a/b", "notes.txt"),
+            ("no-slash", "model-Q4_K_M.gguf"),
+        ] {
+            assert!(model_dest(root, repo, name).is_err(), "{repo} {name}");
+        }
+    }
 }

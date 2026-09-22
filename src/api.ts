@@ -49,6 +49,10 @@ export interface DownloadFinished {
   id: string;
   /** null — успешно, "paused" — на паузе, иначе текст ошибки. */
   error: string | null;
+  /** `net` | `disk` | `broken` | `other`. */
+  kind?: string | null;
+  /** Путь к скачанному файлу — у загрузок из каталога. */
+  result?: string | null;
 }
 
 export const hardwareInfo = () => invoke<Hardware>("hardware_info");
@@ -56,8 +60,11 @@ export const hardwareInfo = () => invoke<Hardware>("hardware_info");
 export const downloadStart = (id: string, request: DownloadRequest) =>
   invoke<void>("download_start", { id, request });
 
-/** Пауза загрузки или установки (`engine:<id>`). */
+/** Пауза загрузки или установки: `engine:<id>`, `model:<репозиторий>/<файл>`. */
 export const taskPause = (id: string) => invoke<void>("task_pause", { id });
+
+/** Идущие сейчас задачи: `engine:<id>`, `model:<репозиторий>/<файл>`. */
+export const tasksRunning = () => invoke<string[]>("tasks_running");
 
 export const onDownloadProgress = (cb: (p: DownloadProgress) => void): Promise<UnlistenFn> =>
   listen<DownloadProgress>("download://progress", (e) => cb(e.payload));
@@ -350,6 +357,64 @@ export const LIGHTS: Record<Verdict["light"], string> = {
   red: "🔴",
   none: "⚪",
 };
+
+// --- Каталог моделей ---
+
+/** Вариант модели: что за сжатие, сколько весит, пойдёт ли на этом ПК. */
+export interface CatalogVariant {
+  quant: string;
+  /** Имя файла в репозитории. */
+  name: string;
+  size: number;
+  sha256: string | null;
+  /** Что значит это сжатие человеческими словами. */
+  quality: string;
+  verdict: Verdict;
+  /** Путь на диске, если файл уже скачан. */
+  downloaded: string | null;
+}
+
+export interface CatalogPick {
+  id: string;
+  title: string;
+  /** Кто сделал модель. */
+  vendor: string;
+  about: string;
+  tags: string[];
+  license: string | null;
+  repo: string;
+  params: number;
+  variants: CatalogVariant[];
+}
+
+/** Репозиторий в выдаче поиска по HuggingFace. */
+export interface CatalogRepo {
+  repo: string;
+  name: string;
+  author: string;
+  downloads: number;
+  likes: number;
+  /** Закрытая модель: нужен токен и согласие на её странице. */
+  gated: boolean;
+  license: string | null;
+}
+
+export interface CatalogFiles {
+  variants: CatalogVariant[];
+  /** Модели, разрезанные на части: такие пока не качаем. */
+  split: number;
+}
+
+/** Подборка проверенных моделей. Сеть не нужна. */
+export const catalogPicks = () => invoke<CatalogPick[]>("catalog_picks");
+
+export const catalogSearch = (query: string) => invoke<CatalogRepo[]>("catalog_search", { query });
+
+export const catalogFiles = (repo: string) => invoke<CatalogFiles>("catalog_files", { repo });
+
+/** Качает файл в фоне; возвращает id задачи — по нему идут прогресс и пауза. */
+export const catalogDownload = (repo: string, name: string, sha256: string | null, title?: string) =>
+  invoke<string>("catalog_download", { repo, name, sha256, title: title ?? null });
 
 // --- Текстовая модель (llama-server) ---
 

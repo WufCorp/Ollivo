@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { settingsGet, updateCheck, type UpdateAvailable } from "./api";
 import ChatList from "./components/ChatList";
+import Catalog from "./pages/Catalog";
 import Chat from "./pages/Chat";
 import Computer from "./pages/Computer";
 import Models from "./pages/Models";
@@ -8,7 +9,13 @@ import Settings from "./pages/Settings";
 import Wizard from "./pages/Wizard";
 import "./App.css";
 
-const TABS = { chat: "Чат", models: "Модели", computer: "Компьютер", settings: "Настройки" } as const;
+const TABS = {
+  chat: "Чат",
+  catalog: "Каталог",
+  models: "Модели",
+  computer: "Компьютер",
+  settings: "Настройки",
+} as const;
 type Tab = keyof typeof TABS;
 
 export default function App() {
@@ -94,6 +101,8 @@ export default function App() {
               }}
               onGoToModels={() => setTab("models")}
             />
+          ) : tab === "catalog" ? (
+            <Catalog onGoToChat={() => setTab("chat")} />
           ) : tab === "models" ? (
             <Models onGoToChat={() => setTab("chat")} />
           ) : tab === "computer" ? (
