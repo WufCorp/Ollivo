@@ -2712,9 +2712,11 @@ dependencies = [
 name = "ollivo"
 version = "0.0.2"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "hex",
  "keyring",
+ "minisign-verify",
  "nvml-wrapper",
  "reqwest",
  "serde",

@@ -121,7 +121,9 @@ $manifest = [ordered]@{
 }
 $json = $manifest | ConvertTo-Json -Depth 5
 $jsonPath = Join-Path ([System.IO.Path]::GetTempPath()) $file
-Set-Content -Path $jsonPath -Value $json -Encoding utf8
+# Без BOM: Set-Content -Encoding utf8 в Windows PowerShell добавляет его,
+# и программа не может разобрать такой JSON («не получилось связаться с сервером»).
+[System.IO.File]::WriteAllText($jsonPath, $json, (New-Object System.Text.UTF8Encoding $false))
 
 Write-Host "`n${file}:`n$json`n"
 if ($DryRun) { Write-Host 'Проверка без отправки: в S3 ничего не загружено.'; exit 0 }

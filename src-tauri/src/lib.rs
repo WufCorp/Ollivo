@@ -509,10 +509,16 @@ fn proxy_url(s: &settings::Settings) -> Option<url::Url> {
 
 /// Ищет обновление в выбранном канале. `None` — установлена свежая версия.
 #[tauri::command]
-async fn update_check(app: AppHandle, core: CoreState<'_>) -> Result<Option<update::Available>, String> {
+/// `channel` — выбранный в окне настроек: проверяем то, что выбрано, даже если ещё не сохранено.
+async fn update_check(
+    app: AppHandle,
+    core: CoreState<'_>,
+    channel: Option<String>,
+) -> Result<Option<update::Available>, String> {
     let s = core.settings.get();
+    let channel = channel.unwrap_or_else(|| s.updates.channel.clone());
     let core = core.inner().clone();
-    let found = update::check(&app, &s.updates.channel, proxy_url(&s)).await?;
+    let found = update::check(&app, &channel, proxy_url(&s)).await?;
     let info = found.as_ref().map(|u| update::Available {
         version: u.version.clone(),
         current: u.current_version.clone(),

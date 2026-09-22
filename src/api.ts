@@ -284,8 +284,9 @@ export interface UpdateProgress {
   total: number | null;
 }
 
-/** null — установлена свежая версия. */
-export const updateCheck = () => invoke<UpdateAvailable | null>("update_check");
+/** null — установлена свежая версия. `channel` — выбранный в настройках, ещё не сохранённый. */
+export const updateCheck = (channel?: string) =>
+  invoke<UpdateAvailable | null>("update_check", { channel: channel ?? null });
 
 /** Ставит найденное обновление; по окончании программа перезапустится сама. */
 export const updateInstall = () => invoke<void>("update_install");

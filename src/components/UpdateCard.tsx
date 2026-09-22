@@ -46,7 +46,7 @@ export default function UpdateCard({
     setError(null);
     setFresh(false);
     try {
-      const u = await updateCheck();
+      const u = await updateCheck(settings.channel);
       setFound(u);
       setFresh(!u);
     } catch (e) {
@@ -76,7 +76,9 @@ export default function UpdateCard({
         />
         Проверять обновления автоматически
       </label>
-      <p className="muted small">Выключено — Ollivo не выходит в интернет сама, проверить можно кнопкой.</p>
+      <p className="muted small">
+        Если выключить, Ollivo не будет выходить в интернет сама — проверяйте кнопкой ниже.
+      </p>
 
       <label>
         Версии
