@@ -50,3 +50,7 @@ strip = true
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+# Проверка подписи обновления в тесте — те же крейты, что у плагина updater.
+minisign-verify = "0.2"
+base64 = "0.22"
+
