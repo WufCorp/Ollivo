@@ -66,6 +66,7 @@ export const onDownloadFinished = (cb: (f: DownloadFinished) => void): Promise<U
 
 export function formatBytes(b: number): string {
   const gb = b / 2 ** 30;
+  if (gb >= 1000) return `${(gb / 1024).toFixed(1).replace(".", ",")} ТБ`;
   if (gb >= 1) return `${gb.toFixed(1).replace(".", ",")} ГБ`;
   return `${Math.round(b / 2 ** 20)} МБ`;
 }
