@@ -63,3 +63,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ключом `--ignored`.
 
 Выпуск новой версии — [RELEASE.md](RELEASE.md).
+
+## Документация
+
+Рабочая документация проекта — в папке [docs/](docs/): решения с обоснованием, ход работ
+по фазам, замеры и грабли. Коротко и целиком для нового человека — [HANDOFF.md](HANDOFF.md).
