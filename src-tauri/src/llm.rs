@@ -5,6 +5,7 @@
 //! медленные из-за компиляции шейдеров (замер фазы 0: ~1,4 с до первого токена).
 
 use crate::engines::Installed;
+use crate::presets::{Role, Style};
 use crate::process::{self, Handle, Supervisor};
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -135,6 +136,8 @@ pub struct Stats {
 pub async fn chat(
     port: u16,
     messages: &[Msg],
+    role: &Role,
+    style: &Style,
     cancel: &CancellationToken,
     on_delta: impl Fn(&str),
 ) -> Result<Stats, String> {
@@ -144,8 +147,14 @@ pub async fn chat(
         // а обрыв — дело кнопки «Остановить».
         .build()
         .map_err(|e| e.to_string())?;
+    // Системный промпт роли — первой репликой. В историю разговора он не пишется:
+    // сменили роль — следующий ответ идёт уже по новой.
+    let system = Msg { role: "system".into(), content: crate::presets::system(role, messages) };
+    let all: Vec<&Msg> = std::iter::once(&system).chain(messages).collect();
     let body = serde_json::json!({
-        "messages": messages,
+        "messages": all,
+        "temperature": style.temperature,
+        "top_p": style.top_p,
         "stream": true,
         // Просим итоговые числа в последнем куске.
         "stream_options": {"include_usage": true},
@@ -239,6 +248,7 @@ pub async fn ask(port: u16, prompt: &str, max_tokens: u32) -> Result<Answer, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presets;
 
     #[test]
     fn args_bind_localhost_without_webui() {
@@ -286,7 +296,7 @@ mod tests {
 
         let msgs = vec![Msg { role: "user".into(), content: "Посчитай вслух от 1 до 20.".into() }];
         let chunks = std::sync::Mutex::new(Vec::<String>::new());
-        let stats = chat(llm.port, &msgs, &CancellationToken::new(), |t| {
+        let stats = chat(llm.port, &msgs, presets::role(""), presets::style(""), &CancellationToken::new(), |t| {
             chunks.lock().unwrap().push(t.to_string())
         })
         .await
@@ -306,9 +316,51 @@ mod tests {
         });
         let t = Instant::now();
         let long = vec![Msg { role: "user".into(), content: "Напиши рассказ на 2000 слов.".into() }];
-        chat(llm.port, &long, &cancel, |_| {}).await.unwrap();
+        chat(llm.port, &long, presets::role(""), presets::style(""), &cancel, |_| {}).await.unwrap();
         println!("остановлено за {:.1} с", t.elapsed().as_secs_f64());
         assert!(t.elapsed() < Duration::from_secs(5));
+        llm.handle.stop().await;
+    }
+
+    /// Роли на настоящей модели: переводчик переводит в обе стороны и не болтает.
+    /// `cargo test llm::tests::real_roles -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_roles() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        let sup = Supervisor::new();
+        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-roles-test"), &CancellationToken::new())
+            .await
+            .unwrap();
+        let ask = |role: &'static str, style: &'static str, text: &'static str| {
+            let port = llm.port;
+            async move {
+                let out = std::sync::Mutex::new(String::new());
+                let msgs = vec![Msg { role: "user".into(), content: text.into() }];
+                chat(port, &msgs, presets::role(role), presets::style(style), &CancellationToken::new(), |t| {
+                    out.lock().unwrap().push_str(t)
+                })
+                .await
+                .unwrap();
+                let out = out.into_inner().unwrap();
+                println!("[{role}/{style}] {text}
+→ {out}
+");
+                out
+            }
+        };
+        let cyrillic = |s: &str| s.chars().any(|c| ('а'..='я').contains(&c.to_lowercase().next().unwrap()));
+
+        let en = ask("translator", "precise", "Сегодня хорошая погода, пойдём гулять в парк.").await;
+        assert!(!cyrillic(&en), "с русского — на английский");
+        let ru = ask("translator", "precise", "The cat is sleeping on the sofa.").await;
+        assert!(cyrillic(&ru), "с английского — на русский");
+        ask("coder", "precise", "Как на Python прочитать файл построчно?").await;
+        for style in ["precise", "creative"] {
+            ask("helper", style, "Придумай название для кофейни.").await;
+        }
         llm.handle.stop().await;
     }
 

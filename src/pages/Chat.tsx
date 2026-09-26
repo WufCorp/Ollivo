@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  chatPresets,
   chatsGet,
   chatsSave,
   llmChat,
@@ -9,6 +10,8 @@ import {
   onLlmState,
   onLlmToken,
   type Chat as Talk,
+  type ChatRole,
+  type ChatStyle,
   type LlmState,
   type LlmStats,
   type Msg,
@@ -38,6 +41,11 @@ export default function Chat({
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [answering, setAnswering] = useState(false);
+  const [roles, setRoles] = useState<ChatRole[]>([]);
+  const [styles, setStyles] = useState<ChatStyle[]>([]);
+  // Новый разговор наследует роль и манеру прошлого: переводчику не выбирать их каждый раз.
+  const [role, setRole] = useState("helper");
+  const [style, setStyle] = useState("balanced");
   const bottom = useRef<HTMLDivElement>(null);
 
   // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
@@ -49,6 +57,10 @@ export default function Chat({
 
   useEffect(() => {
     llmStatus().then(setLlm);
+    chatPresets().then((p) => {
+      setRoles(p.roles);
+      setStyles(p.styles);
+    });
     const subs = [
       // Модель могли запустить или остановить на вкладке «Модели».
       onLlmState(setLlm),
@@ -85,6 +97,8 @@ export default function Chat({
       if (!c) return;
       setLines(c.messages);
       setTitle(c.title);
+      setRole(c.role || "helper");
+      setStyle(c.style || "balanced");
     });
   }, [chatId]);
 
@@ -95,7 +109,16 @@ export default function Chat({
         .filter((l) => l.content.trim())
         .map(({ role, content }) => ({ role, content }));
       if (messages.length) {
-        chatsSave({ id: chatId ?? "", title, created: 0, updated: 0, model: llm?.model ?? null, messages }).then(
+        chatsSave({
+          id: chatId ?? "",
+          title,
+          created: 0,
+          updated: 0,
+          model: llm?.model ?? null,
+          role,
+          style,
+          messages,
+        }).then(
           (saved) => {
             savedId.current = saved.id;
             setTitle(saved.title);
@@ -116,7 +139,11 @@ export default function Chat({
     setLines([...talk, { role: "assistant", content: "" }]);
     setAnswering(true);
     try {
-      await llmChat(talk.map(({ role, content }) => ({ role, content })));
+      await llmChat(
+        talk.map(({ role, content }) => ({ role, content })),
+        role,
+        style,
+      );
     } catch (e) {
       setAnswering(false);
       setLines((prev) => [...prev.slice(0, -1), { role: "assistant", content: "", error: String(e) }]);
@@ -144,6 +171,15 @@ export default function Chat({
     }
   };
 
+  /** Роль тянет за собой подходящую манеру; её потом можно поменять. */
+  const pickRole = (id: string) => {
+    setRole(id);
+    const r = roles.find((x) => x.id === id);
+    if (r) setStyle(r.style);
+  };
+
+  const roleNow = roles.find((r) => r.id === role);
+
   if (!llm) return null;
 
   if (llm.state !== "ready") {
@@ -169,7 +205,13 @@ export default function Chat({
   return (
     <>
       <div className="talk">
-        {lines.length === 0 && <p className="muted">Спросите что угодно — модель отвечает прямо на вашем компьютере.</p>}
+        {lines.length === 0 && (
+          <p className="muted">
+            {role === "helper" || !roleNow
+              ? "Спросите что угодно — модель отвечает прямо на вашем компьютере."
+              : `${roleNow.name}: ${roleNow.hint.toLowerCase()}.`}
+          </p>
+        )}
         {lines.map((l, i) => (
           <div key={i} className={l.role === "user" ? "line you" : "line bot"}>
             {l.role === "user" ? (
@@ -215,6 +257,34 @@ export default function Chat({
               Отправить
             </button>
           )}
+          <select
+            className="role"
+            value={role}
+            title={roleNow?.hint}
+            disabled={answering}
+            onChange={(e) => pickRole(e.target.value)}
+          >
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+          <div className="seg" role="radiogroup" aria-label="Как отвечать">
+            {styles.map((s) => (
+              <button
+                key={s.id}
+                role="radio"
+                aria-checked={s.id === style}
+                className={s.id === style ? "active" : ""}
+                title={s.hint}
+                disabled={answering}
+                onClick={() => setStyle(s.id)}
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
           <span className="muted small grow-right">{fileName(llm.model ?? "")}</span>
         </div>
       </div>

@@ -794,3 +794,37 @@ input.chat-search {
 .chat-row:hover button.forget {
   visibility: visible;
 }
+
+/* --- Роль и манера ответа под полем ввода --- */
+
+select.role {
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+/* Переключатель в три положения: слева точнее, справа креативнее. */
+.seg {
+  display: inline-flex;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg button {
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 0;
+  font-size: 13px;
+  padding: 5px 10px;
+  opacity: 0.7;
+}
+
+.seg button + button {
+  border-left: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+.seg button.active {
+  background: rgba(128, 128, 128, 0.22);
+  opacity: 1;
+}
