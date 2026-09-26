@@ -73,7 +73,10 @@ pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
         "webp" | "heic" | "heif" | "avif" | "tif" | "tiff" => {
             return Err("такие картинки модель не открывает — сохраните их как JPG или PNG".into())
         }
-        "mp3" | "wav" | "ogg" | "m4a" | "flac" | "opus" => return Err("расшифровка аудио — скоро".into()),
+        // wav, mp3, ogg, flac расшифровывает `speech.rs` — сюда они не доходят.
+        "m4a" | "aac" | "opus" | "wma" | "amr" | "mp4" | "webm" | "mkv" | "avi" | "mov" => {
+            return Err("такие записи пока не читаю — сохраните запись как MP3 или WAV".into())
+        }
         _ => {
             let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
             if looks_binary(&bytes) {
@@ -167,9 +170,10 @@ pub fn trim(mut a: Attachment, max_tokens: u64) -> Attachment {
 /// не спутала документ с вопросом.
 pub fn for_model(files: &[Attachment], question: &str) -> String {
     let mut out = String::new();
-    for f in files.iter().filter(|f| f.kind == "document") {
+    for f in files.iter().filter(|f| f.kind != "image") {
+        let what = if f.kind == "audio" { "Расшифровка записи" } else { "Документ" };
         let note = if f.trimmed { " (только начало — целиком не поместился)" } else { "" };
-        out.push_str(&format!("Документ «{}»{note}:\n<<<\n{}\n>>>\n\n", f.name, f.text));
+        out.push_str(&format!("{what} «{}»{note}:\n<<<\n{}\n>>>\n\n", f.name, f.text));
     }
     out.push_str(question);
     out

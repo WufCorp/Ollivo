@@ -421,4 +421,22 @@ mod tests {
         println!("{text}");
         assert!(text.contains("11081"), "{text}");
     }
+
+    /// Настоящий whisper.cpp из встроенного манифеста — в D:\Ollivo, где его ждут
+    /// `speech::tests::real_transcribe` и программа.
+    /// `cargo test engines::tests::whisper_real -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn whisper_real() {
+        let m = crate::manifest::Manifest::bundled();
+        let e = m.engine("whisper.cpp").unwrap();
+        let b = e.pick(crate::hardware::detect().cuda_build, false, None).unwrap();
+        let root = Path::new(r"D:\Ollivo");
+        let started = std::time::Instant::now();
+        let got = install(&Downloader::new(), root, e, b, &CancellationToken::new(), &|_| {}).await.unwrap();
+        println!("{:?} за {:.1} с, {}", got.build, started.elapsed().as_secs_f64(), got.exe.display());
+        let out = std::process::Command::new(&got.exe).arg("--help").output().unwrap();
+        let text = String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("supported audio formats"), "{text}");
+    }
 }

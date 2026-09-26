@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Build = "cuda13" | "cuda12" | "vulkan";
+export type Build = "cuda13" | "cuda12" | "vulkan" | "cpu";
 
 export interface Gpu {
   name: string;
@@ -240,6 +240,7 @@ export const BUILD_NAMES: Record<Build, string> = {
   cuda13: "CUDA 13",
   cuda12: "CUDA 12",
   vulkan: "Vulkan",
+  cpu: "на процессоре",
 };
 
 export function formatBytes(b: number): string {
@@ -475,10 +476,10 @@ export interface Msg {
   files?: Attachment[];
 }
 
-/** Приложенный документ или картинка. `text` — ровно то, что получит модель. */
+/** Приложенный документ, картинка или расшифровка записи. `text` — то, что получит модель. */
 export interface Attachment {
   name: string;
-  kind: "document" | "image";
+  kind: "document" | "image" | "audio";
   text: string;
   /** Сколько займёт в памяти модели: точно, если модель запущена, иначе прикидка. */
   tokens: number;
@@ -487,6 +488,34 @@ export interface Attachment {
   /** Копия картинки в папке программы. */
   path?: string | null;
 }
+
+// --- Распознавание речи ---
+
+/** Записи, которые whisper читает сам; остальные просим пересохранить. */
+export const AUDIO_EXTENSIONS = ["wav", "mp3", "ogg", "flac"];
+
+export interface SpeechStatus {
+  engine: boolean;
+  model: boolean;
+  /** Сколько байт осталось скачать. */
+  download: number;
+}
+
+export const speechStatus = () => invoke<SpeechStatus>("speech_status");
+
+/** Модель распознавания; итог — `download://finished` с id `speech:model`. */
+export const speechModelDownload = () => invoke<string>("speech_model_download");
+
+/** Диктовка: WAV в base64 → текст. */
+export const speechDictate = (wav: string) => invoke<string>("speech_dictate", { wav });
+
+/** Запись → расшифровка как вложение; ход — `onSpeechProgress`. */
+export const speechFile = (path: string) => invoke<Attachment>("speech_file", { path });
+
+export const speechStop = () => invoke<void>("speech_stop");
+
+export const onSpeechProgress = (cb: (p: { path: string; percent: number }) => void): Promise<UnlistenFn> =>
+  listen<{ path: string; percent: number }>("speech://progress", (e) => cb(e.payload));
 
 /** Картинка из разговора как `data:`-адрес — для показа в окне. */
 export const attachPreview = (path: string) => invoke<string>("attach_preview", { path });
@@ -514,6 +543,7 @@ export const attachTrim = (file: Attachment, maxTokens: number) =>
 /** Что предлагаем в окне выбора файла; перетащить можно и любой другой текстовый файл. */
 export const ATTACH_EXTENSIONS = [
   "jpg", "jpeg", "png", "gif", "bmp",
+  "mp3", "wav", "ogg", "flac",
   "pdf", "docx", "odt", "txt", "md", "csv", "json", "xml", "html", "log",
   "py", "js", "ts", "tsx", "rs", "c", "cpp", "h", "cs", "java", "go", "php", "sql", "ps1", "bat", "sh",
 ];

@@ -30,13 +30,15 @@ pub enum Build {
     Cuda13,
     Cuda12,
     Vulkan,
+    /// Только процессор: так идёт whisper.cpp — других пригодных сборок у него нет.
+    Cpu,
 }
 
 impl Build {
     /// Пойдёт ли сборка `self` на ПК, для которого ядро выбрало `hw`.
     pub fn runs_on(self, hw: Build) -> bool {
         match self {
-            Build::Vulkan => true,
+            Build::Vulkan | Build::Cpu => true,
             Build::Cuda12 => hw != Build::Vulkan,
             Build::Cuda13 => hw == Build::Cuda13,
         }

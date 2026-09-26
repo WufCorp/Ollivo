@@ -1,5 +1,6 @@
 mod attach;
 mod vision;
+mod speech;
 mod catalog;
 mod chats;
 mod download;
@@ -55,6 +56,8 @@ struct Core {
     /// Отмена текущей загрузки модели: `llm_start` держит `llm` всё время загрузки,
     /// поэтому остановка и новый запуск сначала отменяют её через этот токен.
     llm_loading: Mutex<CancellationToken>,
+    /// Отмена идущей расшифровки записи.
+    speech: Mutex<CancellationToken>,
 }
 
 impl Core {
@@ -687,6 +690,130 @@ async fn vision_download(app: AppHandle, core: CoreState<'_>, model: PathBuf) ->
     Ok(id)
 }
 
+/// Установленный движок распознавания текущей версии.
+fn speech_engine(core: &Core) -> Option<engines::Installed> {
+    let version = core.manifest.engine("whisper.cpp")?.version.clone();
+    engines::installed(&core.data_dir(), "whisper.cpp").into_iter().find(|i| i.version == version)
+}
+
+/// Готово ли распознавание речи и сколько ещё качать.
+#[tauri::command]
+fn speech_status(core: CoreState<'_>) -> speech::Status {
+    let engine = speech_engine(&core).is_some();
+    let model = speech::model_path(&core.data_dir()).is_file();
+    let engine_size = core
+        .manifest
+        .engine("whisper.cpp")
+        .and_then(|e| e.builds.first())
+        .map_or(0, |b| b.size());
+    speech::Status {
+        engine,
+        model,
+        download: if engine { 0 } else { engine_size } + if model { 0 } else { speech::MODEL_SIZE },
+    }
+}
+
+/// Модель распознавания. Прогресс и итог — события загрузок, id `speech:model`.
+#[tauri::command]
+fn speech_model_download(app: AppHandle, core: CoreState<'_>) -> Result<String, String> {
+    let base = core.settings.get().hf.base()?;
+    let dest = speech::model_path(&core.data_dir());
+    let request = download::Request::new(
+        vec![hf::file_url(&base, speech::MODEL_REPO, "main", speech::MODEL_NAME)],
+        dest.clone(),
+        Some(speech::MODEL_SHA256.into()),
+    );
+    let id = "speech:model".to_string();
+    let cancel = core.start(&id)?;
+    let core = core.inner().clone();
+    let task = id.clone();
+    tauri::async_runtime::spawn(async move {
+        let (progress_app, progress_id) = (app.clone(), task.clone());
+        let on_progress = move |progress| {
+            let _ = progress_app.emit("download://progress", DownloadProgress { id: progress_id.clone(), progress });
+        };
+        let res = core.downloader().download(&request, &cancel, &on_progress).await;
+        core.finish(&task);
+        let (error, kind, result) = match res {
+            Ok(()) => (None, None, Some(dest)),
+            Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
+            Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
+        };
+        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+    });
+    Ok(id)
+}
+
+/// Движок и модель распознавания; ошибка — если что-то не поставлено.
+fn speech_parts(core: &Core) -> Result<(PathBuf, PathBuf), String> {
+    let exe = speech_engine(core).ok_or("распознавание речи не установлено")?.exe;
+    let model = speech::model_path(&core.data_dir());
+    if !model.is_file() {
+        return Err("распознавание речи не установлено".into());
+    }
+    Ok((exe, model))
+}
+
+/// Диктовка: WAV (16 кГц, моно, base64) из окна → текст. Запись короткая, прогресс не нужен.
+#[tauri::command]
+async fn speech_dictate(core: CoreState<'_>, wav: String) -> Result<String, String> {
+    use base64::Engine;
+    let (exe, model) = speech_parts(&core)?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(wav).map_err(|e| e.to_string())?;
+    let seconds = speech::wav_seconds(bytes.len());
+    let tmp = core.data_dir().join("downloads").join(format!("dictation-{}.wav", std::process::id()));
+    std::fs::create_dir_all(tmp.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    let res = speech::transcribe(&exe, &model, &tmp, Some(seconds), &CancellationToken::new(), |_| {}).await;
+    let _ = std::fs::remove_file(&tmp);
+    res
+}
+
+/// Ход расшифровки записи для окна.
+#[derive(serde::Serialize, Clone)]
+struct SpeechProgress {
+    path: PathBuf,
+    percent: u8,
+}
+
+/// Запись → расшифровка как вложение. Ход — `speech://progress`, отмена — `speech_stop`.
+#[tauri::command]
+async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Result<attach::Attachment, String> {
+    let (exe, model) = speech_parts(&core)?;
+    let cancel = CancellationToken::new();
+    std::mem::replace(&mut *core.speech.lock().unwrap(), cancel.clone()).cancel();
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let p = path.clone();
+    let text = speech::transcribe(&exe, &model, &path, None, &cancel, |percent| {
+        let _ = app.emit("speech://progress", SpeechProgress { path: p.clone(), percent });
+    })
+    .await?;
+    if text.trim().is_empty() {
+        return Err("в записи не нашлось речи".into());
+    }
+    let mut a = attach::Attachment {
+        name,
+        kind: "audio".into(),
+        tokens: attach::estimate_tokens(&text),
+        text,
+        trimmed: false,
+        path: None,
+    };
+    let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    if let Some(n) = match port {
+        Some(port) => llm::count_tokens(port, &a.text).await,
+        None => None,
+    } {
+        a.tokens = n;
+    }
+    Ok(a)
+}
+
+#[tauri::command]
+fn speech_stop(core: CoreState<'_>) {
+    core.speech.lock().unwrap().cancel();
+}
+
 /// Итог добавления одного файла: `error` — почему не взяли.
 #[derive(serde::Serialize)]
 struct Added {
@@ -1135,6 +1262,7 @@ pub fn run() {
                 llm: tokio::sync::Mutex::new(None),
                 llm_loading: Mutex::new(CancellationToken::new()),
                 chat: Mutex::new(CancellationToken::new()),
+                speech: Mutex::new(CancellationToken::new()),
             }));
             Ok(())
         })
@@ -1178,6 +1306,11 @@ pub fn run() {
             attach_preview,
             vision_offer,
             vision_download,
+            speech_status,
+            speech_model_download,
+            speech_dictate,
+            speech_file,
+            speech_stop,
             update_check,
             update_install,
         ])

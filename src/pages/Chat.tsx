@@ -3,6 +3,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ATTACH_EXTENSIONS,
+  AUDIO_EXTENSIONS,
+  onSpeechProgress,
+  speechDictate,
+  speechFile,
+  speechStatus,
+  speechStop,
   attachFile,
   attachPreview,
   attachTrim,
@@ -34,6 +40,8 @@ import {
 } from "../api";
 import Answer, { copyText } from "../components/Answer";
 import ProblemCard from "../components/ProblemCard";
+import SpeechSetup from "../components/SpeechSetup";
+import { record, type Recording } from "../recorder";
 import { crashActions } from "../components/RunningModel";
 import { memoryPages, wordsPerSecond } from "../words";
 
@@ -58,7 +66,7 @@ function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number
             <Thumb file={f} />
           ) : (
             <>
-              📄 {f.name} · {f.trimmed ? "только начало, " : ""}
+              {f.kind === "audio" ? "🎧" : "📄"} {f.name} · {f.trimmed ? "только начало, " : ""}
               {memoryPages(f.tokens)}
             </>
           )}
@@ -135,6 +143,13 @@ export default function Chat({
   const [eyes, setEyes] = useState<Eyes | null>(null);
   const eyesRef = useRef<Eyes | null>(null);
   eyesRef.current = eyes;
+  /** Распознавание речи не стоит: зачем понадобилось и какие записи ждут. */
+  const [speech, setSpeech] = useState<{ why: string; paths?: string[] } | null>(null);
+  const [rec, setRec] = useState<Recording | null>(null);
+  const [recSec, setRecSec] = useState(0);
+  /** Диктовка записана и распознаётся. */
+  const [hearing, setHearing] = useState(false);
+  const [transcribing, setTranscribing] = useState<{ name: string; percent: number } | null>(null);
 
   // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
   const linesRef = useRef<Line[]>([]);
@@ -177,10 +192,12 @@ export default function Chat({
       const llm = llmRef.current;
       if (llm?.model) llmStart(llm.model, { lighter: llm.lighter });
     });
+    const speechProgress = onSpeechProgress((p) => setTranscribing((t) => t && { ...t, percent: p.percent }));
     const subs = [
       drop,
       eyesProgress,
       eyesDone,
+      speechProgress,
       // Модель могли запустить или остановить на вкладке «Модели».
       onLlmState(setLlm),
       onLlmThought((text) =>
@@ -210,6 +227,17 @@ export default function Chat({
       subs.forEach((s) => s.then((un) => un()));
     };
   }, []);
+
+  // Идёт диктовка: часы на кнопке. Две минуты — предел: дальше это уже не вопрос,
+  // а запись, и её честнее расшифровать файлом.
+  useEffect(() => {
+    if (!rec) return;
+    const t = setInterval(() => {
+      setRecSec(rec.seconds());
+      if (rec.seconds() >= 120) micRef.current();
+    }, 250);
+    return () => clearInterval(t);
+  }, [rec]);
 
   // Модель перезапустилась со зрением — ждавшие картинки встают к вопросу.
   useEffect(() => {
@@ -320,14 +348,31 @@ export default function Chat({
     setReading(true);
     let pending = filesRef.current;
     const blind: Attachment[] = [];
+    const deaf: string[] = [];
     try {
       for (const p of paths) {
         let a: Attachment;
+        const audio = AUDIO_EXTENSIONS.includes(p.split(".").pop()?.toLowerCase() ?? "");
+        if (audio) {
+          const s = await speechStatus();
+          if (!s.engine || !s.model) {
+            deaf.push(p);
+            continue;
+          }
+        }
         try {
-          a = await attachFile(p);
+          if (audio) {
+            setTranscribing({ name: fileName(p), percent: 0 });
+            a = await speechFile(p);
+          } else {
+            a = await attachFile(p);
+          }
         } catch (e) {
-          setFileError(`«${fileName(p)}»: ${String(e)}.`);
+          // «Остановить» — не ошибка.
+          if (String(e) !== "отменено") setFileError(`«${fileName(p)}»: ${String(e)}.`);
           continue;
+        } finally {
+          setTranscribing(null);
         }
         if (a.kind === "image" && !llmRef.current?.vision) {
           blind.push(a);
@@ -344,6 +389,7 @@ export default function Chat({
     } finally {
       setReading(false);
     }
+    if (deaf.length) setSpeech({ why: "расшифровать запись", paths: deaf });
     if (blind.length) {
       const model = llmRef.current?.model ?? "";
       setEyes({ images: [...(eyesRef.current?.images ?? []), ...blind] });
@@ -367,6 +413,40 @@ export default function Chat({
   // Обработчик перетаскивания заведён один раз — зовём через ref свежую версию.
   const attachRef = useRef(attach);
   attachRef.current = attach;
+
+  /** Микрофон: первое нажатие — слушать, второе — распознать и дописать в поле ввода. */
+  const mic = async () => {
+    if (rec) {
+      setRec(null);
+      setHearing(true);
+      try {
+        const text = await speechDictate(await rec.stop());
+        if (text) setDraft((d) => (d.trim() ? d.trimEnd() + " " : "") + text);
+        else setFileError("Не расслышал — попробуйте ещё раз, ближе к микрофону.");
+      } catch (e) {
+        setFileError(`Не получилось распознать: ${String(e)}.`);
+      } finally {
+        setHearing(false);
+      }
+      return;
+    }
+    setFileError(null);
+    const s = await speechStatus();
+    if (!s.engine || !s.model) {
+      setSpeech({ why: "надиктовать вопрос" });
+      return;
+    }
+    try {
+      setRecSec(0);
+      setRec(await record());
+    } catch {
+      setFileError(
+        "Микрофон недоступен: проверьте, что он подключён и что Windows разрешает программам им пользоваться.",
+      );
+    }
+  };
+  const micRef = useRef(mic);
+  micRef.current = mic;
 
   const pickFiles = async () => {
     const picked = await open({
@@ -574,6 +654,30 @@ export default function Chat({
               )}
             </div>
           )}
+          {speech && (
+            <SpeechSetup
+              why={speech.why}
+              onCancel={() => setSpeech(null)}
+              onReady={() => {
+                const waiting = speech.paths;
+                setSpeech(null);
+                if (waiting) attach(waiting);
+              }}
+            />
+          )}
+          {transcribing && (
+            <div className="card notice">
+              <p>
+                Расшифровываю «{transcribing.name}»… {transcribing.percent}%
+              </p>
+              <progress value={transcribing.percent} max={100} />
+              <div className="actions">
+                <button className="secondary" onClick={() => speechStop()}>
+                  Остановить
+                </button>
+              </div>
+            </div>
+          )}
           {files.length > 0 && <Files files={files} onRemove={(i) => setFiles(files.filter((_, j) => j !== i))} />}
           {reading && <p className="muted small">Читаю файл…</p>}
           {fileError && <p className="error small">{fileError}</p>}
@@ -603,6 +707,18 @@ export default function Chat({
               onClick={pickFiles}
             >
               📎
+            </button>
+            <button
+              className={rec ? "recording" : "secondary"}
+              title={rec ? "Закончить и распознать" : "Надиктовать вопрос"}
+              disabled={answering || hearing || reading}
+              onClick={mic}
+            >
+              {rec
+                ? `⏹ ${Math.floor(recSec / 60)}:${String(Math.floor(recSec % 60)).padStart(2, "0")}`
+                : hearing
+                  ? "Распознаю…"
+                  : "🎤"}
             </button>
             <select
               className="role"

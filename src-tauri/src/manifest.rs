@@ -93,13 +93,25 @@ mod tests {
     #[test]
     fn bundled_is_valid() {
         let m = Manifest::bundled();
-        let llama = m.engine("llama.cpp").unwrap();
-        for b in &llama.builds {
-            assert!(!b.files.is_empty());
-            for f in &b.files {
-                assert_eq!(f.sha256.len(), 64, "{}", f.name);
-                assert!(!f.urls.is_empty() && f.size > 0, "{}", f.name);
+        assert!(m.engine("llama.cpp").is_some() && m.engine("whisper.cpp").is_some());
+        for e in &m.engines {
+            for b in &e.builds {
+                assert!(!b.files.is_empty());
+                for f in &b.files {
+                    assert_eq!(f.sha256.len(), 64, "{}", f.name);
+                    assert!(!f.urls.is_empty() && f.size > 0, "{}", f.name);
+                }
             }
+        }
+    }
+
+    /// Распознавание речи ставится на любой ПК — и без видеокарты, и без Vulkan.
+    #[test]
+    fn whisper_goes_anywhere() {
+        let m = Manifest::bundled();
+        let w = m.engine("whisper.cpp").unwrap();
+        for hw in [Build::Cuda13, Build::Cuda12, Build::Vulkan] {
+            assert_eq!(w.pick(hw, false, None).unwrap().build, Build::Cpu);
         }
     }
 

@@ -55,6 +55,26 @@
           ]
         }
       ]
+    },
+    {
+      "id": "whisper.cpp",
+      "title": "Распознавание речи",
+      "version": "b5130",
+      "exe": "Release/whisper-cli.exe",
+      "prefer": ["cpu"],
+      "builds": [
+        {
+          "build": "cpu",
+          "files": [
+            {
+              "name": "whisper-bin-x64.zip",
+              "urls": ["https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip"],
+              "sha256": "f9ec6c52a2e949b62ab51fa21d0d497958f9e41c3010c157c4e42932d5316f3c",
+              "size": 8573270
+            }
+          ]
+        }
+      ]
     }
   ]
 }

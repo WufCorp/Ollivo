@@ -749,6 +749,12 @@ label.check.filter {
   border-radius: 6px;
 }
 
+/* Идёт запись с микрофона — кнопка красная, чтобы было видно, что слушаем. */
+button.recording {
+  background: #d93838;
+  color: #fff;
+}
+
 .ask .notice progress {
   width: 100%;
 }
