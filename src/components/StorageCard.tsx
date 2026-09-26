@@ -13,6 +13,12 @@ import {
   type StorageUsage,
 } from "../api";
 
+/** Ошибка ядра — строчными («идут загрузки…»); в окне — как предложение. */
+const sentence = (e: unknown) => {
+  const s = String(e);
+  return s.charAt(0).toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".");
+};
+
 /**
  * Папка программы: сколько заняли модели, движки и мусор, «Очистить» и «Перенести на другой
  * диск». Перенос идёт в ядре; окно только показывает прогресс и итог — его можно закрыть
@@ -37,12 +43,17 @@ export default function StorageCard() {
         if (m.dir) {
           setNote({
             ok: true,
-            text: `Готово: теперь всё лежит в ${m.dir}. Модель остановлена на время переноса — запустите её снова.`,
+            text:
+              `Готово: теперь всё лежит в ${m.dir}.` +
+              (m.stopped ? " Модель остановлена на время переноса — запустите её снова." : ""),
           });
         } else {
           setNote({
             ok: false,
-            text: m.error === "отменено" ? "Перенос отменён, всё осталось на старом месте." : `Не перенесли: ${m.error}.`,
+            text:
+              m.error === "отменено"
+                ? "Перенос отменён, всё осталось на старом месте."
+                : `Не перенесли: ${m.error}.` + (m.stopped ? " Модель остановлена — запустите её снова." : ""),
           });
         }
         load();
@@ -59,7 +70,7 @@ export default function StorageCard() {
       setNote({ ok: true, text: freed ? `Освободили ${formatBytes(freed)}.` : "Убирать было нечего." });
       load();
     } catch (e) {
-      setNote({ ok: false, text: `${String(e)}.` });
+      setNote({ ok: false, text: sentence(e) });
     } finally {
       setCleaning(false);
     }
@@ -73,7 +84,7 @@ export default function StorageCard() {
       const to = await storageMove(picked);
       setMoving({ to, done: 0, total: 0 });
     } catch (e) {
-      setNote({ ok: false, text: `${String(e)}.` });
+      setNote({ ok: false, text: sentence(e) });
     }
   };
 

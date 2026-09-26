@@ -459,6 +459,8 @@ struct Moved {
     /// Новая папка; `None` — не перенесли.
     dir: Option<PathBuf>,
     error: Option<String>,
+    /// Модель пришлось остановить — окно скажет запустить её снова.
+    stopped: bool,
 }
 
 /// Переносит папку программы в `picked` (или в `<picked>\Ollivo`). Модель останавливается:
@@ -492,9 +494,13 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
     }
     let cancel = core.start(MOVE_TASK)?;
     core.llm_loading.lock().unwrap().cancel();
-    if let Some(l) = core.llm.lock().await.take() {
-        l.handle.stop().await;
-    }
+    let stopped = match core.llm.lock().await.take() {
+        Some(l) => {
+            l.handle.stop().await;
+            true
+        }
+        None => false,
+    };
     *core.llm_asleep.lock().unwrap() = None;
     emit_llm(&app, LlmState::of("stopped"));
     let core = core.inner().clone();
@@ -511,12 +517,12 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
         });
         core.finish(MOVE_TASK);
         let moved = match res {
-            Ok(()) => Moved { dir: Some(new), error: None },
+            Ok(()) => Moved { dir: Some(new), error: None, stopped },
             Err(e) => {
                 if e != "отменено" {
                     core.note("Перенос папки программы", &e, &e);
                 }
-                Moved { dir: None, error: Some(e) }
+                Moved { dir: None, error: Some(e), stopped }
             }
         };
         let _ = app.emit("storage://moved", moved);

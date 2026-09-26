@@ -170,8 +170,15 @@ export const MOVE_TASK = "storage:move";
 export const onStorageProgress = (cb: (p: { done: number; total: number }) => void): Promise<UnlistenFn> =>
   listen<{ done: number; total: number }>("storage://progress", (e) => cb(e.payload));
 
-export const onStorageMoved = (cb: (m: { dir: string | null; error: string | null }) => void): Promise<UnlistenFn> =>
-  listen<{ dir: string | null; error: string | null }>("storage://moved", (e) => cb(e.payload));
+/** Итог переноса: `dir` — новая папка (`null` — не перенесли), `stopped` — модель пришлось остановить. */
+export interface StorageMoved {
+  dir: string | null;
+  error: string | null;
+  stopped: boolean;
+}
+
+export const onStorageMoved = (cb: (m: StorageMoved) => void): Promise<UnlistenFn> =>
+  listen<StorageMoved>("storage://moved", (e) => cb(e.payload));
 
 /** Секреты: undefined — не менять сохранённый, "" — удалить. */
 export const settingsSave = (settings: Settings, secrets: { proxyPassword?: string; hfToken?: string } = {}) =>
