@@ -28,6 +28,12 @@ pub struct Chat {
     pub role: String,
     #[serde(default)]
     pub style: String,
+    /// Папка проекта, с которой работает разговор (`project.rs`); `None` — обычный чат.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<PathBuf>,
+    /// Как модель обращается с файлами папки: `ask`, `auto`, `plan` (`project::Mode`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mode: String,
     pub messages: Vec<Msg>,
 }
 
@@ -135,6 +141,17 @@ impl Store {
         hits
     }
 
+    /// Копии картинок, на которые ещё ссылаются разговоры: остальные можно удалять.
+    pub fn attached_files(&self) -> std::collections::HashSet<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return Default::default() };
+        entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| read(&e.path()))
+            .flat_map(|c| c.messages.into_iter().flat_map(|m| m.files).filter_map(|f| f.path))
+            .collect()
+    }
+
     pub fn get(&self, id: &str) -> Option<Chat> {
         read(&self.file(id)?)
     }
@@ -188,7 +205,7 @@ fn read(path: &Path) -> Option<Chat> {
 
 /// Строчные буквы и «е» вместо «ё». Символ в символ: номер символа совпадения
 /// указывает и в исходный текст — из него вырезается кусок для списка.
-fn fold(text: &str) -> String {
+pub(crate) fn fold(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     out.extend(text.chars().map(fold_char));
     out
@@ -277,6 +294,8 @@ mod tests {
             model: None,
             role: String::new(),
             style: String::new(),
+            folder: None,
+            mode: String::new(),
             messages,
         }
     }
@@ -419,6 +438,23 @@ mod tests {
             let hits = s.search(query).len();
             println!("{query:?}: {hits} за {:?}, всего {} МБ", t.elapsed(), size / 1_000_000);
         }
+    }
+
+    #[test]
+    fn attached_files_are_collected() {
+        let s = store("attached");
+        let mut m = msg("user", "что на фото?");
+        m.files.push(crate::attach::Attachment {
+            name: "фото.png".into(),
+            kind: "image".into(),
+            text: String::new(),
+            tokens: 1100,
+            trimmed: false,
+            path: Some(PathBuf::from(r"C:\a\1.png")),
+        });
+        s.save(empty(vec![m, msg("assistant", "кот")])).unwrap();
+        s.save(empty(vec![msg("user", "без картинок")])).unwrap();
+        assert_eq!(s.attached_files().into_iter().collect::<Vec<_>>(), [PathBuf::from(r"C:\a\1.png")]);
     }
 
     #[test]

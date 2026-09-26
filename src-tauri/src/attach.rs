@@ -179,11 +179,28 @@ pub fn for_model(files: &[Attachment], question: &str) -> String {
     out
 }
 
+/// Удаляет из `dir` файлы старше `older_than`, кроме тех, что `keep`. Возвращает, сколько
+/// удалено. Ошибки молча пропускаем: занятый файл уберём в следующий раз.
+pub fn sweep(dir: &Path, older_than: Duration, keep: impl Fn(&Path) -> bool) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let now = std::time::SystemTime::now();
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| {
+            let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
+            age.is_some_and(|a| a > older_than)
+        })
+        .filter(|e| !keep(&e.path()))
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
 // ---------- Текст ----------
 
 /// Нулевые байты в начале — верный признак двоичного файла. UTF-16 их тоже содержит,
 /// но у него есть метка порядка байтов, её проверяем раньше.
-fn looks_binary(bytes: &[u8]) -> bool {
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     if encoding_rs::Encoding::for_bom(bytes).is_some() {
         return false;
     }
@@ -192,7 +209,7 @@ fn looks_binary(bytes: &[u8]) -> bool {
 
 /// UTF-8 или UTF-16 с меткой — как есть. Иначе, если не UTF-8, — Windows-1251:
 /// в ней сохранены старые русские текстовые файлы из Блокнота.
-fn decode(bytes: &[u8]) -> String {
+pub(crate) fn decode(bytes: &[u8]) -> String {
     if let Some((enc, bom)) = encoding_rs::Encoding::for_bom(bytes) {
         return enc.decode_without_bom_handling(&bytes[bom..]).0.into_owned();
     }
@@ -551,6 +568,24 @@ mod tests {
         assert!(text.contains("Рецепт борща"), "{text}");
         assert!(text.contains("Свёкла"), "{text}");
         assert!(text.contains("Hello, world!"), "{text}");
+    }
+
+    #[test]
+    fn sweep_removes_only_old_and_unused() {
+        let dir = tmp("sweep");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(40 * 86400);
+        for name in ["old-unused.png", "old-used.png", "fresh.png"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        for name in ["old-unused.png", "old-used.png"] {
+            std::fs::File::options().write(true).open(dir.join(name)).unwrap().set_modified(old).unwrap();
+        }
+        let n = sweep(&dir, Duration::from_secs(86400), |p| p.ends_with("old-used.png"));
+        assert_eq!(n, 1);
+        assert!(!dir.join("old-unused.png").exists());
+        assert!(dir.join("old-used.png").exists() && dir.join("fresh.png").exists());
     }
 
     #[test]

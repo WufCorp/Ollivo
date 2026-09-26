@@ -749,6 +749,125 @@ label.check.filter {
   border-radius: 6px;
 }
 
+/* Папка проекта над перепиской: имя, сколько файлов, «Сменить», «Убрать». */
+.folder-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 0 0 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+  font-size: 14px;
+}
+
+.folder-bar .folder-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-bar .hint {
+  flex-basis: 100%;
+}
+
+/* Список файлов по «@» — над полем ввода, как подсказки в поиске. */
+.mentions {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  padding: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 10px;
+}
+
+.mentions button {
+  text-align: left;
+  background: none;
+  color: inherit;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mentions button.active,
+.mentions button:hover {
+  background: rgba(99, 102, 241, 0.16);
+}
+
+/* Что модель делала с файлами: мелко, над ответом. */
+.file-steps {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.file-steps li + li {
+  margin-top: 2px;
+}
+
+.file-steps li.failed {
+  opacity: 0.7;
+}
+
+.file-steps button.link {
+  margin-left: 8px;
+  font-size: 13px;
+}
+
+/* Модель говорит об изменениях, которых не было. */
+p.warn {
+  color: #b7791f;
+}
+
+@media (prefers-color-scheme: dark) {
+  p.warn {
+    color: #f0b44c;
+  }
+}
+
+.write-ask {
+  margin-top: 10px;
+}
+
+.write-ask pre.before {
+  background: rgba(217, 56, 56, 0.1);
+}
+
+.write-ask pre.after {
+  background: rgba(46, 160, 67, 0.12);
+}
+
+.write-ask details p {
+  margin: 8px 0 0;
+}
+
+.folder-bar .seg {
+  margin-left: auto;
+}
+
+.write-ask pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.1);
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
 /* Идёт запись с микрофона — кнопка красная, чтобы было видно, что слушаем. */
 button.recording {
   background: #d93838;

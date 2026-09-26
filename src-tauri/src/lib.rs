@@ -13,6 +13,7 @@ mod manifest;
 mod llm;
 mod net;
 mod presets;
+mod project;
 mod probe;
 mod trouble;
 mod process;
@@ -45,6 +46,10 @@ struct Core {
     chats: chats::Store,
     /// Копии картинок, приложенных к разговорам.
     attachments: PathBuf,
+    /// Копии файлов проекта, которые модель заменила: для «Вернуть как было».
+    backups: PathBuf,
+    /// Модель ждёт, разрешит ли человек записать файл: номер вопроса → ответ.
+    writes: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
     /// Подборка моделей для каталога.
     catalog: catalog::Catalog,
     /// Модели, которые человек добавил: пути и разобранные заголовки.
@@ -437,6 +442,8 @@ struct LlmState {
     problem: Option<trouble::Problem>,
     /// Модель видит картинки.
     vision: bool,
+    /// Модель сама открывает файлы папки проекта (вызывает инструменты).
+    tools: bool,
 }
 
 impl LlmState {
@@ -452,6 +459,7 @@ impl LlmState {
             lighter: 0,
             problem: None,
             vision: false,
+            tools: false,
         }
     }
 
@@ -474,6 +482,7 @@ impl LlmState {
             lighter: 0,
             problem: None,
             vision: l.vision,
+            tools: l.tools,
         }
     }
 }
@@ -1091,8 +1100,10 @@ fn chat_presets() -> presets::All {
     presets::All { roles: presets::ROLES, styles: presets::STYLES }
 }
 
-/// Ответ на весь разговор. Текст идёт кусками в `llm://token`, размышления думающей
-/// модели — в `llm://thought`, итог — `llm://answer`.
+//// Ответ на весь разговор. Текст идёт кусками в `llm://token`, размышления думающей
+/// модели — в `llm://thought`, итог — `llm://answer`. С папкой проекта ещё
+/// `llm://calling` (модель готовит обращение к файлам), `llm://step` (что сделала)
+/// и `llm://write` (просит разрешения записать файл, ответ — `project_write_answer`).
 /// Разговор целиком присылает окно: движок ничего не помнит между запросами.
 /// `role` и `style` — id пресетов; неизвестные значат «Помощник» и «Обычно».
 #[tauri::command]
@@ -1102,15 +1113,36 @@ async fn llm_chat(
     messages: Vec<llm::Msg>,
     role: String,
     style: String,
+    folder: Option<PathBuf>,
+    mode: String,
 ) -> Result<(), trouble::Problem> {
-    let (port, vision) = match core.llm.try_lock() {
-        Ok(slot) => slot.as_ref().map(|l| (l.port, l.vision)).ok_or_else(|| trouble::chat("модель не запущена"))?,
+    let (port, vision, can_call, ctx) = match core.llm.try_lock() {
+        Ok(slot) => slot
+            .as_ref()
+            .map(|l| (l.port, l.vision, l.tools, l.ctx))
+            .ok_or_else(|| trouble::chat("модель не запущена"))?,
         Err(_) => return Err(trouble::chat("модель ещё загружается")),
+    };
+    // Папку обходим до ответа: пропала — человек узнает сразу, а не посреди ответа.
+    let tools = match folder {
+        Some(dir) => {
+            let listing = tauri::async_runtime::spawn_blocking(move || project::list(&dir))
+                .await
+                .map_err(|e| trouble::chat(&e.to_string()))?
+                .map_err(|e| trouble::Problem {
+                    text: format!("Папка проекта недоступна: {e}."),
+                    hint: Some("Выберите папку заново кнопкой 📁 или уберите её.".into()),
+                    actions: vec![],
+                    details: e,
+                })?;
+            let mode = project::Mode::from_id(&mode);
+            Some(project::Tools::new(listing, ctx, core.backups.clone(), mode, ask_write(&app, &core)))
+        }
+        None => None,
     };
     let cancel = CancellationToken::new();
     // Новый вопрос обрывает недоговорённый ответ.
     std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
-    let (done, thought_app) = (app.clone(), app.clone());
     tauri::async_runtime::spawn(async move {
         let res = llm::chat(
             port,
@@ -1118,12 +1150,15 @@ async fn llm_chat(
             &messages,
             presets::role(&role),
             presets::style(&style),
+            tools.as_ref().map(|tools| llm::Project { tools, can_call }),
             &cancel,
-            |text| {
-                let _ = thought_app.emit("llm://thought", text);
-            },
-            |text| {
-                let _ = app.emit("llm://token", text);
+            |e| {
+                let _ = match e {
+                    llm::Event::Thought(t) => app.emit("llm://thought", t),
+                    llm::Event::Text(t) => app.emit("llm://token", t),
+                    llm::Event::Calling(name) => app.emit("llm://calling", name),
+                    llm::Event::Step(step) => app.emit("llm://step", step),
+                };
             },
         )
         .await;
@@ -1131,12 +1166,62 @@ async fn llm_chat(
             Ok(stats) => ChatDone { stats: Some(stats), problem: None },
             Err(e) => ChatDone { stats: None, problem: Some(trouble::chat(&e)) },
         };
-        let _ = done.emit("llm://answer", payload);
+        let _ = app.emit("llm://answer", payload);
     });
     Ok(())
 }
 
-/// Документ для чата: текст и сколько он займёт в памяти модели. Если модель запущена,
+/// Вопрос человеку «записать файл?» уходит в окно событием, ответ приходит командой
+/// `project_write_answer`. «Остановить» — тоже «нет»: записывать без ответа нельзя.
+fn ask_write(app: &AppHandle, core: &Arc<Core>) -> project::AskWrite {
+    #[derive(serde::Serialize, Clone)]
+    struct Ask {
+        id: String,
+        #[serde(flatten)]
+        ask: project::WriteAsk,
+    }
+    let (app, core) = (app.clone(), core.clone());
+    Arc::new(move |ask| {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let id = format!("w{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+        core.writes.lock().unwrap().insert(id.clone(), tx);
+        let _ = app.emit("llm://write", Ask { id: id.clone(), ask });
+        let (core, cancel) = (core.clone(), core.chat.lock().unwrap().clone());
+        Box::pin(async move {
+            let ok = tokio::select! {
+                r = rx => r.unwrap_or(false),
+                _ = cancel.cancelled() => false,
+            };
+            core.writes.lock().unwrap().remove(&id);
+            ok
+        })
+    })
+}
+
+/// Ответ человека на «записать файл?».
+#[tauri::command]
+fn project_write_answer(core: CoreState<'_>, id: String, ok: bool) {
+    if let Some(tx) = core.writes.lock().unwrap().remove(&id) {
+        let _ = tx.send(ok);
+    }
+}
+
+/// Файлы папки проекта — для списка по «@» и строки над разговором.
+#[tauri::command]
+async fn project_open(folder: PathBuf) -> Result<project::Listing, String> {
+    tauri::async_runtime::spawn_blocking(move || project::list(&folder)).await.map_err(|e| e.to_string())?
+}
+
+/// «Вернуть как было» для файла, который записала модель.
+#[tauri::command]
+async fn project_undo(core: CoreState<'_>, folder: PathBuf, step: project::Step) -> Result<(), String> {
+    let backups = core.backups.clone();
+    tauri::async_runtime::spawn_blocking(move || project::undo(&folder, &step, &backups))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Документ для чата: текст и сколько он займёт в памяти модели. Если модель запущена,
 /// считает она сама (`/tokenize`): прикидка по буквам для английского завышена в полтора раза.
 #[tauri::command]
 async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attachment, String> {
@@ -1236,6 +1321,16 @@ async fn update_install(app: AppHandle, core: CoreState<'_>) -> Result<(), Strin
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub use attach::helper_main;
 
+/// Убирает то, что больше не нужно: копии файлов проекта старше `BACKUP_DAYS` и картинки,
+/// на которые не ссылается ни один разговор (разговор удалили). Картинку моложе суток не
+/// трогаем — её могли только что приложить к ещё не отправленному вопросу.
+fn sweep(core: &Core) {
+    const DAY: std::time::Duration = std::time::Duration::from_secs(86400);
+    attach::sweep(&core.backups, DAY * project::BACKUP_DAYS as u32, |_| false);
+    let used = core.chats.attached_files();
+    attach::sweep(&core.attachments, DAY, |p| used.contains(p));
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -1255,6 +1350,8 @@ pub fn run() {
                 library: library::Library::open(config_dir.join("models.json")),
                 chats: chats::Store::new(config_dir.join("chats")),
                 attachments: config_dir.join("attachments"),
+                backups: config_dir.join("backups"),
+                writes: Mutex::new(HashMap::new()),
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
@@ -1264,6 +1361,9 @@ pub fn run() {
                 chat: Mutex::new(CancellationToken::new()),
                 speech: Mutex::new(CancellationToken::new()),
             }));
+            // Уборка при запуске, в стороне: папки могут быть большими.
+            let core = app.state::<Arc<Core>>().inner().clone();
+            tauri::async_runtime::spawn_blocking(move || sweep(&core));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1301,6 +1401,9 @@ pub fn run() {
             chats_remove,
             llm_chat,
             llm_chat_stop,
+            project_open,
+            project_write_answer,
+            project_undo,
             attach_file,
             attach_trim,
             attach_preview,

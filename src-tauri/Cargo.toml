@@ -42,6 +42,7 @@ url = "2"
 encoding_rs = "0.8.42"
 pdf-extract = "0.12.1"
 base64 = "0.22"
+ignore = "0.4.33"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

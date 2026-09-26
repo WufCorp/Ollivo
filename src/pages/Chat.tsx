@@ -30,6 +30,15 @@ import {
   onLlmState,
   onLlmThought,
   onLlmToken,
+  onLlmCalling,
+  onLlmStep,
+  onLlmWrite,
+  projectOpen,
+  projectUndo,
+  projectWriteAnswer,
+  type FileMode,
+  type Listing,
+  type WriteAsk,
   type Chat as Talk,
   type ChatRole,
   type ChatStyle,
@@ -41,9 +50,10 @@ import {
 import Answer, { copyText } from "../components/Answer";
 import ProblemCard from "../components/ProblemCard";
 import SpeechSetup from "../components/SpeechSetup";
+import { Mentions, ModeSwitch, Steps, WriteCard, claimsChanges, matchFiles, mentionAt } from "../components/Project";
 import { record, type Recording } from "../recorder";
 import { crashActions } from "../components/RunningModel";
-import { memoryPages, wordsPerSecond } from "../words";
+import { memoryPages, plural, wordsPerSecond } from "../words";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -99,7 +109,21 @@ interface Line extends Msg {
   /** Как думающая модель рассуждала перед ответом. В историю не пишется: модели
    *  прошлые рассуждения не нужны, а человеку они интересны только сейчас. */
   thought?: string;
+  /** Модель готовит обращение к файлам — имя инструмента; пока не выполнено. */
+  calling?: string | null;
+  /** Модель ждёт разрешения записать файл. */
+  write?: WriteAsk | null;
 }
+
+/** Путь от корня папки, если файл лежит в ней: так и модели, и человеку понятнее, какой это файл. */
+const inFolder = (folder: string | null, path: string) => {
+  if (!folder) return null;
+  const root = folder.replace(/[\\/]+$/, "") + "\\";
+  return path.toLowerCase().startsWith(root.toLowerCase()) ? path.slice(root.length).replace(/\\/g, "/") : null;
+};
+
+/** Полный путь файла папки по пути от её корня. */
+const fullPath = (folder: string, rel: string) => `${folder.replace(/[\\/]+$/, "")}\\${rel.replace(/\//g, "\\")}`;
 
 /** Ядро отвечает на ошибку готовой `Problem`; строка — значит, сломалось что-то по дороге. */
 const asProblem = (e: unknown): Problem =>
@@ -150,6 +174,23 @@ export default function Chat({
   /** Диктовка записана и распознаётся. */
   const [hearing, setHearing] = useState(false);
   const [transcribing, setTranscribing] = useState<{ name: string; percent: number } | null>(null);
+  /** Папка проекта разговора; `null` — обычный чат. Новый разговор её наследует, как роль. */
+  const [folder, setFolder] = useState<string | null>(null);
+  const [listing, setListing] = useState<Listing | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  /** Человек пишет «@…» — список файлов папки; `active` — выбранная строка. */
+  const [mention, setMention] = useState<{ start: number; query: string; active: number } | null>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const folderRef = useRef<string | null>(null);
+  folderRef.current = folder;
+  /** Как модель обращается с файлами: «Вручную», «Авто», «План». Новый разговор наследует. */
+  const [mode, setMode] = useState<FileMode>("ask");
+  /** Рабочий режим до «Плана» — в нём «Выполнить план». */
+  const working = useRef<FileMode>("ask");
+  const pickMode = (m: FileMode) => {
+    if (m !== "plan") working.current = m;
+    setMode(m);
+  };
 
   // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
   const linesRef = useRef<Line[]>([]);
@@ -159,6 +200,13 @@ export default function Chat({
   const llmRef = useRef<LlmState | null>(null);
   llmRef.current = llm;
   const wasAnswering = useRef(false);
+  /** Меняет последний ответ модели — туда идут куски текста, шаги и вопросы о записи. */
+  const setLast = (change: (l: Line) => Line) =>
+    setLines((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last || last.role !== "assistant") return prev;
+      return [...prev.slice(0, -1), change(last)];
+    });
   /** Разговор, который мы сами только что записали, — перечитывать его не надо. */
   const savedId = useRef<string | null>(null);
 
@@ -214,19 +262,29 @@ export default function Chat({
           return [...prev.slice(0, -1), { ...last, content: last.content + text }];
         }),
       ),
+      onLlmCalling((name) => setLast((l) => ({ ...l, calling: name }))),
+      onLlmWrite((w) => setLast((l) => ({ ...l, write: w }))),
+      onLlmStep((step) => {
+        setLast((l) => ({ ...l, calling: null, write: null, steps: [...(l.steps ?? []), step] }));
+        // Модель создала файл — он должен появиться и в списке по «@».
+        if (step.kind === "write" && step.ok && folderRef.current) projectOpen(folderRef.current).then(setListing, () => {});
+      }),
       onLlmAnswer((d) => {
         setAnswering(false);
-        setLines((prev) => {
-          const last = prev[prev.length - 1];
-          if (!last || last.role !== "assistant") return prev;
-          return [...prev.slice(0, -1), { ...last, stats: d.stats, problem: d.problem }];
-        });
+        setLast((l) => ({ ...l, stats: d.stats, problem: d.problem, calling: null, write: null }));
       }),
     ];
     return () => {
       subs.forEach((s) => s.then((un) => un()));
     };
   }, []);
+
+  // Папку выбрали или открыли разговор с папкой — читаем список файлов.
+  useEffect(() => {
+    setListing(null);
+    setFolderError(null);
+    if (folder) projectOpen(folder).then(setListing, (e) => setFolderError(String(e)));
+  }, [folder]);
 
   // Идёт диктовка: часы на кнопке. Две минуты — предел: дальше это уже не вопрос,
   // а запись, и её честнее расшифровать файлом.
@@ -267,50 +325,60 @@ export default function Chat({
       setTitle(c.title);
       setRole(c.role || "helper");
       setStyle(c.style || "balanced");
+      setFolder(c.folder ?? null);
+      if (c.mode) pickMode(c.mode);
     });
   }, [chatId]);
 
+  /** Сохраняет разговор целиком. */
+  const persist = (all: Line[]) => {
+    const messages = all
+      .filter((l) => l.content.trim() || l.files?.length || l.steps?.length)
+      .map(({ role, content, files, steps }) => ({ role, content, files, steps }));
+    if (!messages.length) return;
+    chatsSave({
+      id: chatId ?? "",
+      title,
+      created: 0,
+      updated: 0,
+      model: llm?.model ?? null,
+      role,
+      style,
+      folder,
+      mode,
+      messages,
+    }).then((saved) => {
+      savedId.current = saved.id;
+      setTitle(saved.title);
+      onSaved(saved);
+    });
+  };
+
   // Ответ дописан (или его оборвали) — сохраняем разговор целиком.
   useEffect(() => {
-    if (wasAnswering.current && !answering) {
-      const messages = linesRef.current
-        .filter((l) => l.content.trim() || l.files?.length)
-        .map(({ role, content, files }) => ({ role, content, files }));
-      if (messages.length) {
-        chatsSave({
-          id: chatId ?? "",
-          title,
-          created: 0,
-          updated: 0,
-          model: llm?.model ?? null,
-          role,
-          style,
-          messages,
-        }).then(
-          (saved) => {
-            savedId.current = saved.id;
-            setTitle(saved.title);
-            onSaved(saved);
-          },
-        );
-      }
-    }
+    if (wasAnswering.current && !answering) persist(linesRef.current);
     wasAnswering.current = answering;
   }, [answering]);
 
+  // Вниз — только когда реплик стало больше или модель пишет ответ: «Вернуть как было»
+  // у старой реплики не должно уносить к концу разговора.
+  const shown = useRef(0);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
+    if (lines.length !== shown.current || answering) bottom.current?.scrollIntoView({ block: "end" });
+    shown.current = lines.length;
   }, [lines]);
 
   /** Спрашивает модель по всему разговору; ответ придёт кусками в `onLlmToken`. */
-  const ask = async (talk: Line[]) => {
+  const ask = async (talk: Line[], how: FileMode = mode) => {
     setLines([...talk, { role: "assistant", content: "" }]);
     setAnswering(true);
     try {
       await llmChat(
-        talk.map(({ role, content, files }) => ({ role, content, files })),
+        talk.map(({ role, content, files, steps }) => ({ role, content, files, steps })),
         role,
         style,
+        folder,
+        how,
       );
     } catch (e) {
       setAnswering(false);
@@ -366,6 +434,9 @@ export default function Chat({
             a = await speechFile(p);
           } else {
             a = await attachFile(p);
+            // Файл из папки проекта — под путём от её корня, как его знает модель.
+            const rel = inFolder(folderRef.current, p);
+            if (rel) a = { ...a, name: rel };
           }
         } catch (e) {
           // «Остановить» — не ошибка.
@@ -448,6 +519,56 @@ export default function Chat({
   const micRef = useRef(mic);
   micRef.current = mic;
 
+  const pickFolder = async () => {
+    const picked = await open({ directory: true, title: "Папка проекта" });
+    if (typeof picked === "string") setFolder(picked);
+  };
+
+  /** Файл из списка по «@»: в тексте остаётся ссылка, а сам файл прикладывается — модель
+   *  получит его точно, даже если сама открывать файлы не умеет. */
+  const pickMention = (path: string) => {
+    if (!mention || !folder) return;
+    const end = mention.start + 1 + mention.query.length;
+    setDraft(`${draft.slice(0, mention.start)}@${path} ${draft.slice(end)}`);
+    setMention(null);
+    const caret = mention.start + path.length + 2;
+    requestAnimationFrame(() => input.current?.setSelectionRange(caret, caret));
+    if (!files.some((f) => f.name === path)) attach([fullPath(folder, path)]);
+  };
+
+  /** Модель сохранила файл, человек передумал. */
+  const undoStep = async (line: number, i: number) => {
+    const step = lines[line].steps?.[i];
+    if (!step || !folder) return;
+    await projectUndo(folder, step);
+    const next = lines.map((l, j) =>
+      j === line ? { ...l, steps: l.steps?.map((s, k) => (k === i ? { ...s, undone: true } : s)) } : l,
+    );
+    setLines(next);
+    persist(next);
+    projectOpen(folder).then(setListing, () => {});
+  };
+
+  /** «Выполнить план»: обратно в рабочий режим и просим сделать то, что модель расписала. */
+  const runPlan = () => {
+    const how = working.current;
+    setMode(how);
+    ask([...lines, { role: "user", content: "Выполни этот план." }], how);
+  };
+
+  const answerWrite = (ok: boolean) => {
+    const w = lines[lines.length - 1]?.write;
+    if (!w) return;
+    projectWriteAnswer(w.id, ok);
+    setLast((l) => ({ ...l, write: null }));
+  };
+
+  const typed = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setDraft(e.target.value);
+    const m = listing ? mentionAt(e.target.value, e.target.selectionStart) : null;
+    setMention(m && { ...m, active: 0 });
+  };
+
   const pickFiles = async () => {
     const picked = await open({
       multiple: true,
@@ -470,7 +591,28 @@ export default function Chat({
     ask(lines.slice(0, -1));
   };
 
+  const found = mention && listing ? matchFiles(listing.files, mention.query) : [];
+
   const keys = (e: React.KeyboardEvent) => {
+    // Открыт список по «@»: стрелки выбирают, Enter и Tab — берут файл, Esc — закрывает.
+    if (mention && found.length) {
+      const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (step) {
+        e.preventDefault();
+        setMention({ ...mention, active: (mention.active + step + found.length) % found.length });
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickMention(found[mention.active] ?? found[0]);
+        return;
+      }
+    }
+    if (mention && e.key === "Escape") {
+      e.preventDefault();
+      setMention(null);
+      return;
+    }
     // Enter отправляет, Shift+Enter — перенос строки.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -520,14 +662,48 @@ export default function Chat({
     );
   }
 
+  const folderBar = folder && (
+    <div className="folder-bar">
+      <span className="folder-name" title={folder}>
+        📁 {listing?.name ?? folder}
+      </span>
+      {listing && (
+        <span className="muted small">
+          {listing.truncated ? "больше " : ""}
+          {listing.files.length} {plural(listing.files.length, "файл", "файла", "файлов")}
+        </span>
+      )}
+      <button className="link" disabled={answering} onClick={pickFolder}>
+        Сменить
+      </button>
+      <button className="link" disabled={answering} onClick={() => setFolder(null)}>
+        Убрать
+      </button>
+      <ModeSwitch mode={mode} disabled={answering} onChange={pickMode} />
+      {folderError && <span className="error small">{folderError}</span>}
+      {listing && llm.state === "ready" && !llm.tools && (
+        <span className="muted small hint">
+          Эта модель сама файлы не открывает — прикладывайте нужные через @ в поле ввода.
+        </span>
+      )}
+    </div>
+  );
+
   return (
     <>
+      {folderBar}
       <div className="talk">
         {lines.length === 0 && (
           <p className="muted">
-            {role === "helper" || !roleNow
-              ? "Спросите что угодно — модель отвечает прямо на вашем компьютере."
-              : `${roleNow.name}: ${roleNow.hint.toLowerCase()}.`}
+            {folder
+              ? mode === "plan"
+                ? "Режим «План»: модель изучит файлы и распишет, что сделать, но ничего не изменит."
+                : mode === "auto"
+                  ? "Режим «Авто»: модель сама создаёт, меняет и удаляет файлы в папке. Любое изменение можно вернуть."
+                  : "Спросите про файлы папки: модель откроет нужные сама, а менять их будет только с вашего разрешения."
+              : role === "helper" || !roleNow
+                ? "Спросите что угодно — модель отвечает прямо на вашем компьютере."
+                : `${roleNow.name}: ${roleNow.hint.toLowerCase()}.`}
           </p>
         )}
         {lines.map((l, i) => (
@@ -549,7 +725,24 @@ export default function Chat({
                     <p>{l.thought}</p>
                   </details>
                 )}
-                <Answer text={l.content || (answering && i === lines.length - 1 && !l.thought ? "…" : "")} />
+                {l.steps?.length ? (
+                  <Steps steps={l.steps} onUndo={folder && !answering ? (k) => undoStep(i, k) : undefined} />
+                ) : null}
+                <Answer
+                  text={l.content || (answering && i === lines.length - 1 && !l.thought && !l.steps?.length ? "…" : "")}
+                />
+                {answering && i === lines.length - 1 && l.calling && !l.write && (
+                  <p className="muted small">
+                    {l.calling === "write_file" ? "Модель пишет файл…" : "Модель открывает файлы…"}
+                  </p>
+                )}
+                {l.write && <WriteCard ask={l.write} onAnswer={answerWrite} />}
+                {folder && !(answering && i === lines.length - 1) && claimsChanges(l.content, l.steps) && (
+                  <p className="warn small">
+                    ⚠ Модель пишет, что меняла файлы, но ни одного файла не изменила — проверьте. Что она на
+                    самом деле делала, видно в строках над ответом.
+                  </p>
+                )}
               </>
             )}
             {l.problem && (
@@ -578,6 +771,15 @@ export default function Chat({
                 <button className="link" onClick={again}>
                   Ответить заново
                 </button>
+                {folder && mode === "plan" && (
+                  <button
+                    className="link"
+                    title={working.current === "auto" ? "Модель выполнит план сама" : "Каждое изменение — с вашего разрешения"}
+                    onClick={runPlan}
+                  >
+                    Выполнить план
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -679,18 +881,23 @@ export default function Chat({
             </div>
           )}
           {files.length > 0 && <Files files={files} onRemove={(i) => setFiles(files.filter((_, j) => j !== i))} />}
+          {mention && listing && <Mentions files={found} active={mention.active} onPick={pickMention} />}
           {reading && <p className="muted small">Читаю файл…</p>}
           {fileError && <p className="error small">{fileError}</p>}
           <textarea
+            ref={input}
             rows={3}
             value={draft}
             placeholder={
               files.length
                 ? "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать."
-                : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
+                : folder
+                  ? "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка."
+                  : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
             }
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={typed}
             onKeyDown={keys}
+            onBlur={() => setMention(null)}
           />
           <div className="actions">
             {answering ? (
@@ -707,6 +914,18 @@ export default function Chat({
               onClick={pickFiles}
             >
               📎
+            </button>
+            <button
+              className={folder ? "" : "secondary"}
+              title={
+                folder
+                  ? `Папка проекта: ${folder}. Нажмите, чтобы выбрать другую.`
+                  : "Работать с папкой: модель увидит её файлы, сможет их читать, а с вашего разрешения — создавать и менять."
+              }
+              disabled={answering}
+              onClick={pickFolder}
+            >
+              📁
             </button>
             <button
               className={rec ? "recording" : "secondary"}

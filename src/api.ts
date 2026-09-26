@@ -444,6 +444,8 @@ export interface LlmState {
   problem: Problem | null;
   /** Модель видит картинки — так ответил сам движок. */
   vision: boolean;
+  /** Модель сама открывает файлы папки проекта (вызывает инструменты). */
+  tools: boolean;
 }
 
 // --- Понятные ошибки ---
@@ -474,6 +476,8 @@ export interface Msg {
   content: string;
   /** Приложенные документы: модель видит их перед вопросом. */
   files?: Attachment[];
+  /** Что модель делала с папкой проекта, пока отвечала. */
+  steps?: Step[];
 }
 
 /** Приложенный документ, картинка или расшифровка записи. `text` — то, что получит модель. */
@@ -488,6 +492,59 @@ export interface Attachment {
   /** Копия картинки в папке программы. */
   path?: string | null;
 }
+
+// --- Папка проекта ---
+
+/** Файлы папки: пути от её корня через «/». */
+export interface Listing {
+  root: string;
+  name: string;
+  files: string[];
+  /** Файлов очень много — показаны не все. */
+  truncated: boolean;
+}
+
+/** «Вручную» — каждое изменение с разрешения, «Авто» — модель меняет файлы сама,
+ *  «План» — ничего не меняет, только пишет план. Соблюдает ядро, а не окно. */
+export type FileMode = "ask" | "auto" | "plan";
+
+/** Что модель сделала с папкой. */
+export interface Step {
+  /** `plan` — хотела изменить файл в режиме «План», и ядро не дало. */
+  kind: "read" | "list" | "search" | "write" | "edit" | "delete" | "plan" | "unknown";
+  /** Путь от корня папки; у поиска — запрос. */
+  path: string;
+  ok: boolean;
+  /** Почему не вышло. */
+  note?: string;
+  /** У записи: копия старого файла (`null` — файл новый). */
+  backup?: string | null;
+  hash?: string | null;
+  /** «Вернуть как было» уже нажали. */
+  undone?: boolean;
+}
+
+/** Модель просит записать, поправить или удалить файл. */
+export interface WriteAsk {
+  id: string;
+  kind: "write" | "edit" | "delete";
+  path: string;
+  /** Файл целиком после записи; у удаления — что пропадёт. */
+  content: string;
+  /** Правка куском: что было и что станет. */
+  before?: string;
+  after?: string;
+  exists: boolean;
+  old_lines: number;
+  new_lines: number;
+}
+
+export const projectOpen = (folder: string) => invoke<Listing>("project_open", { folder });
+
+export const projectWriteAnswer = (id: string, ok: boolean) => invoke<void>("project_write_answer", { id, ok });
+
+/** «Вернуть как было»; ошибка — строка человеческими словами. */
+export const projectUndo = (folder: string, step: Step) => invoke<void>("project_undo", { folder, step });
 
 // --- Распознавание речи ---
 
@@ -584,6 +641,10 @@ export interface Chat {
   /** id роли и манеры ответа; пусто — «Помощник» и «Обычно». */
   role: string;
   style: string;
+  /** Папка проекта, с которой работает разговор; нет — обычный чат. */
+  folder?: string | null;
+  /** Как модель обращается с файлами папки. */
+  mode?: FileMode | "";
   messages: Msg[];
 }
 
@@ -625,9 +686,10 @@ export interface ChatStyle {
 
 export const chatPresets = () => invoke<{ roles: ChatRole[]; styles: ChatStyle[] }>("chat_presets");
 
-/** Просит ответ на весь разговор: текст придёт кусками в `onLlmToken`. */
-export const llmChat = (messages: Msg[], role: string, style: string) =>
-  invoke<void>("llm_chat", { messages, role, style });
+/** Просит ответ на весь разговор: текст придёт кусками в `onLlmToken`.
+ *  С папкой модель видит её файлы и может их читать и (с разрешения) записывать. */
+export const llmChat = (messages: Msg[], role: string, style: string, folder: string | null, mode: FileMode) =>
+  invoke<void>("llm_chat", { messages, role, style, folder, mode });
 
 /** «Остановить»: обрывает ответ, написанное остаётся. */
 export const llmChatStop = () => invoke<void>("llm_chat_stop");
@@ -638,6 +700,17 @@ export const onLlmToken = (cb: (text: string) => void): Promise<UnlistenFn> =>
 /** Размышления думающей модели перед ответом — кусками, как и сам ответ. */
 export const onLlmThought = (cb: (text: string) => void): Promise<UnlistenFn> =>
   listen<string>("llm://thought", (e) => cb(e.payload));
+
+/** Модель начала готовить обращение к файлам — имя инструмента. */
+export const onLlmCalling = (cb: (name: string) => void): Promise<UnlistenFn> =>
+  listen<string>("llm://calling", (e) => cb(e.payload));
+
+export const onLlmStep = (cb: (step: Step) => void): Promise<UnlistenFn> =>
+  listen<Step>("llm://step", (e) => cb(e.payload));
+
+/** Модель просит записать файл; ответ — `projectWriteAnswer`. */
+export const onLlmWrite = (cb: (w: WriteAsk) => void): Promise<UnlistenFn> =>
+  listen<WriteAsk>("llm://write", (e) => cb(e.payload));
 
 export const onLlmAnswer = (cb: (d: ChatDone) => void): Promise<UnlistenFn> =>
   listen<ChatDone>("llm://answer", (e) => cb(e.payload));
