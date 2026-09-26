@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BUILD_NAMES, formatBytes, hardwareInfo, type Hardware } from "../api";
+import { formatBytes, hardwareInfo, type Hardware } from "../api";
 import EngineCard from "../components/EngineCard";
 
 export default function Computer() {
@@ -33,9 +33,8 @@ export default function Computer() {
             </>
           )}
 
-          <dt>Сборка движков</dt>
-          <dd>{BUILD_NAMES[hw.cuda_build]}</dd>
-
+          {/* Сборку движка не пишем: `cuda_build` — какая CUDA подходит карте, а чат по умолчанию
+              идёт на Vulkan. Настоящая сборка — в карточке движка ниже. */}
           <dt>Оперативная память</dt>
           <dd>
             {formatBytes(hw.ram_total)} (свободно {formatBytes(hw.ram_avail)})

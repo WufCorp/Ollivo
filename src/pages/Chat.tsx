@@ -21,6 +21,7 @@ import {
 import Answer, { copyText } from "../components/Answer";
 import ProblemCard from "../components/ProblemCard";
 import { crashActions } from "../components/RunningModel";
+import { wordsPerSecond } from "../words";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -260,7 +261,7 @@ export default function Chat({
             )}
             {l.stats && l.stats.tokens > 0 && (
               <p className="muted small">
-                {l.stats.tokens} токенов, {Math.round(l.stats.speed)} ток/с
+                {wordsPerSecond(l.content, l.stats.tokens, l.stats.speed)}
               </p>
             )}
             {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
