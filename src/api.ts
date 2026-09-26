@@ -609,8 +609,24 @@ export interface Projector {
   sha256: string | null;
 }
 
-/** Можно ли докачать зрение этой модели; `null` — нельзя (или уже есть). */
-export const visionOffer = (model: string) => invoke<Projector | null>("vision_offer", { model });
+/** Как показать картинку модели, которая её не видит, — от простого к сложному.
+ *  Всё `null` — предложить нечего (или зрение уже есть). */
+export interface VisionOffer {
+  /** Докачать зрение этой же модели. */
+  projector: Projector | null;
+  /** Своя модель, которая уже видит картинки. */
+  local: { path: string; name: string; verdict: Verdict } | null;
+  /** Модель из подборки со зрением, которая пойдёт на этом ПК; зрение качается следом. */
+  pick: {
+    title: string;
+    repo: string;
+    license: string | null;
+    variant: CatalogVariant;
+    projector: Projector;
+  } | null;
+}
+
+export const visionOffer = (model: string) => invoke<VisionOffer>("vision_offer", { model });
 
 /** Докачивает зрение; итог — `download://finished` с id `vision:<путь модели>`. */
 export const visionDownload = (model: string) => invoke<string>("vision_download", { model });

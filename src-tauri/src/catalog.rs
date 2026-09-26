@@ -6,7 +6,7 @@
 //! SHA256 — оттуда же (`lfs.oid`), так что скачанное всё равно проверяется.
 
 use crate::hardware::Hardware;
-use crate::probe::{self, Verdict};
+use crate::probe::{self, Light, Verdict};
 use serde::{Deserialize, Serialize};
 
 const BUNDLED: &str = include_str!("../../manifest/catalog.json");
@@ -30,6 +30,10 @@ pub struct Pick {
     pub vendor: String,
     pub about: String,
     pub tags: Vec<String>,
+    /// Видит картинки: в репозитории есть `mmproj`. Полем, а не меткой — по нему
+    /// программа выбирает, что предложить, когда модель не видит приложенное фото.
+    #[serde(default)]
+    pub vision: bool,
     pub license: Option<String>,
     pub repo: String,
     pub params: u64,
@@ -89,6 +93,38 @@ impl Pick {
         v.sort_by_key(|x| x.size);
         v
     }
+}
+
+/// Модель подборки со зрением для этого ПК, когда текущая картинку не видит.
+/// Берём самую крупную из тех, что целиком помещаются в видеокарту: она и умнее,
+/// и отвечает быстро. Если в видеокарту не лезет ни одна — самую лёгкую из тех, что
+/// пойдут хоть как-то. Красный «светофор» не предлагаем: скачать 3 ГБ ради «не хватит
+/// памяти» — хуже, чем честно сказать «в каталоге».
+/// `reserve` — видеопамять под само зрение: дополнение с буфером на картинку.
+pub fn seeing_pick<'a>(picks: &'a [Pick], hw: &Hardware, reserve: u64) -> Option<(&'a Pick, Variant)> {
+    let mut hw = hw.clone();
+    if let Some(g) = hw.gpu.as_mut() {
+        g.vram_free = g.vram_free.saturating_sub(reserve);
+    }
+    let light = |v: &Variant| v.verdict.light;
+    let chosen = picks.iter().filter(|p| p.vision).filter_map(|p| {
+        let vs = p.variants(&hw);
+        // Среди вариантов, которые лезут в видеокарту, — самый близкий к «обычному выбору»
+        // (4 бита); меньше четырёх — только если больше ничего не лезет.
+        let green = vs
+            .iter()
+            .filter(|v| light(v) == Light::Green)
+            .min_by_key(|v| (bits(&v.quant) < 4, bits(&v.quant).abs_diff(4)))
+            .cloned();
+        green.or_else(|| vs.into_iter().find(|v| light(v) == Light::Yellow)).map(|v| (p, v))
+    });
+    let (green, yellow): (Vec<_>, Vec<_>) = chosen.partition(|(_, v)| light(v) == Light::Green);
+    // Сжатая до двух-трёх бит большая модель отвечает хуже обычной средней — она
+    // только если иначе никак. Одинаковые по размеру (4B у Qwen и Gemma) — берём файл
+    // полегче: быстрее качается и отвечает.
+    let best_green =
+        green.into_iter().max_by_key(|(p, v)| (bits(&v.quant) >= 4, p.params, std::cmp::Reverse(v.size)));
+    best_green.or_else(|| yellow.into_iter().min_by_key(|(_, v)| v.size))
 }
 
 /// Файл модели, который можно скачать: что за сжатие, сколько весит, пойдёт ли.
@@ -412,6 +448,44 @@ mod tests {
         assert!(is_aux("mtp-gemma-4-E4B-it-Q8_0.gguf"));
         assert!(is_aux("dflash-Qwen3.8-27B-Q4_0.gguf"));
         assert!(!is_aux("Qwen3.5-9B-Q4_K_M.gguf"));
+    }
+
+    fn hw(vram_gib: Option<u64>, ram_gib: u64) -> Hardware {
+        const GIB: u64 = 1 << 30;
+        Hardware {
+            gpu: vram_gib.map(|v| crate::hardware::Gpu {
+                name: "test".into(),
+                vram_total: v * GIB,
+                vram_free: v * GIB - GIB / 2,
+                cc: (6, 1),
+                vram_bw: 320_000_000_000,
+            }),
+            driver: String::new(),
+            cuda_driver: 0,
+            cuda_build: crate::hardware::Build::Vulkan,
+            ram_total: ram_gib * 2 * GIB,
+            ram_avail: ram_gib * GIB,
+            disks: vec![],
+            profile_risky: false,
+        }
+    }
+
+    /// Что предложить вместо модели без зрения — по встроенной подборке.
+    #[test]
+    fn seeing_pick_fits_hardware() {
+        let c = Catalog::bundled();
+        let pick = |hw: &Hardware| seeing_pick(&c.models, hw, 1 << 30).map(|(p, v)| (p.id.clone(), v.quant));
+        // GTX 1080: 9B со зрением уже не лезет, из двух 4B — та, что легче.
+        assert_eq!(pick(&hw(Some(8), 16)), Some(("qwen3.5-4b".into(), "Q4_K_M".into())));
+        // 24 ГБ: 27B в обычном сжатии, а не 35B, сжатая до двух бит.
+        assert_eq!(pick(&hw(Some(24), 32)), Some(("qwen3.5-27b".into(), "Q4_K_M".into())));
+        // Без видеокарты — самая лёгкая, честно жёлтая.
+        let (p, v) = seeing_pick(&c.models, &hw(None, 8), 1 << 30).unwrap();
+        assert_eq!((p.id.as_str(), v.verdict.light), ("qwen3.5-2b", Light::Yellow));
+        // Памяти нет ни на что — не предлагаем ничего.
+        assert_eq!(pick(&hw(None, 1)), None);
+        // Модели без зрения не предлагаются никогда.
+        assert!(c.models.iter().any(|m| !m.vision));
     }
 
     /// «Светофор» подборки на сегодняшнем железе.

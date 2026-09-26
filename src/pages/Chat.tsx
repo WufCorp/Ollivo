@@ -19,7 +19,10 @@ import {
   visionDownload,
   visionOffer,
   type Attachment,
-  type Projector,
+  type VisionOffer,
+  type Verdict,
+  catalogDownload,
+  LIGHTS,
   chatPresets,
   chatsGet,
   chatsSave,
@@ -92,15 +95,88 @@ function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number
   );
 }
 
-/** Зрение для модели, которая его не имеет. `offer`: `undefined` — ещё узнаём,
- *  `null` — докачать нельзя. `task` — id идущей загрузки. */
+/** Картинки для модели, которая их не видит, и что с этим делаем. `offer`: `undefined` —
+ *  ещё узнаём, `null` — узнать не вышло. `task` — идущая загрузка: сама модель из подборки
+ *  (`step: "model"`) или зрение. `target` — модель, на которую переходим; нет — остаёмся на этой. */
 interface Eyes {
   images: Attachment[];
-  offer?: Projector | null;
+  offer?: VisionOffer | null;
   task?: string;
+  step?: "model" | "vision";
   done?: number;
+  total?: number;
+  target?: string;
   restarting?: boolean;
   error?: string;
+}
+
+/** Что сказать, когда модель не видит приложенную картинку, и какую кнопку дать.
+ *  Порядок — от простого к сложному: зрение этой же модели, своя модель со зрением,
+ *  модель из подборки; ничего — в каталог. */
+function EyesCard({
+  eyes,
+  onProjector,
+  onLocal,
+  onPick,
+  onCatalog,
+  onClose,
+}: {
+  eyes: Eyes;
+  onProjector: () => void;
+  onLocal: () => void;
+  onPick: () => void;
+  onCatalog: () => void;
+  onClose: () => void;
+}) {
+  const o = eyes.offer;
+  const what = eyes.images.length > 1 ? `Картинки (${eyes.images.length})` : `«${eyes.images[0].name}»`;
+  // Скорость — первая строка подробностей у «зелёных»; у остальных там память, она лишняя.
+  const how = (v: Verdict) =>
+    `${LIGHTS[v.light]} ${v.headline}${v.light === "green" && v.details[0] ? `, ${v.details[0]}` : ""}`;
+  let text: string;
+  let action: { label: string; run: () => void } | null = null;
+  if (eyes.restarting) {
+    text = eyes.target ? "Запускаю модель, которая видит картинки…" : "Перезапускаю модель со зрением…";
+  } else if (eyes.task) {
+    const what = eyes.step === "model" ? `Качаю «${o?.pick?.title}»` : "Качаю зрение";
+    text = `${what}: ${formatBytes(eyes.done ?? 0)} из ${formatBytes(eyes.total ?? 0)}.`;
+  } else if (o === undefined) {
+    text = "Ищу, как ей помочь…";
+  } else if (o?.projector) {
+    text = `Ей можно докачать зрение — ${formatBytes(o.projector.size)}, потом модель перезапустится.`;
+    action = { label: "Докачать зрение", run: onProjector };
+  } else if (o?.local) {
+    text = `Картинки видит ваша «${o.local.name}»: ${how(o.local.verdict)}. Разговор продолжится с ней.`;
+    action = { label: "Переключиться на неё", run: onLocal };
+  } else if (o?.pick) {
+    const p = o.pick;
+    const size = p.variant.downloaded ? p.projector.size : p.variant.size + p.projector.size;
+    text =
+      `Картинки видит «${p.title}» из каталога: ${formatBytes(size)}` +
+      `${p.variant.downloaded ? " — докачать зрение" : " вместе со зрением"}, ${how(p.variant.verdict)}. ` +
+      "Потом разговор продолжится с ней.";
+    action = { label: p.variant.downloaded ? "Докачать и переключиться" : "Скачать и переключиться", run: onPick };
+  } else {
+    text = "Зрение ей не докачать. Видят картинки модели с пометкой «видит картинки» в каталоге.";
+    action = { label: "В каталог", run: onCatalog };
+  }
+  return (
+    <div className="card notice">
+      <p>
+        {what} — а эта модель пока не видит картинки. {text}
+      </p>
+      {eyes.task && <progress value={eyes.done ?? 0} max={eyes.total || undefined} />}
+      {eyes.error && <p className="error small">{eyes.error}</p>}
+      {!eyes.task && !eyes.restarting && o !== undefined && (
+        <div className="actions">
+          {action && <button onClick={action.run}>{eyes.error ? "Ещё раз" : action.label}</button>}
+          <button className="secondary" onClick={onClose}>
+            Не надо
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
@@ -236,10 +312,16 @@ export default function Chat({
         setEyes({ ...e, task: undefined, error: f.error === "paused" ? "Загрузка прервалась." : f.error });
         return;
       }
+      // Модель из подборки скачалась — следом зрение к ней.
+      if (e.step === "model" && f.result) {
+        visionFor({ ...e, target: f.result }, f.result, e.offer?.pick?.projector.size ?? 0);
+        return;
+      }
       // Зрение подключается при запуске — перезапускаем модель с теми же настройками.
       setEyes({ ...e, task: undefined, restarting: true });
       const llm = llmRef.current;
-      if (llm?.model) llmStart(llm.model, { lighter: llm.lighter });
+      if (e.target) llmStart(e.target);
+      else if (llm?.model) llmStart(llm.model, { lighter: llm.lighter });
     });
     const speechProgress = onSpeechProgress((p) => setTranscribing((t) => t && { ...t, percent: p.percent }));
     const subs = [
@@ -300,12 +382,18 @@ export default function Chat({
 
   // Модель перезапустилась со зрением — ждавшие картинки встают к вопросу.
   useEffect(() => {
-    if (!eyes?.restarting || llm?.state !== "ready") return;
+    if (!eyes?.restarting) return;
+    if (llm?.state === "crashed") {
+      setEyes({ ...eyes, restarting: false, error: "Модель не запустилась." });
+      return;
+    }
+    // Ещё не та модель: «готова» пока прошлая, новая только загружается.
+    if (llm?.state !== "ready" || (eyes.target && llm.model !== eyes.target)) return;
     if (llm.vision) {
       setFiles((f) => [...f, ...eyes.images]);
       setEyes(null);
     } else {
-      setEyes({ ...eyes, restarting: false, error: "Зрение скачалось, но модель его не подключила." });
+      setEyes({ ...eyes, restarting: false, error: "Модель запустилась без зрения — картинки ей не показать." });
     }
   }, [llm]);
 
@@ -482,12 +570,45 @@ export default function Chat({
     }
   };
 
-  const getEyes = async () => {
-    const model = llmRef.current?.model;
-    if (!eyes || !model) return;
+  /** Качает зрение модели `model`; конец загрузки ловит обработчик выше и запускает её. */
+  const visionFor = async (e: Eyes, model: string, size: number) => {
     try {
       const task = await visionDownload(model);
-      setEyes({ ...eyes, task, done: 0, error: undefined });
+      setEyes({ ...e, task, step: "vision", done: 0, total: size, error: undefined });
+    } catch (err) {
+      setEyes({ ...e, task: undefined, error: String(err) });
+    }
+  };
+
+  /** Зрение этой же модели. */
+  const getEyes = () => {
+    const model = llmRef.current?.model;
+    const p = eyes?.offer?.projector;
+    if (eyes && model && p) visionFor(eyes, model, p.size);
+  };
+
+  /** Своя модель со зрением: переключаемся, разговор продолжается с ней. */
+  const switchToSeer = () => {
+    const l = eyes?.offer?.local;
+    if (!eyes || !l) return;
+    setEyes({ ...eyes, target: l.path, restarting: true, error: undefined });
+    llmStart(l.path);
+  };
+
+  /** Модель из подборки: скачать её, потом зрение, потом переключиться. Уже скачанная
+   *  (или скачалась, а зрение сорвалось) — сразу за зрением. */
+  const getSeer = async () => {
+    const p = eyes?.offer?.pick;
+    if (!eyes || !p) return;
+    const have = eyes.target ?? p.variant.downloaded;
+    if (have) {
+      visionFor({ ...eyes, target: have }, have, p.projector.size);
+      return;
+    }
+    try {
+      const v = p.variant;
+      const task = await catalogDownload(p.repo, v.name, v.sha256, p.title, p.license);
+      setEyes({ ...eyes, task, step: "model", done: 0, total: v.size, error: undefined });
     } catch (e) {
       setEyes({ ...eyes, error: String(e) });
     }
@@ -805,35 +926,14 @@ export default function Chat({
       ) : (
         <div className={over ? "ask over" : "ask"}>
           {eyes && (
-            <div className="card notice">
-              <p>
-                {eyes.images.length > 1 ? `Картинки (${eyes.images.length})` : `«${eyes.images[0].name}»`} — а эта
-                модель пока не видит картинки.{" "}
-                {eyes.offer === undefined
-                  ? "Проверяю, можно ли докачать ей зрение…"
-                  : eyes.offer === null
-                    ? "Зрение ей не докачать. Видят картинки модели с пометкой «видит картинки» в каталоге."
-                    : eyes.restarting
-                      ? "Перезапускаю модель со зрением…"
-                      : eyes.task
-                        ? `Качаю зрение: ${formatBytes(eyes.done ?? 0)} из ${formatBytes(eyes.offer.size)}.`
-                        : `Ей можно докачать зрение — ${formatBytes(eyes.offer.size)}, потом модель перезапустится.`}
-              </p>
-              {eyes.task && eyes.offer && <progress value={eyes.done ?? 0} max={eyes.offer.size} />}
-              {eyes.error && <p className="error small">{eyes.error}</p>}
-              {!eyes.task && !eyes.restarting && eyes.offer !== undefined && (
-                <div className="actions">
-                  {eyes.offer ? (
-                    <button onClick={getEyes}>{eyes.error ? "Ещё раз" : "Докачать зрение"}</button>
-                  ) : (
-                    <button onClick={() => onGo("catalog")}>В каталог</button>
-                  )}
-                  <button className="secondary" onClick={() => setEyes(null)}>
-                    Не надо
-                  </button>
-                </div>
-              )}
-            </div>
+            <EyesCard
+              eyes={eyes}
+              onProjector={getEyes}
+              onLocal={switchToSeer}
+              onPick={getSeer}
+              onCatalog={() => onGo("catalog")}
+              onClose={() => setEyes(null)}
+            />
           )}
           {tooBig && (
             <div className="card notice">

@@ -580,7 +580,7 @@ async fn catalog_picks(core: CoreState<'_>) -> Result<Vec<PickView>, String> {
                 title: m.title.clone(),
                 vendor: m.vendor.clone(),
                 about: m.about.clone(),
-                tags: m.tags.clone(),
+                tags: m.tags.iter().cloned().chain(m.vision.then(|| "видит картинки".into())).collect(),
                 license: m.license.clone(),
                 repo: m.repo.clone(),
                 params: m.params,
@@ -670,19 +670,109 @@ fn catalog_download(
     Ok(id)
 }
 
-/// Зрение для модели, которая пока его не имеет: откуда модель скачана, мы помним
-/// (`library::Entry.repo`), а в том же репозитории обычно лежит и `mmproj`.
-/// `None` — зрение уже есть, модель не из HF или у неё его не бывает.
+/// Сколько видеопамяти отдать под зрение, пока дополнение не скачано и размер
+/// неизвестен: у моделей подборки оно 0,4–0,9 ГБ плюс буфер на картинку.
+const VISION_RESERVE: u64 = 1 << 30;
+
+/// Как показать картинку модели, которая её не видит, — от простого к сложному.
+#[derive(serde::Serialize)]
+struct VisionOffer {
+    /// Докачать зрение этой же модели: в её репозитории на HF есть `mmproj`.
+    projector: Option<catalog::Projector>,
+    /// Своя модель, которая уже видит картинки, — переключиться без загрузки.
+    local: Option<LocalSeer>,
+    /// Модель из подборки со зрением, которая пойдёт на этом ПК, — скачать её и зрение.
+    pick: Option<SeerPick>,
+}
+
+#[derive(serde::Serialize)]
+struct LocalSeer {
+    path: PathBuf,
+    name: String,
+    verdict: probe::Verdict,
+}
+
+#[derive(serde::Serialize)]
+struct SeerPick {
+    title: String,
+    repo: String,
+    license: Option<String>,
+    variant: VariantView,
+    /// Зрение к ней: качается следом за моделью.
+    projector: catalog::Projector,
+}
+
+/// Что предложить, когда к вопросу приложили картинку, а модель её не видит.
+/// Сначала — зрение этой же модели (откуда она скачана, мы помним: `library::Entry.repo`).
+/// Нет его — своя модель со зрением, нет и её — модель из подборки под это железо.
+/// Сеть нужна только для HF; без сети остаётся своя модель — это не ошибка.
 #[tauri::command]
-async fn vision_offer(core: CoreState<'_>, model: PathBuf) -> Result<Option<catalog::Projector>, String> {
-    let (has, repo) = {
-        let m = model.clone();
-        let repo = core.library.find(&model).and_then(|e| e.repo);
-        (tauri::async_runtime::spawn_blocking(move || vision::find_projector(&m)).await.map_err(|e| e.to_string())?, repo)
-    };
-    let (None, Some(repo)) = (has, repo) else { return Ok(None) };
+async fn vision_offer(core: CoreState<'_>, model: PathBuf) -> Result<VisionOffer, String> {
+    let mut offer = VisionOffer { projector: None, local: None, pick: None };
     let base = core.settings.get().hf.base()?;
-    catalog::projector(core.downloader().client(), &base, &hf::load_token(), &repo).await
+    let token = hf::load_token();
+    let client = core.downloader().client().clone();
+    let has = {
+        let m = model.clone();
+        tauri::async_runtime::spawn_blocking(move || vision::find_projector(&m)).await.map_err(|e| e.to_string())?
+    };
+    if has.is_some() {
+        return Ok(offer);
+    }
+    if let Some(repo) = core.library.find(&model).and_then(|e| e.repo) {
+        offer.projector = catalog::projector(&client, &base, &token, &repo).await.ok().flatten();
+        if offer.projector.is_some() {
+            return Ok(offer);
+        }
+    }
+    // Заменой станет другая модель, а эта выгрузится: её видеопамять считаем свободной.
+    let used = core.llm.lock().await.as_ref().map_or(0, |l| l.vram);
+    let (local, pick) = {
+        let core = core.inner().clone();
+        let model = model.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut hw = hardware::detect();
+            if let Some(g) = hw.gpu.as_mut() {
+                g.vram_free = (g.vram_free + used).min(g.vram_total);
+            }
+            let local = local_seer(&core, &model, &hw);
+            let pick = catalog::seeing_pick(&core.catalog.models, &hw, VISION_RESERVE)
+                .map(|(p, v)| (p.title.clone(), p.repo.clone(), p.license.clone(), VariantView::new(&core.data_dir(), &p.repo, v)));
+            (local, pick)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    offer.local = local;
+    if offer.local.is_none() {
+        if let Some((title, repo, license, variant)) = pick {
+            // Зрения в репозитории не нашлось (или нет сети) — модель без него не предлагаем.
+            if let Ok(Some(projector)) = catalog::projector(&client, &base, &token, &repo).await {
+                offer.pick = Some(SeerPick { title, repo, license, variant, projector });
+            }
+        }
+    }
+    Ok(offer)
+}
+
+/// Своя модель со зрением рядом, которая пойдёт на этом ПК: сначала те, что целиком
+/// в видеокарте, среди них — крупнее (умнее).
+fn local_seer(core: &Core, current: &std::path::Path, hw: &hardware::Hardware) -> Option<LocalSeer> {
+    let mut hw = hw.clone();
+    if let Some(g) = hw.gpu.as_mut() {
+        g.vram_free = g.vram_free.saturating_sub(VISION_RESERVE);
+    }
+    core.library
+        .list(&hw)
+        .into_iter()
+        .filter(|m| m.entry.info.kind == probe::Kind::Llm && !m.missing && m.entry.path != current)
+        .filter_map(|m| {
+            let v = m.verdict.clone()?;
+            matches!(v.light, probe::Light::Green | probe::Light::Yellow).then_some((m, v))
+        })
+        .filter(|(m, _)| vision::find_projector(&m.entry.path).is_some())
+        .max_by_key(|(m, v)| (v.light == probe::Light::Green, m.entry.size))
+        .map(|(m, verdict)| LocalSeer { name: m.entry.title.clone().unwrap_or(m.file), path: m.entry.path, verdict })
 }
 
 /// Докачивает зрение в папку модели. Прогресс и итог — те же события, что у моделей,
@@ -1148,8 +1238,11 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
                 }
             }
         };
+        let before = tauri::async_runtime::spawn_blocking(hardware::vram_free).await.ok().flatten();
         match llm::start(&core.supervisor, &engine, &cfg, &root.join("logs"), &cancel).await {
-            Ok(l) => {
+            Ok(mut l) => {
+                let after = tauri::async_runtime::spawn_blocking(hardware::vram_free).await.ok().flatten();
+                l.vram = before.zip(after).map_or(0, |(b, a)| b.saturating_sub(a));
                 let layers = model_layers(&core, &l.model);
                 emit_llm(&app, LlmState { lighter, layers, ..LlmState::ready(&l) });
                 // Сторож: движок упал сам — сообщаем с хвостом лога.

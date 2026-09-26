@@ -77,6 +77,13 @@ pub fn detect() -> Hardware {
     }
 }
 
+/// Свободная видеопамять прямо сейчас — без остального опроса железа.
+/// По разнице до и после запуска модели узнаём, сколько она заняла.
+pub fn vram_free() -> Option<u64> {
+    let nvml = nvml_wrapper::Nvml::init().ok()?;
+    Some(nvml.device_by_index(0).ok()?.memory_info().ok()?.free)
+}
+
 fn detect_gpu() -> (Option<Gpu>, String, i32) {
     let Ok(nvml) = nvml_wrapper::Nvml::init() else {
         return (None, String::new(), 0);
