@@ -43,7 +43,10 @@ jobs:
         run: cargo test --locked
 
       - name: Установщик NSIS
-        run: npx tauri build
+        # Без подписи обновлений: ключ живёт только у владельца (RELEASE.md), а с включённым
+        # createUpdaterArtifacts сборка без ключа падает — так CI и падал до 2026-09-26.
+        # Здешний установщик — для проверки, выпуски собираются и подписываются локально.
+        run: npx tauri build --config src-tauri/tauri.ci.conf.json
 
       - uses: actions/upload-artifact@v4
         with:

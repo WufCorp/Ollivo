@@ -47,7 +47,7 @@ npm run tauri build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Сейчас 71 тест проходит, 13 помечены `#[ignore]` — им нужны сеть, настоящие модели
+Сейчас 73 теста проходят, 13 помечены `#[ignore]` — им нужны сеть, настоящие модели
 или запущенный движок. Самые полезные из них:
 
 ```bash
@@ -79,6 +79,7 @@ src/                  React + TypeScript
   api.ts              все вызовы ядра и типы; поля 1:1 с serde-структурами Rust
   App.tsx             каркас: меню слева, страницы справа, мастер на весь экран
   App.css             всё оформление одним файлом
+  words.ts            токены → слова и страницы, склонение по числу
   pages/              Chat, Catalog, Models, Computer, Settings, Wizard
   components/         Answer (markdown), ChatList, EngineCard, InstallScreen,
                       HfForm, License, ProblemCard, ProxyForm, RunningModel, UpdateCard
@@ -93,7 +94,8 @@ src-tauri/src/        Rust-ядро
   scan.rs             поиск уже скачанных моделей (LM Studio, Ollama, ComfyUI)
   presets.rs          роли и манеры ответа: промпты и температура
   trouble.rs          ошибки движка → что случилось, что делать, какие кнопки
-  probe.rs            что за модель и «светофор» (assess — по заголовку, rough — по размеру)
+  probe.rs            что за модель и «светофор» (assess — по заголовку, rough — по размеру);
+                      там же скорость и память разговора словами (speed_words, memory_pages)
   gguf.rs             чтение заголовка GGUF
   safetensors.rs      чтение заголовка safetensors
   llm.rs              llama-server: запуск, /health, чат со стримингом
@@ -108,7 +110,7 @@ src-tauri/src/        Rust-ядро
 manifest/             engines.json, catalog.json — встроены в бинарник include_str!
 spikes/               прототипы фазы 0 (model-probe, llama-server, comfyui)
 scripts/              publish-update.ps1
-.github/workflows/    сборка установщика (написан, ни разу не запускался — нет репо на GitHub)
+.github/workflows/    сборка установщика; в CI — без подписи обновлений (src-tauri/tauri.ci.conf.json)
 ```
 
 ### Где что лежит у пользователя
@@ -276,8 +278,10 @@ scripts/              publish-update.ps1
       экономнее», «Поставить компоненты», Esc в поиске, скачивание из каталога.
 - [ ] **Проверка на чистой Windows** (виртуальная машина, пользователь с кириллическим именем
       и пробелом): установка VC++ через UAC и отказ в UAC. Это долг ещё с фазы 1.
-- [ ] **CI на GitHub Actions** — `.github/workflows/build.yml` написан, но репозитория на GitHub нет,
-      поэтому ни разу не запускался.
+- [ ] **CI на GitHub Actions** — репозиторий `WufCorp/Ollivo` есть, CI с 2026-09-22 падал
+      на сборке установщика: нужен ключ подписи обновлений, а в CI его нет и не должно быть.
+      2026-09-26 CI собирает без подписи (`tauri.ci.conf.json`), локально так собирается;
+      на GitHub исправление ещё не запускалось.
 
 ### Дальше по плану
 
@@ -334,6 +338,9 @@ scripts/              publish-update.ps1
 - `keyring` 4 сменил API — взята версия 3 (`windows-native`).
 - `nvidia-smi` под полной нагрузкой иногда не отвечает — память читать через NVML и терпеть ошибки.
 - В curl из Git Bash портится кириллица — проверять через Python или Rust.
+- С `bundle.createUpdaterArtifacts` сборка без ключа подписи падает — CI из-за этого был
+  красным четыре дня. В CI — `--config src-tauri/tauri.ci.conf.json`. Сборка без ключа
+  оставляет рядом старый `.sig` — поэтому `publish-update -SkipBuild` подписывает заново.
 
 ---
 

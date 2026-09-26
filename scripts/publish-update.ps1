@@ -99,8 +99,11 @@ $setup = "$root\src-tauri\target\release\bundle\nsis\Ollivo_${version}_x64-setup
 if (-not (Test-Path $setup)) { Fail "Нет установщика: $setup" }
 
 # Подпись создаётся вместе со сборкой (bundle.createUpdaterArtifacts).
-# С -SkipBuild подписываем отдельно: установщик мог быть собран без ключа.
-if (-not (Test-Path "$setup.sig")) {
+# С -SkipBuild подписываем заново всегда: установщик мог быть пересобран без ключа
+# (как в CI, `tauri.ci.conf.json`), а старый .sig рядом остаётся от прошлой сборки —
+# с чужой подписью обновление не встанет ни у кого.
+if ($SkipBuild -or -not (Test-Path "$setup.sig")) {
+  Remove-Item "$setup.sig" -ErrorAction SilentlyContinue
   npx tauri signer sign -f $KeyPath -p $keyPassword --app-version $version $setup
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$setup.sig")) { Fail 'Не удалось подписать установщик' }
 }
