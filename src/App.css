@@ -828,3 +828,17 @@ select.role {
   background: rgba(128, 128, 128, 0.22);
   opacity: 1;
 }
+
+/* --- Понятная ошибка с кнопками --- */
+
+.problem p {
+  margin: 0 0 6px;
+}
+
+.problem details {
+  margin-top: 8px;
+}
+
+.problem summary {
+  cursor: pointer;
+}

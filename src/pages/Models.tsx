@@ -34,7 +34,13 @@ function summary(m: Model): string {
     .join(" · ");
 }
 
-export default function Models({ onGoToChat }: { onGoToChat: () => void }) {
+export default function Models({
+  onGoToChat,
+  onGo,
+}: {
+  onGoToChat: () => void;
+  onGo: (tab: "catalog" | "computer") => void;
+}) {
   const [models, setModels] = useState<Model[] | null>(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -156,7 +162,7 @@ export default function Models({ onGoToChat }: { onGoToChat: () => void }) {
         </div>
       )}
 
-      <RunningModel onGoToChat={onGoToChat} />
+      <RunningModel onGoToChat={onGoToChat} onGo={onGo} onRemoved={refresh} />
 
       {models?.length === 0 && <p className="muted">Пока ни одной модели.</p>}
 
