@@ -67,6 +67,14 @@ struct Core {
     speech: Mutex<CancellationToken>,
     /// Ошибки, которые видел человек, — для отчёта о проблеме (`report::note`).
     problems: PathBuf,
+    /// Когда модель последний раз работала: от этого считается простой.
+    llm_used: Mutex<std::time::Instant>,
+    /// Сколько ответов идёт прямо сейчас: посреди ответа модель не выгружаем,
+    /// даже если он длится дольше, чем простой.
+    llm_busy: std::sync::atomic::AtomicUsize,
+    /// Модель выгружена после простоя: какая и с какой ступенью «экономнее».
+    /// Окно разбудит её само при следующем вопросе.
+    llm_asleep: Mutex<Option<(PathBuf, u8)>>,
 }
 
 impl Core {
@@ -98,6 +106,55 @@ impl Core {
 
     fn note(&self, what: &str, text: &str, details: &str) {
         report::note(&self.problems, what, text, details);
+    }
+
+    /// Модель поработала — простой считается заново.
+    fn touch_llm(&self) {
+        *self.llm_used.lock().unwrap() = std::time::Instant::now();
+    }
+}
+
+/// Идёт ответ модели: пока жив, сторож простоя её не выгрузит.
+struct Busy(Arc<Core>);
+
+impl Busy {
+    fn new(core: Arc<Core>) -> Self {
+        core.llm_busy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        core.touch_llm();
+        Self(core)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.touch_llm();
+        self.0.llm_busy.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Пора ли выгружать: `minutes` — из настроек, 0 — никогда.
+fn idle_due(minutes: u32, idle: std::time::Duration, busy: usize) -> bool {
+    minutes > 0 && busy == 0 && idle >= std::time::Duration::from_secs(minutes as u64 * 60)
+}
+
+/// Сторож простоя: раз в 30 секунд смотрит, не пора ли освободить видеокарту.
+/// Модель запоминается «уснувшей» — окно запустит её снова, когда человек спросит.
+async fn idle_watch(app: AppHandle) {
+    let core = app.state::<Arc<Core>>().inner().clone();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let minutes = core.settings.get().models.unload_after;
+        let idle = core.llm_used.lock().unwrap().elapsed();
+        if !idle_due(minutes, idle, core.llm_busy.load(std::sync::atomic::Ordering::SeqCst)) {
+            continue;
+        }
+        // Занято — модель загружается или её останавливают: не мешаем.
+        let Ok(mut slot) = core.llm.try_lock() else { continue };
+        let Some(l) = slot.take() else { continue };
+        drop(slot);
+        l.handle.stop().await;
+        *core.llm_asleep.lock().unwrap() = Some((l.model.clone(), l.lighter));
+        emit_llm(&app, LlmState::asleep(&l.model, l.lighter));
     }
 }
 
@@ -484,6 +541,11 @@ impl LlmState {
     /// «Попробовать ещё раз» и «Запустить экономнее».
     fn crashed(model: &std::path::Path, lighter: u8, problem: trouble::Problem) -> Self {
         Self { model: Some(model.to_path_buf()), lighter, problem: Some(problem), ..Self::of("crashed") }
+    }
+
+    /// Выгружена после простоя: окно помнит модель и запустит её само.
+    fn asleep(model: &std::path::Path, lighter: u8) -> Self {
+        Self { model: Some(model.to_path_buf()), lighter, ..Self::of("sleeping") }
     }
 
     /// Состояние запущенной модели.
@@ -964,6 +1026,7 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
         path: None,
     };
     let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    core.touch_llm();
     if let Some(n) = match port {
         Some(port) => llm::count_tokens(port, &a.text).await,
         None => None,
@@ -1123,8 +1186,11 @@ async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
     // Занято — значит, идёт загрузка (llm_start держит слот до конца), ждать её не будем.
     let Ok(slot) = core.llm.try_lock() else { return Ok(LlmState::of("starting")) };
     Ok(match slot.as_ref() {
-        Some(l) => LlmState { layers: model_layers(&core, &l.model), ..LlmState::ready(l) },
-        None => LlmState::of("stopped"),
+        Some(l) => LlmState { layers: model_layers(&core, &l.model), lighter: l.lighter, ..LlmState::ready(l) },
+        None => match core.llm_asleep.lock().unwrap().clone() {
+            Some((model, lighter)) => LlmState::asleep(&model, lighter),
+            None => LlmState::of("stopped"),
+        },
     })
 }
 
@@ -1215,6 +1281,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         return Ok(());
     };
     let core = core.inner().clone();
+    *core.llm_asleep.lock().unwrap() = None;
     let cancel = CancellationToken::new();
     std::mem::replace(&mut *core.llm_loading.lock().unwrap(), cancel.clone()).cancel();
     tauri::async_runtime::spawn(async move {
@@ -1243,6 +1310,8 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
             Ok(mut l) => {
                 let after = tauri::async_runtime::spawn_blocking(hardware::vram_free).await.ok().flatten();
                 l.vram = before.zip(after).map_or(0, |(b, a)| b.saturating_sub(a));
+                l.lighter = lighter;
+                core.touch_llm();
                 let layers = model_layers(&core, &l.model);
                 emit_llm(&app, LlmState { lighter, layers, ..LlmState::ready(&l) });
                 // Сторож: движок упал сам — сообщаем с хвостом лога.
@@ -1273,6 +1342,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
 
 #[tauri::command]
 async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    *core.llm_asleep.lock().unwrap() = None;
     core.llm_loading.lock().unwrap().cancel();
     core.chat.lock().unwrap().cancel();
     if let Some(l) = core.llm.lock().await.take() {
@@ -1370,7 +1440,9 @@ async fn llm_chat(
     let cancel = CancellationToken::new();
     // Новый вопрос обрывает недоговорённый ответ.
     std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
+    let busy = Busy::new(core.inner().clone());
     tauri::async_runtime::spawn(async move {
+        let _busy = busy;
         let res = llm::chat(
             port,
             vision,
@@ -1462,6 +1534,7 @@ async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attac
         .await
         .map_err(|e| e.to_string())??;
     let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    core.touch_llm();
     if let (Some(port), "document") = (port, a.kind.as_str()) {
         if let Some(n) = llm::count_tokens(port, &a.text).await {
             a.tokens = n;
@@ -1593,7 +1666,11 @@ pub fn run() {
                 llm_loading: Mutex::new(CancellationToken::new()),
                 chat: Mutex::new(CancellationToken::new()),
                 speech: Mutex::new(CancellationToken::new()),
+                llm_used: Mutex::new(std::time::Instant::now()),
+                llm_busy: Default::default(),
+                llm_asleep: Mutex::new(None),
             }));
+            tauri::async_runtime::spawn(idle_watch(app.handle().clone()));
             // Уборка при запуске, в стороне: папки могут быть большими.
             let core = app.state::<Arc<Core>>().inner().clone();
             tauri::async_runtime::spawn_blocking(move || sweep(&core));
@@ -1660,6 +1737,18 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_unload_rules() {
+        use std::time::Duration;
+        let min = |m: u64| Duration::from_secs(m * 60);
+        assert!(idle_due(10, min(10), 0));
+        assert!(!idle_due(10, min(9), 0));
+        // Посреди ответа не выгружаем, сколько бы он ни шёл.
+        assert!(!idle_due(10, min(60), 1));
+        // 0 — «не выгружать».
+        assert!(!idle_due(0, min(600), 0));
+    }
 
     /// Нехватка видеопамяти на настоящем движке: понятная ошибка с «экономнее»,
     /// и после одной ступени модель запускается.

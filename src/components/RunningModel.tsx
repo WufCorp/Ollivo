@@ -58,6 +58,13 @@ export default function RunningModel({
         </>
       )}
 
+      {state.state === "sleeping" && (
+        <>
+          <p>{fileName(state.model ?? "")} выгружена, пока вы не пользовались, — видеокарта свободна.</p>
+          <p className="muted small">Загрузится снова сама, когда вы зададите вопрос в чате.</p>
+        </>
+      )}
+
       {state.state === "crashed" && state.problem && (
         <ProblemCard
           problem={state.problem}
@@ -73,8 +80,11 @@ export default function RunningModel({
       {state.state !== "crashed" && (
         <div className="actions">
           {state.state === "ready" && <button onClick={onGoToChat}>Перейти в чат</button>}
+          {state.state === "sleeping" && state.model && (
+            <button onClick={() => llmStart(state.model!, { lighter: state.lighter })}>Загрузить сейчас</button>
+          )}
           <button className="secondary" onClick={() => llmStop()}>
-            {state.state === "starting" ? "Отменить" : "Остановить"}
+            {state.state === "starting" ? "Отменить" : state.state === "sleeping" ? "Забыть" : "Остановить"}
           </button>
         </div>
       )}

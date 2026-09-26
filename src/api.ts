@@ -97,12 +97,18 @@ export interface UpdateSettings {
   channel: "stable" | "beta";
 }
 
+/** Модель в видеокарте: через сколько минут простоя выгружать, 0 — не выгружать. */
+export interface ModelSettings {
+  unload_after: number;
+}
+
 export interface Settings {
   data_dir: string | null;
   proxy: ProxySettings;
   hf: HfSettings;
   setup_done: boolean;
   updates: UpdateSettings;
+  models: ModelSettings;
 }
 
 export interface SettingsView {
@@ -429,7 +435,8 @@ export const catalogDownload = (
 // --- Текстовая модель (llama-server) ---
 
 export interface LlmState {
-  state: "starting" | "ready" | "stopped" | "crashed";
+  /** `sleeping` — выгружена после простоя; `model` и `lighter` помнят, что будить. */
+  state: "starting" | "ready" | "stopped" | "crashed" | "sleeping";
   model: string | null;
   port: number | null;
   /** Секунд от запуска до готовности. */

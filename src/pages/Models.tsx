@@ -168,7 +168,8 @@ export default function Models({
 
       {models?.map((m) => {
         const busyNow = running?.state === "starting";
-        const isRunning = running?.model === m.path && running.state !== "stopped";
+        // Выгруженная после простоя в видеокарте не сидит — её можно запустить заново.
+        const isRunning = running?.model === m.path && running.state !== "stopped" && running.state !== "sleeping";
         return (
           <div className="card model" key={m.path} title={m.path}>
             <p className="model-title">

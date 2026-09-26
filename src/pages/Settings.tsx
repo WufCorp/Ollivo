@@ -5,6 +5,15 @@ import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
 import { openReport } from "../components/Report";
 
+/** Через сколько минут простоя выгружать модель; 0 — никогда. */
+const UNLOAD: [number, string][] = [
+  [5, "через 5 минут"],
+  [10, "через 10 минут"],
+  [30, "через полчаса"],
+  [60, "через час"],
+  [0, "никогда"],
+];
+
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [dataDir, setDataDir] = useState("");
@@ -75,6 +84,27 @@ export default function Settings() {
           onToken={setToken}
           hasToken={hasToken}
         />
+      </div>
+
+      <h2>Видеокарта</h2>
+      <div className="card form">
+        <label>
+          Выгружать модель, если ею не пользуются
+          <select
+            value={settings.models.unload_after}
+            onChange={(e) => update({ models: { ...settings.models, unload_after: Number(e.target.value) } })}
+          >
+            {UNLOAD.map(([min, text]) => (
+              <option key={min} value={min}>
+                {text}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          Пока модель загружена, она занимает память видеокарты — играм и другим программам её может не хватить.
+          Выгруженная модель загрузится снова сама, когда вы зададите вопрос; это займёт несколько секунд.
+        </p>
       </div>
 
       <h2>Обновления Ollivo</h2>

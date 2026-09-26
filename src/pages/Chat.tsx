@@ -459,6 +459,11 @@ export default function Chat({
 
   /** Спрашивает модель по всему разговору; ответ придёт кусками в `onLlmToken`. */
   const ask = async (talk: Line[], how: FileMode = mode) => {
+    // Вопрос виден сразу, пока модель просыпается после простоя.
+    if (llmRef.current?.state === "sleeping") {
+      setLines(talk);
+      if (!(await wake())) return;
+    }
     setLines([...talk, { role: "assistant", content: "" }]);
     setAnswering(true);
     try {
@@ -472,6 +477,25 @@ export default function Chat({
     } catch (e) {
       setAnswering(false);
       setLines((prev) => [...prev.slice(0, -1), { role: "assistant", content: "", problem: asProblem(e) }]);
+    }
+  };
+
+  /** Модель выгружена после простоя — запускаем её снова и ждём. `false` — не завелась
+   *  (что случилось, покажет карточка модели) или будить нечего. */
+  const wake = async (): Promise<boolean> => {
+    const l = llmRef.current;
+    if (l?.state === "ready") return true;
+    if (l?.state !== "sleeping" || !l.model) return false;
+    let done = (_: boolean) => {};
+    const ready = new Promise<boolean>((res) => (done = res));
+    const un = await onLlmState((s) => {
+      if (s.state === "ready" || s.state === "crashed" || s.state === "stopped") done(s.state === "ready");
+    });
+    try {
+      await llmStart(l.model, { lighter: l.lighter });
+      return await ready;
+    } finally {
+      un();
     }
   };
 
@@ -499,7 +523,7 @@ export default function Chat({
 
   /** Читает файлы по одному; не поместившийся останавливает очередь и спрашивает, что делать. */
   const attach = async (paths: string[]) => {
-    if (!paths.length || llmRef.current?.state !== "ready") return;
+    if (!paths.length || !(await wake())) return;
     setFileError(null);
     setTooBig(null);
     setReading(true);
@@ -766,7 +790,8 @@ export default function Chat({
   // Модель не готова: вместо поля ввода — что с ней и что делать.
   // Переписку при этом показываем: старый разговор можно прочитать и без модели.
   const waiting =
-    llm.state === "ready" ? null : llm.state === "crashed" && llm.problem ? (
+    // Выгруженная после простоя модель проснётся сама на первом вопросе — поле ввода остаётся.
+    llm.state === "ready" || llm.state === "sleeping" ? null : llm.state === "crashed" && llm.problem ? (
       <ProblemCard problem={llm.problem} on={{ ...crashActions(llm, onGo), models: onGoToModels }} />
     ) : (
       <>

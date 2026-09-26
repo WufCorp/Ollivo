@@ -17,6 +17,23 @@ pub struct Settings {
     /// Мастер первого запуска пройден.
     pub setup_done: bool,
     pub updates: UpdateSettings,
+    pub models: ModelSettings,
+}
+
+/// Модель в видеокарте. Пока она загружена, видеопамять занята — игре или другой
+/// программе её не хватит, хотя человек давно ничего не спрашивал.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelSettings {
+    /// Через сколько минут простоя выгружать модель; 0 — не выгружать.
+    pub unload_after: u32,
+}
+
+impl Default for ModelSettings {
+    /// 10 минут: перерыв на чай модель переживёт, вечер в игре — нет.
+    fn default() -> Self {
+        Self { unload_after: 10 }
+    }
 }
 
 /// Обновления программы. Выключенная проверка = ни одного сетевого запроса.
@@ -92,7 +109,11 @@ mod tests {
         assert_eq!(Store::open(path.clone()).get().proxy.host, "10.0.0.1");
 
         std::fs::write(&path, b"{broken").unwrap();
-        assert!(!Store::open(path).get().proxy.enabled);
+        assert!(!Store::open(path.clone()).get().proxy.enabled);
+
+        // Файл от старой версии, где выгрузки ещё не было, — выгружать через 10 минут.
+        std::fs::write(&path, br#"{"setup_done":true}"#).unwrap();
+        assert_eq!(Store::open(path).get().models.unload_after, 10);
     }
 
     #[test]
