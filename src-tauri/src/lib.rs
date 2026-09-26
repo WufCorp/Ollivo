@@ -178,6 +178,8 @@ struct SettingsView {
     proxy_has_password: bool,
     hf_has_token: bool,
     data_dir: PathBuf,
+    /// Где лежат разговоры — для «Приватности»: человек должен знать, где его переписка.
+    chats_dir: PathBuf,
 }
 
 #[tauri::command]
@@ -187,7 +189,31 @@ fn settings_get(core: CoreState<'_>) -> SettingsView {
         proxy_has_password: !net::load_password().is_empty(),
         hf_has_token: !hf::load_token().is_empty(),
         data_dir: core.data_dir(),
+        chats_dir: core.chats.dir().to_path_buf(),
     }
+}
+
+/// «Сбросить настройки»: исходные значения, пароль прокси и токен HF удаляются.
+/// Модели, разговоры и папка программы остаются.
+#[tauri::command]
+fn settings_reset(app: AppHandle, core: CoreState<'_>) -> Result<SettingsView, String> {
+    let fresh = settings::reset(&core.settings.get());
+    net::secret::store(net::secret::PROXY_PASSWORD, "")?;
+    net::secret::store(net::secret::HF_TOKEN, "")?;
+    let downloader = build_downloader(&fresh)?;
+    apply_theme(&app, fresh.theme);
+    core.settings.set(fresh).map_err(|e| e.to_string())?;
+    *core.downloader.write().unwrap() = Arc::new(downloader);
+    Ok(settings_get(core))
+}
+
+/// Открывает папку с разговорами в Проводнике.
+#[tauri::command]
+fn chats_open_folder(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = core.chats.dir();
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Секреты: `None` — не менять сохранённый, `""` — удалить.
@@ -1690,6 +1716,8 @@ pub fn run() {
             hardware_info,
             settings_get,
             settings_save,
+            settings_reset,
+            chats_open_folder,
             proxy_test,
             hf_check_token,
             setup_check,

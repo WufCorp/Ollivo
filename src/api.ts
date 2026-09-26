@@ -120,6 +120,8 @@ export interface SettingsView {
   hf_has_token: boolean;
   /** Папка данных: выбранная или предложенная по умолчанию. */
   data_dir: string;
+  /** Где лежат разговоры. */
+  chats_dir: string;
 }
 
 export interface ProxyCheck {
@@ -134,6 +136,11 @@ export interface ProxyReport {
 }
 
 export const settingsGet = () => invoke<SettingsView>("settings_get");
+
+/** Всё к исходному, пароль прокси и токен HF удаляются; папка программы, модели и разговоры остаются. */
+export const settingsReset = () => invoke<SettingsView>("settings_reset");
+
+export const chatsOpenFolder = () => invoke<void>("chats_open_folder");
 
 /** Секреты: undefined — не менять сохранённый, "" — удалить. */
 export const settingsSave = (settings: Settings, secrets: { proxyPassword?: string; hfToken?: string } = {}) =>

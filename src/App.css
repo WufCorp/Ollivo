@@ -1110,3 +1110,8 @@ pre.log.report {
 .problem button.link {
   margin-top: 6px;
 }
+
+/* Второй блок в той же карточке: отделён воздухом, а не рамкой. */
+.card .apart {
+  margin-top: 22px;
+}

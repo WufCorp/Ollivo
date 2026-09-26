@@ -101,6 +101,10 @@ impl Store {
         Self { dir }
     }
 
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     fn file(&self, id: &str) -> Option<PathBuf> {
         safe_id(id).then(|| self.dir.join(format!("{id}.json")))
     }

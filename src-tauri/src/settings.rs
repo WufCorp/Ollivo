@@ -108,6 +108,13 @@ impl Store {
     }
 }
 
+/// «Сбросить настройки»: всё к исходному, кроме того, что сброс сломал бы. Папка данных
+/// остаётся — иначе программа потеряла бы движки и модели; мастер первого запуска
+/// заново не нужен — компьютер тот же.
+pub fn reset(old: &Settings) -> Settings {
+    Settings { data_dir: old.data_dir.clone(), setup_done: old.setup_done, ..Settings::default() }
+}
+
 /// Папка данных по умолчанию: `<диск с наибольшим свободным местом>:\Ollivo`.
 pub fn suggest_data_dir(disks: &[crate::hardware::Disk]) -> PathBuf {
     disks
@@ -146,6 +153,19 @@ mod tests {
         let s = Store::open(path).get();
         assert!(s.setup_done);
         assert_eq!(s.theme, Theme::System);
+    }
+
+    #[test]
+    fn reset_keeps_data_dir() {
+        let mut s = Settings { data_dir: Some(r"E:\Ollivo".into()), setup_done: true, ..Settings::default() };
+        s.proxy.enabled = true;
+        s.theme = Theme::Dark;
+        s.models.unload_after = 0;
+        let r = reset(&s);
+        assert_eq!(r.data_dir, s.data_dir);
+        assert!(r.setup_done);
+        assert!(!r.proxy.enabled);
+        assert_eq!((r.theme, r.models.unload_after), (Theme::System, 10));
     }
 
     #[test]

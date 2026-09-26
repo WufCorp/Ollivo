@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { settingsGet, settingsSave, type Settings as SettingsData } from "../api";
+import {
+  chatsOpenFolder,
+  settingsGet,
+  settingsReset,
+  settingsSave,
+  type Settings as SettingsData,
+  type SettingsView,
+} from "../api";
 import HfForm from "../components/HfForm";
 import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
@@ -23,17 +30,39 @@ export default function Settings() {
   const [password, setPassword] = useState<string | undefined>(undefined);
   const [token, setToken] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [chatsDir, setChatsDir] = useState("");
+  /** «Сбросить настройки»: `ask` — ждём подтверждения, `done` — сбросили (итог пишем у кнопки:
+   *  «Сохранено» наверху, у «Сохранить», человек внизу страницы не увидит). */
+  const [resetting, setResetting] = useState<"ask" | "done" | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  const show = (v: SettingsView) => {
+    setSettings(v.settings);
+    setDataDir(v.data_dir);
+    setChatsDir(v.chats_dir);
+    setHasPassword(v.proxy_has_password);
+    setHasToken(v.hf_has_token);
+    setPassword(undefined);
+    setToken(undefined);
+  };
 
   useEffect(() => {
-    settingsGet().then((v) => {
-      setSettings(v.settings);
-      setDataDir(v.data_dir);
-      setHasPassword(v.proxy_has_password);
-      setHasToken(v.hf_has_token);
-    });
+    settingsGet().then(show);
   }, []);
 
   if (!settings) return <p className="muted">Загружаю настройки…</p>;
+
+  const reset = async () => {
+    setResetError(null);
+    try {
+      show(await settingsReset());
+      setStatus(null);
+      setResetting("done");
+    } catch (e) {
+      setResetError(String(e));
+      setResetting(null);
+    }
+  };
 
   const update = (patch: Partial<SettingsData>) => {
     setSettings({ ...settings, ...patch });
@@ -130,6 +159,30 @@ export default function Settings() {
         {status && <span className={status.ok ? "ok" : "error"}>{status.text}</span>}
       </div>
 
+      <h2>Приватность</h2>
+      <div className="card">
+        <p>
+          Ollivo работает на этом компьютере. Разговоры, файлы, фото и записи никуда не отправляются — модель считает их
+          здесь же. Программа не собирает статистику о вас.
+        </p>
+        <p className="muted small">В интернет Ollivo выходит, только чтобы:</p>
+        <ul className="muted small">
+          <li>найти и скачать модель — с HuggingFace или выбранного выше зеркала;</li>
+          <li>скачать движки и компоненты Windows — с GitHub и сайта Microsoft;</li>
+          <li>проверить и скачать обновление Ollivo — если проверка включена;</li>
+          <li>проверить прокси или токен — когда вы нажимаете «Проверить».</li>
+        </ul>
+        <p className="muted small">
+          Отчёт о проблеме уходит, только если вы сами нажмёте «Отправить», и перед этим вы видите его целиком.
+        </p>
+        <p className="muted small">Разговоры хранятся здесь: {chatsDir}</p>
+        <div className="actions">
+          <button className="secondary" onClick={() => chatsOpenFolder()}>
+            Открыть папку с разговорами
+          </button>
+        </div>
+      </div>
+
       <h2>Помощь</h2>
       <div className="card">
         <p className="muted small">
@@ -141,6 +194,32 @@ export default function Settings() {
             Сообщить о проблеме
           </button>
         </div>
+
+        {resetting === "ask" ? (
+          <>
+            <p className="apart">
+              Сеть, HuggingFace, оформление, видеокарта и обновления вернутся к исходным. Пароль прокси и токен
+              HuggingFace удалятся. Модели, разговоры и папка программы останутся.
+            </p>
+            <div className="actions">
+              <button onClick={reset}>Сбросить</button>
+              <button className="secondary" onClick={() => setResetting(null)}>
+                Отмена
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="muted small apart">Если после экспериментов с настройками что-то перестало работать.</p>
+            <div className="actions">
+              <button className="secondary" onClick={() => setResetting("ask")}>
+                Сбросить настройки
+              </button>
+              {resetting === "done" && <span className="ok">Сброшено — всё как после установки</span>}
+            </div>
+          </>
+        )}
+        {resetError && <p className="error">{resetError}</p>}
       </div>
     </>
   );
