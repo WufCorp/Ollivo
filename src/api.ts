@@ -470,6 +470,23 @@ export interface Problem {
   details: string;
 }
 
+// --- Сообщить о проблеме ---
+
+/** Что случилось — от этого зависит форма issue на GitHub. */
+export type ReportKind = "install" | "model" | "other";
+
+/** Отчёт из ядра: коротко — в форму, целиком — в файл. */
+export interface Report {
+  summary: string;
+  full: string;
+}
+
+export const reportMake = () => invoke<Report>("report_make");
+
+/** Сохраняет файл в «Загрузки», показывает его и открывает форму issue; итог — путь к файлу. */
+export const reportSend = (kind: ReportKind, what: string, report: Report) =>
+  invoke<string>("report_send", { kind, what, report });
+
 /** Реплика разговора. Роли как у OpenAI. */
 export interface Msg {
   role: "system" | "user" | "assistant";

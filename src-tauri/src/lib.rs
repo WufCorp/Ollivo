@@ -16,6 +16,7 @@ mod net;
 mod presets;
 mod project;
 mod probe;
+mod report;
 mod trouble;
 mod process;
 mod scan;
@@ -64,6 +65,8 @@ struct Core {
     llm_loading: Mutex<CancellationToken>,
     /// Отмена идущей расшифровки записи.
     speech: Mutex<CancellationToken>,
+    /// Ошибки, которые видел человек, — для отчёта о проблеме (`report::note`).
+    problems: PathBuf,
 }
 
 impl Core {
@@ -91,6 +94,10 @@ impl Core {
 
     fn finish(&self, id: &str) {
         self.running.lock().unwrap().remove(id);
+    }
+
+    fn note(&self, what: &str, text: &str, details: &str) {
+        report::note(&self.problems, what, text, details);
     }
 }
 
@@ -246,6 +253,15 @@ struct Finished<T: Clone> {
     result: Option<T>,
 }
 
+/// Итог загрузки или установки в окно; ошибка (кроме паузы) — ещё и в журнал для отчёта.
+fn emit_finished<T: Clone + serde::Serialize>(app: &AppHandle, event: &str, f: Finished<T>) {
+    if let Some(e) = f.error.as_deref().filter(|e| *e != "paused") {
+        let what = if event.starts_with("engine") { "Установка движка" } else { "Загрузка" };
+        app.state::<Arc<Core>>().note(&format!("{what} {}", f.id), e, "");
+    }
+    let _ = app.emit(event, f);
+}
+
 /// Вид ошибки загрузки: интерфейс решает по нему, что сказать и что предложить.
 fn download_kind(e: &download::Error) -> &'static str {
     match e {
@@ -297,7 +313,7 @@ fn download_start(
             Err(download::Error::Cancelled) => (Some("paused".into()), None),
             Err(e) => (Some(e.to_string()), Some(download_kind(&e))),
         };
-        let _ = app.emit("download://finished", Finished::<()> { id, error, kind, result: None });
+        emit_finished(&app, "download://finished", Finished::<()> { id, error, kind, result: None });
     });
     Ok(())
 }
@@ -377,7 +393,7 @@ async fn engine_install(
         let res = engines::install(&core.downloader(), &root, &engine, &chosen, &cancel, &on_progress).await;
         core.finish(&task);
         let (error, kind, result) = engine_outcome(res);
-        let _ = app.emit("engine://finished", Finished { id, error, kind, result });
+        emit_finished(&app, "engine://finished", Finished { id, error, kind, result });
     });
     Ok(())
 }
@@ -419,7 +435,7 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
         let res = engines::repair(&core.downloader(), &root, &engine, &chosen, &cancel, &on_progress).await;
         core.finish(&task);
         let (error, kind, result) = engine_outcome(res);
-        let _ = app.emit("engine://finished", Finished { id, error, kind, result });
+        emit_finished(&app, "engine://finished", Finished { id, error, kind, result });
     });
     Ok(())
 }
@@ -494,6 +510,9 @@ fn model_layers(core: &Core, model: &std::path::Path) -> Option<u32> {
 }
 
 fn emit_llm(app: &AppHandle, s: LlmState) {
+    if let Some(p) = &s.problem {
+        app.state::<Arc<Core>>().note("Модель", &p.text, &p.details);
+    }
     let _ = app.emit("llm://state", s);
 }
 
@@ -646,7 +665,7 @@ fn catalog_download(
             Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
             Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
         };
-        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+        emit_finished(&app, "download://finished", Finished { id: task, error, kind, result });
     });
     Ok(id)
 }
@@ -695,7 +714,7 @@ async fn vision_download(app: AppHandle, core: CoreState<'_>, model: PathBuf) ->
             Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
             Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
         };
-        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+        emit_finished(&app, "download://finished", Finished { id: task, error, kind, result });
     });
     Ok(id)
 }
@@ -779,7 +798,7 @@ fn speech_model_download(app: AppHandle, core: CoreState<'_>) -> Result<String, 
             Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
             Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
         };
-        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+        emit_finished(&app, "download://finished", Finished { id: task, error, kind, result });
     });
     Ok(id)
 }
@@ -867,6 +886,75 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
 #[tauri::command]
 fn speech_stop(core: CoreState<'_>) {
     core.speech.lock().unwrap().cancel();
+}
+
+/// Отчёт о проблеме: всё, что уйдёт, — человек видит его до отправки.
+#[tauri::command]
+async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
+    let core = core.inner().clone();
+    let model = core.llm.lock().await.as_ref().map(|l| {
+        format!(
+            "{}, память разговора {}, слоёв на видеокарте {}, зрение: {}, инструменты: {}",
+            l.model.display(),
+            l.ctx,
+            l.gpu_layers,
+            if l.vision { "да" } else { "нет" },
+            if l.tools { "да" } else { "нет" }
+        )
+    });
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = core.data_dir();
+        let logs = root.join("logs");
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_all();
+        let settings = core.settings.get();
+        let facts = report::Facts {
+            version: env!("CARGO_PKG_VERSION").into(),
+            channel: settings.updates.channel.clone(),
+            windows: format!(
+                "{} ({})",
+                sysinfo::System::long_os_version().unwrap_or_default(),
+                sysinfo::System::kernel_version().unwrap_or_default()
+            ),
+            cpu: sys.cpus().first().map_or(String::new(), |c| c.brand().trim().to_string())
+                + &format!(", ядер {}", sysinfo::System::physical_core_count().unwrap_or(0)),
+            hardware: Some(hardware::detect()),
+            vulkan: setup::has_vulkan(),
+            vc_runtime: setup::has_vc_runtime(),
+            engines: core.manifest.engines.iter().map(|e| (e.id.clone(), ready_engine(&core, &e.id))).collect(),
+            model,
+            settings: serde_json::to_value(&settings).unwrap_or_default(),
+            logs: ["llama-server.log", "llama-server.prev.log"]
+                .iter()
+                .map(|n| (n.trim_end_matches(".log").replace(".prev", ", прошлый запуск"), logs.join(n)))
+                .collect(),
+            problems: core.problems.clone(),
+            data_dir: root,
+        };
+        report::build(&facts, std::time::SystemTime::now())
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// «Отправить»: файл отчёта — в «Загрузки» (Проводник покажет его), форма issue — в браузере.
+/// Отправляет человек сам, из своего аккаунта GitHub: сами мы ничего никуда не шлём.
+#[tauri::command]
+async fn report_send(app: AppHandle, kind: report::Kind, what: String, report: report::Report) -> Result<PathBuf, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let now = std::time::SystemTime::now();
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    let file = dir.join(report::file_name(now));
+    std::fs::write(&file, report.full.replace('\n', "\r\n")).map_err(|e| format!("не удалось сохранить отчёт: {e}"))?;
+    let gpu = tauri::async_runtime::spawn_blocking(hardware::detect)
+        .await
+        .ok()
+        .and_then(|hw| hw.gpu.map(|g| g.name))
+        .unwrap_or_default();
+    let url = report::issue_url(kind, &what, &report.summary, env!("CARGO_PKG_VERSION"), &gpu);
+    let _ = app.opener().reveal_item_in_dir(&file);
+    app.opener().open_url(url, None::<&str>).map_err(|e| format!("не удалось открыть браузер: {e}"))?;
+    Ok(file)
 }
 
 /// Итог добавления одного файла: `error` — почему не взяли.
@@ -1210,7 +1298,11 @@ async fn llm_chat(
         .await;
         let payload = match res {
             Ok(stats) => ChatDone { stats: Some(stats), problem: None },
-            Err(e) => ChatDone { stats: None, problem: Some(trouble::chat(&e)) },
+            Err(e) => {
+                let p = trouble::chat(&e);
+                app.state::<Arc<Core>>().note("Ответ в чате", &p.text, &p.details);
+                ChatDone { stats: None, problem: Some(p) }
+            }
         };
         let _ = app.emit("llm://answer", payload);
     });
@@ -1397,6 +1489,7 @@ pub fn run() {
                 library: library::Library::open(config_dir.join("models.json")),
                 chats: chats::Store::new(config_dir.join("chats")),
                 attachments: config_dir.join("attachments"),
+                problems: config_dir.join("problems.log"),
                 backups: config_dir.join("backups"),
                 writes: Mutex::new(HashMap::new()),
                 downloader: RwLock::new(Arc::new(downloader)),
@@ -1458,6 +1551,8 @@ pub fn run() {
             vision_download,
             parts_status,
             attach_needs,
+            report_make,
+            report_send,
             speech_model_download,
             speech_dictate,
             speech_file,

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { Problem, ProblemAction } from "../api";
+import type { Problem, ProblemAction, ReportKind } from "../api";
+import { openReport } from "./Report";
 
 const LABELS: Record<ProblemAction, string> = {
   retry: "Попробовать ещё раз",
@@ -23,11 +24,14 @@ export default function ProblemCard({
   problem,
   on,
   extra,
+  kind = "model",
 }: {
   problem: Problem;
   on: Partial<Record<ProblemAction, () => unknown>>;
   /** Кнопка, которая нужна всегда: например, «Понятно». */
   extra?: React.ReactNode;
+  /** Какую форму отчёта открыть по «Не помогло — сообщить». */
+  kind?: ReportKind;
 }) {
   const [busy, setBusy] = useState(false);
   const actions = problem.actions.filter((a) => on[a]);
@@ -61,6 +65,9 @@ export default function ProblemCard({
           <pre className="log">{problem.details}</pre>
         </details>
       )}
+      <button className="link small" onClick={() => openReport({ kind, error: problem.text })}>
+        Не помогло — сообщить
+      </button>
     </div>
   );
 }

@@ -49,7 +49,7 @@ npm run tauri build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Сейчас 109 тестов проходят, 21 помечен `#[ignore]` — им нужны сеть, настоящие модели
+Сейчас 115 тестов проходят, 22 помечены `#[ignore]` — им нужны сеть, настоящие модели
 или запущенный движок. Самые полезные из них:
 
 ```bash
@@ -90,7 +90,7 @@ src/                  React + TypeScript
   pages/              Chat, Catalog, Models, Computer, Settings, Wizard
   components/         Answer (markdown), ChatList, EngineCard, InstallScreen,
                       HfForm, License, PartsSetup (докачать распознавание, ffmpeg),
-                      ProblemCard, Project (папка: «@», шаги, запись),
+                      ProblemCard, Project (папка: «@», шаги, запись), Report (окно отчёта),
                       ProxyForm, RunningModel, UpdateCard
 src-tauri/src/        Rust-ядро
   lib.rs              все команды Tauri, общее состояние Core, план запуска модели
@@ -106,6 +106,7 @@ src-tauri/src/        Rust-ядро
   vision.rs           зрение: подходящий mmproj рядом с моделью, выбор файла в репозитории HF
   speech.rs           whisper.cpp: расшифровка записей и диктовки, окно под длину фразы
   media.rs            ffmpeg: M4A/OPUS/видео → WAV для whisper, HEIC/AVIF → картинка
+  report.rs           «Сообщить о проблеме»: отчёт, журнал ошибок problems.log, адрес формы issue
   project.rs          папка проекта: список файлов, чтение, поиск, запись/правка/удаление с копией,
                       режимы «Вручную · Авто · План», границы папки
   trouble.rs          ошибки движка → что случилось, что делать, какие кнопки
@@ -132,7 +133,7 @@ scripts/              publish-update.ps1
 ### Где что лежит у пользователя
 
 ```
-%APPDATA%\ru.ollivo.app\     settings.json, models.json, chats\<id>.json,
+%APPDATA%\ru.ollivo.app\     settings.json, models.json, chats\<id>.json, problems.log,
                              attachments\ (картинки), backups\ (файлы проекта до замены
                              и удаления моделью, 30 дней; уборка — при запуске)
 <диск>\Ollivo\               папка данных (диск выбирает мастер)
@@ -273,6 +274,7 @@ scripts/              publish-update.ps1
 `project_open` · `project_write_answer` · `project_undo` ·
 `attach_file` · `attach_trim` · `attach_preview` · `attach_needs` · `vision_offer` · `vision_download` ·
 `parts_status` · `speech_model_download` · `speech_dictate` · `speech_file` · `speech_stop` ·
+`report_make` · `report_send` ·
 `update_check` · `update_install`
 
 События: `download://progress|finished`, `engine://progress|finished`,
@@ -298,10 +300,9 @@ scripts/              publish-update.ps1
   «докачать зрение», диктовку (разрешение микрофона в WebView2, AudioWorklet), карточки «поправить»
   и «удалить», установку ffmpeg; зеркало ffmpeg в S3;
   «модель не умеет с файлом — предложить подходящую» (обобщить `vision_offer`).
-- **«Сообщить о проблеме»** — перенесено из фазы 8: отчёт собирает ядро (версия, железо, движки,
-  хвосты логов, ошибки `trouble.rs`, настройки без секретов, без переписки, имя пользователя
-  заменено), человек видит его до отправки; форма issue на GitHub + zip. Кнопка — в настройках
-  и на карточке ошибки.
+- **«Сообщить о проблеме»** — сделано и проверено в окне ([docs/v0.1.md](docs/v0.1.md)): отчёт
+  собирает ядро, человек видит его целиком, файл — в «Загрузки», форма issue — в браузере.
+  Осталось завести метки в репозитории и открыть форму после push.
 - **⭐ настройки**: перенос папки программы, сколько занято и очистка, выгрузка по простою,
   тема, режим обновлений и канал, «Приватность» текстом, «Сбросить настройки».
 - **Чистая Windows** (ВМ, кириллица и пробел в имени): VC++ через UAC и отказ в UAC — долг
@@ -421,6 +422,7 @@ scripts/              publish-update.ps1
 - [docs/phase-1.md](docs/phase-1.md) — каркас и установка: ядро, загрузки, мастер, обновления;
 - [docs/phase-3.md](docs/phase-3.md) — голос и файлы: документы и картинки в чате;
 - [docs/phase-2.md](docs/phase-2.md) — чат: библиотека, каталог, стриминг, история, автонастройка;
+- [docs/v0.1.md](docs/v0.1.md) — веха 0.1: «Сообщить о проблеме» и остальное до первой публичной сборки;
 - [docs/settings.md](docs/settings.md) — что должно быть в настройках, ⭐ — обязательное к MVP;
 - [docs/install.md](docs/install.md) — установщик, докачка зависимостей, UX экрана установки.
 

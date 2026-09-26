@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatBytes, type EngineProgress } from "../api";
+import { openReport } from "./Report";
 import { plural } from "../words";
 
 /** Шаг установки: человеческое название, зачем он нужен и что с ним сейчас. */
@@ -192,12 +193,17 @@ function ErrorBox({ error }: { error: InstallError }) {
     broken: "Файл пришёл испорченным. Скачаем его заново.",
   };
   return (
-    <p className="error">
-      {text[error.kind ?? ""] ?? "Не получилось установить."}
-      {error.kind === "net" && error.retryIn != null && ` Продолжим сами через ${error.retryIn} с.`}
-      {error.kind !== "net" && error.kind !== "disk" && error.kind !== "broken" && (
-        <span className="small"> {error.text}</span>
-      )}
-    </p>
+    <>
+      <p className="error">
+        {text[error.kind ?? ""] ?? "Не получилось установить."}
+        {error.kind === "net" && error.retryIn != null && ` Продолжим сами через ${error.retryIn} с.`}
+        {error.kind !== "net" && error.kind !== "disk" && error.kind !== "broken" && (
+          <span className="small"> {error.text}</span>
+        )}
+      </p>
+      <button className="link small" onClick={() => openReport({ kind: "install", error: error.text })}>
+        Не получается — сообщить
+      </button>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { settingsGet, updateCheck, type UpdateAvailable } from "./api";
 import ChatList from "./components/ChatList";
+import { ReportHost } from "./components/Report";
 import Catalog from "./pages/Catalog";
 import Chat from "./pages/Chat";
 import Computer from "./pages/Computer";
@@ -47,6 +48,7 @@ export default function App() {
           <h1>Ollivo</h1>
         </header>
         <Wizard onDone={() => setSetupDone(true)} />
+        <ReportHost />
       </main>
     );
   }
@@ -114,6 +116,7 @@ export default function App() {
           )}
         </div>
       </main>
+      <ReportHost />
     </div>
   );
 }

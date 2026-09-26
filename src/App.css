@@ -1045,3 +1045,68 @@ select.role {
 .problem summary {
   cursor: pointer;
 }
+
+/* --- Окно поверх программы: «Сообщить о проблеме» --- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(720px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  /* У .card фон полупрозрачный — поверх затемнения нужен сплошной. */
+  background: #f7f7f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dialog {
+    background: #26262a;
+  }
+}
+
+.dialog h2 {
+  margin: 0;
+}
+
+.dialog p {
+  margin: 0;
+}
+
+.dialog .seg {
+  align-self: flex-start;
+}
+
+.dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+pre.log.report {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+}
+
+.problem button.link {
+  margin-top: 6px;
+}

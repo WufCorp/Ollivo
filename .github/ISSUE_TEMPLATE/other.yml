@@ -1,0 +1,41 @@
+name: Другое
+description: "Всё остальное: что-то работает не так, как вы ждали"
+title: "Другое: "
+labels: ["отзыв"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете! Проще всего — кнопка «Сообщить о проблеме» в Ollivo
+        (Настройки или «Не помогло — сообщить» под ошибкой): она заполнит эту форму сама
+        и сохранит файл отчёта в «Загрузки». Перетащите этот файл в поле «Отчёт» ниже.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+      description: Что вы делали и что пошло не так. Можно своими словами.
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: Видеокарта
+      description: Например, «GeForce GTX 1080» или «RTX 4060 Laptop». Программа подставит сама.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Версия Ollivo
+      description: Настройки → Обновления. Программа подставит сама.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Сводка
+      description: Коротко о компьютере — заполняет программа.
+      render: text
+  - type: textarea
+    id: report
+    attributes:
+      label: Отчёт
+      description: Перетащите сюда файл «Ollivo-отчёт-….txt» из папки «Загрузки». Ваших разговоров и файлов в нём нет — можно открыть Блокнотом и проверить.

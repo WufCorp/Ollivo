@@ -3,6 +3,7 @@ import { settingsGet, settingsSave, type Settings as SettingsData } from "../api
 import HfForm from "../components/HfForm";
 import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
+import { openReport } from "../components/Report";
 
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -82,6 +83,19 @@ export default function Settings() {
       <div className="actions save">
         <button onClick={save}>Сохранить</button>
         {status && <span className={status.ok ? "ok" : "error"}>{status.text}</span>}
+      </div>
+
+      <h2>Помощь</h2>
+      <div className="card">
+        <p className="muted small">
+          Что-то не ставится, модель не запускается или работает не так, как вы ждали, — расскажите. Программа сама
+          соберёт отчёт о компьютере, и вы увидите его целиком до отправки.
+        </p>
+        <div className="actions">
+          <button className="secondary" onClick={() => openReport()}>
+            Сообщить о проблеме
+          </button>
+        </div>
       </div>
     </>
   );
