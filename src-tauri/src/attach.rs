@@ -1,11 +1,12 @@
-//! Вложения в чат: документ → текст, который увидит модель.
+//! Вложения в чат: документ → текст, который увидит модель; картинка → копия в папке программы.
 //!
-//! Текст хранится в самой реплике разговора, а не ссылкой на файл: файл потом переедут
-//! или удалят, а разговор должен продолжаться с тем же, что модель уже прочла.
+//! Текст хранится в самой реплике разговора, а картинка — копией в `attachments\`, а не
+//! ссылкой на исходный файл: файл потом переедут или удалят, а разговор должен
+//! продолжаться с тем, что модель уже видела.
 
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,12 @@ const MAX_FILE: u64 = 100 << 20;
 const PDF_TIMEOUT: Duration = Duration::from_secs(60);
 /// Ключ запуска `ollivo.exe` как разборщика PDF (см. `helper_main`).
 pub const PDF_HELPER_ARG: &str = "--pdf-text";
+/// Фото с телефона — 3–8 МБ; больше — скорее всего не фото, а скан-«простыня».
+const MAX_IMAGE: u64 = 20 << 20;
+/// Сколько места картинка занимает в памяти модели. У Qwen3.5 с `--image-min-tokens 1024`
+/// картинка 512×384 заняла ~1030 токенов (docs/phase-3.md); у больших картинок бывает
+/// больше, но и память разговора тогда проверит сам движок.
+pub const IMAGE_TOKENS: u64 = 1100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Attachment {
@@ -30,6 +37,9 @@ pub struct Attachment {
     /// Приложено только начало: целиком документ не поместился в память модели.
     #[serde(default)]
     pub trimmed: bool,
+    /// Копия картинки в папке программы.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
 }
 
 /// Прикидка без модели: 2,7 знака на токен — замер на русском тексте (`probe.rs`).
@@ -39,7 +49,8 @@ pub fn estimate_tokens(text: &str) -> u64 {
 }
 
 /// Что за файл и как его читать — по расширению; неизвестное пробуем как текст.
-pub fn read(path: &Path) -> Result<Attachment, String> {
+/// Картинки копируются в `images`.
+pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let meta = std::fs::metadata(path).map_err(|_| "файл не открывается — возможно, его переместили".to_string())?;
     if meta.is_dir() {
@@ -57,7 +68,11 @@ pub fn read(path: &Path) -> Result<Attachment, String> {
             return Err("старый формат Word — откройте файл в Word и сохраните как DOCX или PDF".into())
         }
         "xls" | "xlsx" | "ods" => return Err("таблицы пока не читаю — сохраните таблицу как CSV".into()),
-        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" => return Err("картинки в чат — скоро".into()),
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" => return store_image(path, name, &ext, images, meta.len()),
+        // Движок открывает картинки через stb_image, а он этих форматов не знает.
+        "webp" | "heic" | "heif" | "avif" | "tif" | "tiff" => {
+            return Err("такие картинки модель не открывает — сохраните их как JPG или PNG".into())
+        }
         "mp3" | "wav" | "ogg" | "m4a" | "flac" | "opus" => return Err("расшифровка аудио — скоро".into()),
         _ => {
             let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
@@ -76,7 +91,53 @@ pub fn read(path: &Path) -> Result<Attachment, String> {
             "в файле нет текста".into()
         });
     }
-    Ok(Attachment { name, kind: "document".into(), tokens: estimate_tokens(&text), text, trimmed: false })
+    Ok(Attachment { name, kind: "document".into(), tokens: estimate_tokens(&text), text, trimmed: false, path: None })
+}
+
+/// Копия картинки под именем по её содержимому: одну и ту же картинку в десяти разговорах
+/// храним один раз.
+fn store_image(path: &Path, name: String, ext: &str, images: &Path, size: u64) -> Result<Attachment, String> {
+    use sha2::{Digest, Sha256};
+    if size > MAX_IMAGE {
+        return Err("картинка больше 20 МБ — уменьшите её".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
+    let real = bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || bytes.starts_with(b"\x89PNG")
+        || bytes.starts_with(b"GIF8")
+        || bytes.starts_with(b"BM");
+    if !real {
+        return Err("файл называется картинкой, но внутри не картинка".into());
+    }
+    let hash = hex::encode(Sha256::digest(&bytes));
+    let ext = if ext == "jpeg" { "jpg" } else { ext };
+    let dest = images.join(format!("{}.{ext}", &hash[..16]));
+    if !dest.exists() {
+        std::fs::create_dir_all(images).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
+        std::fs::write(&dest, &bytes).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
+    }
+    Ok(Attachment {
+        name,
+        kind: "image".into(),
+        text: String::new(),
+        tokens: IMAGE_TOKENS,
+        trimmed: false,
+        path: Some(dest),
+    })
+}
+
+/// Картинка как `data:`-адрес — так её принимает движок и показывает окно.
+pub fn image_data_url(path: &Path) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = std::fs::read(path).map_err(|_| "картинка потерялась".to_string())?;
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    };
+    Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 /// Только начало документа, `max_tokens` из `tokens`. Режем по границе абзаца,
@@ -390,7 +451,7 @@ mod tests {
         ] {
             let p = tmp(name);
             std::fs::write(&p, bytes).unwrap();
-            assert_eq!(read(&p).unwrap().text, "Привет, мир", "{name}");
+            assert_eq!(read(&p, &tmp("images")).unwrap().text, "Привет, мир", "{name}");
         }
     }
 
@@ -398,21 +459,21 @@ mod tests {
     fn code_file_is_text_binary_is_refused() {
         let p = tmp("main.rs");
         std::fs::write(&p, "fn main() {\r\n    println!(\"hi\");   \r\n}\r\n\r\n\r\n\r\n").unwrap();
-        let a = read(&p).unwrap();
+        let a = read(&p, &tmp("images")).unwrap();
         assert_eq!(a.text, "fn main() {\n    println!(\"hi\");\n}");
         assert_eq!(a.name, "main.rs");
         assert!(a.tokens > 0);
 
         let p = tmp("data.bin");
         std::fs::write(&p, [0x4D, 0x5A, 0x90, 0x00, 0x03]).unwrap();
-        assert!(read(&p).unwrap_err().contains("не текст"));
+        assert!(read(&p, &tmp("images")).unwrap_err().contains("не текст"));
     }
 
     #[test]
     fn old_formats_get_advice() {
         let p = tmp("old.doc");
         std::fs::write(&p, b"x").unwrap();
-        assert!(read(&p).unwrap_err().contains("DOCX"));
+        assert!(read(&p, &tmp("images")).unwrap_err().contains("DOCX"));
     }
 
     fn zip_with(path: &Path, entry: &str, xml: &str) {
@@ -434,7 +495,7 @@ mod tests {
 </w:body></w:document>"#;
         let p = tmp("dogovor.docx");
         zip_with(&p, "word/document.xml", xml);
-        assert_eq!(read(&p).unwrap().text, "Договор & условия\nЦена: 200\tруб.\n\nА  | Б  |");
+        assert_eq!(read(&p, &tmp("images")).unwrap().text, "Договор & условия\nЦена: 200\tруб.\n\nА  | Б  |");
     }
 
     #[test]
@@ -445,20 +506,20 @@ mod tests {
 </office:document-content>"#;
         let p = tmp("kniga.odt");
         zip_with(&p, "content.xml", xml);
-        assert_eq!(read(&p).unwrap().text, "Глава\u{a0}1\nПервый абзац");
+        assert_eq!(read(&p, &tmp("images")).unwrap().text, "Глава\u{a0}1\nПервый абзац");
     }
 
     #[test]
     fn broken_docx_is_explained() {
         let p = tmp("broken.docx");
         std::fs::write(&p, b"PK\x03\x04 not really").unwrap();
-        assert!(read(&p).unwrap_err().contains("повреждён"));
+        assert!(read(&p, &tmp("images")).unwrap_err().contains("повреждён"));
     }
 
     #[test]
     fn trim_keeps_whole_paragraphs() {
         let text = (1..=20).map(|i| format!("Абзац номер {i}. Здесь немного текста.")).collect::<Vec<_>>().join("\n\n");
-        let a = Attachment { name: "a.txt".into(), kind: "document".into(), tokens: estimate_tokens(&text), text, trimmed: false };
+        let a = Attachment { name: "a.txt".into(), kind: "document".into(), tokens: estimate_tokens(&text), text, trimmed: false, path: None };
         let half = a.tokens / 2;
         let t = trim(a.clone(), half);
         assert!(t.trimmed && t.tokens <= half, "{} > {half}", t.tokens);
@@ -470,7 +531,7 @@ mod tests {
 
     #[test]
     fn model_sees_document_in_borders() {
-        let doc = Attachment { name: "план.txt".into(), kind: "document".into(), text: "пункт 1".into(), tokens: 3, trimmed: true };
+        let doc = Attachment { name: "план.txt".into(), kind: "document".into(), text: "пункт 1".into(), tokens: 3, trimmed: true, path: None };
         let s = for_model(&[doc], "О чём план?");
         assert_eq!(s, "Документ «план.txt» (только начало — целиком не поместился):\n<<<\nпункт 1\n>>>\n\nО чём план?");
     }
@@ -486,5 +547,29 @@ mod tests {
         assert!(text.contains("Рецепт борща"), "{text}");
         assert!(text.contains("Свёкла"), "{text}");
         assert!(text.contains("Hello, world!"), "{text}");
+    }
+
+    #[test]
+    fn image_is_copied_once_and_checked() {
+        let images = tmp("imgs");
+        let png = [&b"\x89PNG\r\n\x1a\n"[..], &[0u8; 32]].concat();
+        let p = tmp("фото.png");
+        std::fs::write(&p, &png).unwrap();
+        let a = read(&p, &images).unwrap();
+        assert_eq!((a.kind.as_str(), a.name.as_str()), ("image", "фото.png"));
+        let stored = a.path.clone().unwrap();
+        assert!(stored.starts_with(&images) && stored.exists());
+        // Та же картинка под другим именем — та же копия.
+        let p2 = tmp("копия.PNG");
+        std::fs::write(&p2, &png).unwrap();
+        assert_eq!(read(&p2, &images).unwrap().path, Some(stored.clone()));
+        assert!(image_data_url(&stored).unwrap().starts_with("data:image/png;base64,iVBORw0KGgo"));
+
+        let fake = tmp("fake.jpg");
+        std::fs::write(&fake, b"not an image").unwrap();
+        assert!(read(&fake, &images).unwrap_err().contains("не картинка"));
+        let webp = tmp("pic.webp");
+        std::fs::write(&webp, b"RIFF").unwrap();
+        assert!(read(&webp, &images).unwrap_err().contains("JPG"));
     }
 }

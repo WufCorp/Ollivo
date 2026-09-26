@@ -294,6 +294,29 @@ pub async fn files(
     Ok(Files { variants, split })
 }
 
+/// Файл зрения (`mmproj`) в репозитории модели: имя, размер и SHA256.
+#[derive(Debug, Clone, Serialize)]
+pub struct Projector {
+    pub name: String,
+    pub size: u64,
+    pub sha256: Option<String>,
+}
+
+/// Есть ли у модели из этого репозитория зрение, и какой файл качать.
+pub async fn projector(client: &reqwest::Client, base: &str, token: &str, repo: &str) -> Result<Option<Projector>, String> {
+    let url = format!("{base}/api/models/{repo}/tree/main?recursive=true");
+    let all: Vec<ApiFile> = get_json(client, &url, token).await?;
+    let Some(name) = crate::vision::pick_from_repo(all.iter().map(|f| f.path.as_str())) else {
+        return Ok(None);
+    };
+    let f = all.iter().find(|f| f.path == name).unwrap();
+    Ok(Some(Projector {
+        name: f.path.clone(),
+        size: f.size,
+        sha256: f.lfs.as_ref().map(|l| l.oid.clone()).filter(|o| o.len() == 64),
+    }))
+}
+
 async fn get_json<T: serde::de::DeserializeOwned>(
     client: &reqwest::Client,
     url: &str,

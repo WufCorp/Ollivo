@@ -25,6 +25,8 @@ pub struct Config {
     pub ctx: u32,
     /// Сколько слоёв считает видеокарта; 0 — всё на процессоре.
     pub gpu_layers: u32,
+    /// Дополнение «зрение» (`vision::find_projector`); без него модель картинок не видит.
+    pub mmproj: Option<PathBuf>,
 }
 
 pub struct Llm {
@@ -35,6 +37,8 @@ pub struct Llm {
     pub ctx: u32,
     pub gpu_layers: u32,
     pub started_in: Duration,
+    /// Видит картинки — так ответил сам движок (`/props`), а не наша догадка по файлам.
+    pub vision: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +65,13 @@ fn args(cfg: &Config, port: u16) -> Vec<String> {
     ];
     // Сколько слоёв уйдёт на видеокарту, посчитано заранее по свободной памяти.
     a.extend(["-ngl".into(), cfg.gpu_layers.to_string()]);
+    if let Some(mm) = &cfg.mmproj {
+        a.extend(["--mmproj".into(), mm.display().to_string()]);
+        // Qwen-VL с меньшим числом токенов на картинку ошибается: Qwen3.5 2B читала «42»
+        // как «4» при 194 токенах и верно — при 1024 (docs/phase-3.md). Модели
+        // с постоянным числом токенов на картинку (Gemma) флаг не трогает.
+        a.extend(["--image-min-tokens".into(), "1024".into()]);
+    }
     a
 }
 
@@ -111,7 +122,18 @@ pub async fn start(
         ctx: cfg.ctx,
         gpu_layers: cfg.gpu_layers,
         started_in: started.elapsed(),
+        vision: can_see(port).await,
     })
+}
+
+/// Спрашивает у движка, подключилось ли зрение: дополнение могло не подойти модели.
+async fn can_see(port: u16) -> bool {
+    let Ok(client) = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(10)).build() else {
+        return false;
+    };
+    let Ok(resp) = client.get(format!("http://127.0.0.1:{port}/props")).send().await else { return false };
+    let Ok(bytes) = resp.bytes().await else { return false };
+    serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|v| v["modalities"]["vision"] == true)
 }
 
 /// Реплика разговора. Роли как у OpenAI: `system`, `user`, `assistant`.
@@ -130,9 +152,26 @@ impl Msg {
         Msg { role: role.into(), content, files: vec![] }
     }
 
-    /// Реплика в том виде, в каком её ждёт llama-server.
-    fn wire(&self) -> serde_json::Value {
-        serde_json::json!({"role": self.role, "content": crate::attach::for_model(&self.files, &self.content)})
+    /// Реплика в том виде, в каком её ждёт llama-server. Картинки — отдельными частями
+    /// сообщения; модели без зрения (разговор начали с другой) вместо картинки — пометка,
+    /// иначе движок отказал бы во всём ответе.
+    fn wire(&self, vision: bool) -> serde_json::Value {
+        let text = crate::attach::for_model(&self.files, &self.content);
+        let images: Vec<_> = self.files.iter().filter(|f| f.kind == "image").collect();
+        if images.is_empty() {
+            return serde_json::json!({"role": self.role, "content": text});
+        }
+        let mut notes = String::new();
+        let mut parts = vec![];
+        for img in images {
+            match img.path.as_deref().map(crate::attach::image_data_url) {
+                Some(Ok(url)) if vision => parts.push(serde_json::json!({"type": "image_url", "image_url": {"url": url}})),
+                Some(Ok(_)) => notes.push_str(&format!("[картинка «{}» — эта модель картинок не видит]\n", img.name)),
+                _ => notes.push_str(&format!("[картинка «{}» потерялась]\n", img.name)),
+            }
+        }
+        parts.insert(0, serde_json::json!({"type": "text", "text": format!("{notes}{text}")}));
+        serde_json::json!({"role": self.role, "content": parts})
     }
 }
 
@@ -144,16 +183,20 @@ pub struct Stats {
     pub speed: f64,
     /// Время до первого токена, мс.
     pub prompt_ms: f64,
+    /// Сколько токенов заняли разговор с вложениями — так видно, сколько весит картинка.
+    pub prompt_tokens: u64,
 }
 
 /// Ответ по кускам: каждый кусок текста уходит в `on_delta` сразу, как пришёл.
 /// `cancel` — кнопка «Остановить»: обрываем соединение, движок прекращает считать.
 pub async fn chat(
     port: u16,
+    vision: bool,
     messages: &[Msg],
     role: &Role,
     style: &Style,
     cancel: &CancellationToken,
+    on_thought: impl Fn(&str),
     on_delta: impl Fn(&str),
 ) -> Result<Stats, String> {
     let client = reqwest::Client::builder()
@@ -166,7 +209,7 @@ pub async fn chat(
     // идёт уже по новой.
     let all = crate::presets::prepare(role, messages);
     let mut body = serde_json::json!({
-        "messages": all.iter().map(Msg::wire).collect::<Vec<_>>(),
+        "messages": all.iter().map(|m| m.wire(vision)).collect::<Vec<_>>(),
         "temperature": style.temperature,
         "top_p": style.top_p,
         "stream": true,
@@ -215,6 +258,13 @@ pub async fn chat(
                 if let Some(err) = v["error"]["message"].as_str() {
                     return Err(err.to_string());
                 }
+                // Думающие модели (Qwen3.5 и др.) сначала рассуждают — llama-server отдаёт это
+                // отдельно от ответа. Без этого окно минуту показывало бы пустое «…».
+                if let Some(text) = v["choices"][0]["delta"]["reasoning_content"].as_str() {
+                    if !text.is_empty() {
+                        on_thought(text);
+                    }
+                }
                 if let Some(text) = v["choices"][0]["delta"]["content"].as_str() {
                     if !text.is_empty() {
                         on_delta(text);
@@ -227,6 +277,9 @@ pub async fn chat(
                 }
                 if let Some(n) = v["usage"]["completion_tokens"].as_u64() {
                     stats.tokens = n;
+                }
+                if let Some(n) = v["usage"]["prompt_tokens"].as_u64() {
+                    stats.prompt_tokens = n;
                 }
             }
         }
@@ -288,7 +341,7 @@ mod tests {
 
     #[test]
     fn args_bind_localhost_without_webui() {
-        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192, gpu_layers: 21 };
+        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192, gpu_layers: 21, mmproj: None };
         let a = args(&cfg, 5000).join(" ");
         assert!(a.contains("--host 127.0.0.1 --port 5000"));
         assert!(a.contains("--no-webui"));
@@ -304,7 +357,7 @@ mod tests {
     async fn real_start_ask_stop() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-llm-test"), &CancellationToken::new())
             .await
@@ -324,7 +377,7 @@ mod tests {
     async fn real_chat_stream() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-chat-test"), &CancellationToken::new())
             .await
@@ -332,7 +385,7 @@ mod tests {
 
         let msgs = vec![Msg::new("user", "Посчитай вслух от 1 до 20.".into())];
         let chunks = std::sync::Mutex::new(Vec::<String>::new());
-        let stats = chat(llm.port, &msgs, presets::role(""), presets::style(""), &CancellationToken::new(), |t| {
+        let stats = chat(llm.port, false, &msgs, presets::role(""), presets::style(""), &CancellationToken::new(), |_| {}, |t| {
             chunks.lock().unwrap().push(t.to_string())
         })
         .await
@@ -352,7 +405,7 @@ mod tests {
         });
         let t = Instant::now();
         let long = vec![Msg::new("user", "Напиши рассказ на 2000 слов.".into())];
-        chat(llm.port, &long, presets::role(""), presets::style(""), &cancel, |_| {}).await.unwrap();
+        chat(llm.port, false, &long, presets::role(""), presets::style(""), &cancel, |_| {}, |_| {}).await.unwrap();
         println!("остановлено за {:.1} с", t.elapsed().as_secs_f64());
         assert!(t.elapsed() < Duration::from_secs(5));
         llm.handle.stop().await;
@@ -365,13 +418,13 @@ mod tests {
     async fn real_context_overflow() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-ctx-test"), &CancellationToken::new())
             .await
             .unwrap();
         let long = vec![Msg::new("user", "слово ".repeat(2000))];
-        let err = chat(llm.port, &long, presets::role(""), presets::style(""), &CancellationToken::new(), |_| {})
+        let err = chat(llm.port, false, &long, presets::role(""), presets::style(""), &CancellationToken::new(), |_| {}, |_| {})
             .await
             .err()
             .expect("должно не влезть");
@@ -391,7 +444,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         // OLLIVO_MODEL — имя файла в D:\Ollivo\models, чтобы проверить и маленькую модель.
         let file = std::env::var("OLLIVO_MODEL").unwrap_or("qwen2.5-3b-instruct-q4_k_m.gguf".into());
-        let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-roles-test"), &CancellationToken::new())
             .await
@@ -401,7 +454,7 @@ mod tests {
             async move {
                 let out = std::sync::Mutex::new(String::new());
                 let msgs = vec![Msg::new("user", text.into())];
-                chat(port, &msgs, presets::role(role), presets::style(style), &CancellationToken::new(), |t| {
+                chat(port, false, &msgs, presets::role(role), presets::style(style), &CancellationToken::new(), |_| {}, |t| {
                     out.lock().unwrap().push_str(t)
                 })
                 .await
@@ -427,7 +480,7 @@ mod tests {
             Msg::new("user", "The weather is nice today, let's go for a walk.".into()),
         ];
         let out = std::sync::Mutex::new(String::new());
-        chat(llm.port, &talk, presets::role("translator"), presets::style("precise"), &CancellationToken::new(), |t| {
+        chat(llm.port, false, &talk, presets::role("translator"), presets::style("precise"), &CancellationToken::new(), |_| {}, |t| {
             out.lock().unwrap().push_str(t)
         })
         .await
@@ -452,7 +505,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from("llama-server.exe"),
         };
-        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let err = start(&Supervisor::new(), &engine, &cfg, &std::env::temp_dir(), &CancellationToken::new())
             .await
             .err()
@@ -475,7 +528,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from(r"C:\Windows\System32\PING.EXE"),
         };
-        let cfg = Config { model, ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let cancel = CancellationToken::new();
         let c = cancel.clone();
@@ -496,7 +549,7 @@ mod tests {
     async fn real_document() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-doc-test"), &CancellationToken::new())
             .await
@@ -515,9 +568,10 @@ mod tests {
             tokens: exact,
             text,
             trimmed: false,
+            path: None,
         });
         let out = std::sync::Mutex::new(String::new());
-        chat(llm.port, &[q], presets::role("helper"), presets::style("precise"), &CancellationToken::new(), |t| {
+        chat(llm.port, false, &[q], presets::role("helper"), presets::style("precise"), &CancellationToken::new(), |_| {}, |t| {
             out.lock().unwrap().push_str(t)
         })
         .await
@@ -525,6 +579,53 @@ mod tests {
         let out = out.into_inner().unwrap();
         println!("→ {out}");
         assert!(out.contains('3'), "{out}");
+        llm.handle.stop().await;
+    }
+
+    /// Зрение на настоящей модели из каталога: дополнение находится само, движок
+    /// подтверждает зрение, модель читает число на картинке.
+    /// `cargo test llm::tests::real_vision -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_vision() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let model = root.join(r"models\unsloth\Qwen3.5-2B-GGUF\Qwen3.5-2B-Q4_K_M.gguf");
+        let mmproj = crate::vision::find_projector(&model);
+        assert!(mmproj.is_some(), "дополнение не нашлось");
+        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj };
+        let sup = Supervisor::new();
+        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-vision-test"), &CancellationToken::new())
+            .await
+            .unwrap();
+        println!("готов за {:.1} с, зрение: {}", llm.started_in.as_secs_f64(), llm.vision);
+        assert!(llm.vision);
+
+        let images = std::env::temp_dir().join("ollivo-vision-test").join("images");
+        let pic = crate::attach::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/circle42.png"), &images).unwrap();
+        let ask = |question: &'static str, files: Vec<crate::attach::Attachment>| {
+            let port = llm.port;
+            async move {
+                let mut q = Msg::new("user", question.into());
+                q.files = files;
+                let out = std::sync::Mutex::new(String::new());
+                let stats = chat(port, true, &[q], presets::role("helper"), presets::style("precise"), &CancellationToken::new(), |_| {}, |t| {
+                    out.lock().unwrap().push_str(t)
+                })
+                .await
+                .unwrap();
+                let out = out.into_inner().unwrap();
+                println!("{question} → {out}\n  токенов вопроса: {}", stats.prompt_tokens);
+                (out, stats.prompt_tokens)
+            }
+        };
+        let (plain, base) = ask("Какое число написано на картинке? Ответь только числом.", vec![]).await;
+        let (seen, with_image) = ask("Какое число написано на картинке? Ответь только числом.", vec![pic.clone()]).await;
+        println!("картинка 512×384 заняла {} токенов", with_image - base);
+        assert!(seen.contains("42"), "{seen}");
+        assert!(!plain.contains("42"));
+        let (color, _) = ask("Какого цвета круг? Одно слово.", vec![pic]).await;
+        assert!(color.to_lowercase().contains("красн"), "{color}");
         llm.handle.stop().await;
     }
 }

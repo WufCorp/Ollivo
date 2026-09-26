@@ -441,6 +441,8 @@ export interface LlmState {
   /** Ступень «экономнее», с которой запускали. */
   lighter: number;
   problem: Problem | null;
+  /** Модель видит картинки — так ответил сам движок. */
+  vision: boolean;
 }
 
 // --- Понятные ошибки ---
@@ -473,16 +475,34 @@ export interface Msg {
   files?: Attachment[];
 }
 
-/** Приложенный документ. `text` — ровно то, что получит модель. */
+/** Приложенный документ или картинка. `text` — ровно то, что получит модель. */
 export interface Attachment {
   name: string;
-  kind: "document";
+  kind: "document" | "image";
   text: string;
   /** Сколько займёт в памяти модели: точно, если модель запущена, иначе прикидка. */
   tokens: number;
   /** Приложено только начало — целиком не поместилось. */
   trimmed: boolean;
+  /** Копия картинки в папке программы. */
+  path?: string | null;
 }
+
+/** Картинка из разговора как `data:`-адрес — для показа в окне. */
+export const attachPreview = (path: string) => invoke<string>("attach_preview", { path });
+
+/** Файл зрения, который можно докачать модели. */
+export interface Projector {
+  name: string;
+  size: number;
+  sha256: string | null;
+}
+
+/** Можно ли докачать зрение этой модели; `null` — нельзя (или уже есть). */
+export const visionOffer = (model: string) => invoke<Projector | null>("vision_offer", { model });
+
+/** Докачивает зрение; итог — `download://finished` с id `vision:<путь модели>`. */
+export const visionDownload = (model: string) => invoke<string>("vision_download", { model });
 
 /** Читает документ; ошибка — строка человеческими словами («старый формат Word…»). */
 export const attachFile = (path: string) => invoke<Attachment>("attach_file", { path });
@@ -492,7 +512,8 @@ export const attachTrim = (file: Attachment, maxTokens: number) =>
   invoke<Attachment>("attach_trim", { file, maxTokens });
 
 /** Что предлагаем в окне выбора файла; перетащить можно и любой другой текстовый файл. */
-export const DOCUMENT_EXTENSIONS = [
+export const ATTACH_EXTENSIONS = [
+  "jpg", "jpeg", "png", "gif", "bmp",
   "pdf", "docx", "odt", "txt", "md", "csv", "json", "xml", "html", "log",
   "py", "js", "ts", "tsx", "rs", "c", "cpp", "h", "cs", "java", "go", "php", "sql", "ps1", "bat", "sh",
 ];
@@ -502,6 +523,7 @@ export interface LlmStats {
   tokens: number;
   speed: number;
   prompt_ms: number;
+  prompt_tokens: number;
 }
 
 /** Итог ответа: числа или ошибка. */
@@ -582,6 +604,10 @@ export const llmChatStop = () => invoke<void>("llm_chat_stop");
 
 export const onLlmToken = (cb: (text: string) => void): Promise<UnlistenFn> =>
   listen<string>("llm://token", (e) => cb(e.payload));
+
+/** Размышления думающей модели перед ответом — кусками, как и сам ответ. */
+export const onLlmThought = (cb: (text: string) => void): Promise<UnlistenFn> =>
+  listen<string>("llm://thought", (e) => cb(e.payload));
 
 export const onLlmAnswer = (cb: (d: ChatDone) => void): Promise<UnlistenFn> =>
   listen<ChatDone>("llm://answer", (e) => cb(e.payload));

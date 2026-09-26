@@ -1,4 +1,5 @@
 mod attach;
+mod vision;
 mod catalog;
 mod chats;
 mod download;
@@ -41,6 +42,8 @@ struct Core {
     update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     /// Разговоры: по файлу на разговор.
     chats: chats::Store,
+    /// Копии картинок, приложенных к разговорам.
+    attachments: PathBuf,
     /// Подборка моделей для каталога.
     catalog: catalog::Catalog,
     /// Модели, которые человек добавил: пути и разобранные заголовки.
@@ -429,6 +432,8 @@ struct LlmState {
     lighter: u8,
     /// Что пошло не так — уже человеческими словами и с кнопками.
     problem: Option<trouble::Problem>,
+    /// Модель видит картинки.
+    vision: bool,
 }
 
 impl LlmState {
@@ -443,6 +448,7 @@ impl LlmState {
             layers: None,
             lighter: 0,
             problem: None,
+            vision: false,
         }
     }
 
@@ -464,6 +470,7 @@ impl LlmState {
             layers: None,
             lighter: 0,
             problem: None,
+            vision: l.vision,
         }
     }
 }
@@ -631,6 +638,55 @@ fn catalog_download(
     Ok(id)
 }
 
+/// Зрение для модели, которая пока его не имеет: откуда модель скачана, мы помним
+/// (`library::Entry.repo`), а в том же репозитории обычно лежит и `mmproj`.
+/// `None` — зрение уже есть, модель не из HF или у неё его не бывает.
+#[tauri::command]
+async fn vision_offer(core: CoreState<'_>, model: PathBuf) -> Result<Option<catalog::Projector>, String> {
+    let (has, repo) = {
+        let m = model.clone();
+        let repo = core.library.find(&model).and_then(|e| e.repo);
+        (tauri::async_runtime::spawn_blocking(move || vision::find_projector(&m)).await.map_err(|e| e.to_string())?, repo)
+    };
+    let (None, Some(repo)) = (has, repo) else { return Ok(None) };
+    let base = core.settings.get().hf.base()?;
+    catalog::projector(core.downloader().client(), &base, &hf::load_token(), &repo).await
+}
+
+/// Докачивает зрение в папку модели. Прогресс и итог — те же события, что у моделей,
+/// id задачи — `vision:<путь модели>`. В библиотеку файл не попадает: отдельно он не запускается.
+#[tauri::command]
+async fn vision_download(app: AppHandle, core: CoreState<'_>, model: PathBuf) -> Result<String, String> {
+    let repo = core.library.find(&model).and_then(|e| e.repo).ok_or("неизвестно, откуда скачана модель")?;
+    let base = core.settings.get().hf.base()?;
+    let p = catalog::projector(core.downloader().client(), &base, &hf::load_token(), &repo)
+        .await?
+        .ok_or("у этой модели нет зрения")?;
+    // Имя пришло с чужого сервера: проверяем тем же способом, что и модели.
+    let file = model_dest(&core.data_dir(), &repo, &p.name)?;
+    let dest = model.parent().ok_or("непонятная папка модели")?.join(file.file_name().unwrap());
+    let request = download::Request::new(vec![hf::file_url(&base, &repo, "main", &p.name)], dest.clone(), p.sha256);
+    let id = format!("vision:{}", model.display());
+    let cancel = core.start(&id)?;
+    let core = core.inner().clone();
+    let task = id.clone();
+    tauri::async_runtime::spawn(async move {
+        let (progress_app, progress_id) = (app.clone(), task.clone());
+        let on_progress = move |progress| {
+            let _ = progress_app.emit("download://progress", DownloadProgress { id: progress_id.clone(), progress });
+        };
+        let res = core.downloader().download(&request, &cancel, &on_progress).await;
+        core.finish(&task);
+        let (error, kind, result) = match res {
+            Ok(()) => (None, None, Some(dest)),
+            Err(download::Error::Cancelled) => (Some("paused".into()), None, None),
+            Err(e) => (Some(e.to_string()), Some(download_kind(&e)), None),
+        };
+        let _ = app.emit("download://finished", Finished { id: task, error, kind, result });
+    });
+    Ok(id)
+}
+
 /// Итог добавления одного файла: `error` — почему не взяли.
 #[derive(serde::Serialize)]
 struct Added {
@@ -740,9 +796,18 @@ const LIGHTER_MIN_CTX: u32 = 2048;
 fn plan(core: &Core, req: &StartRequest) -> llm::Config {
     // Модели нет в библиотеке (запустили мимо списка) — пусть llama.cpp
     // подбирает слои сам, у него это тоже умеет (fit).
-    let mut cfg = llm::Config { model: req.model.clone(), ctx: 4096, gpu_layers: 999 };
+    let mut cfg = llm::Config { model: req.model.clone(), ctx: 4096, gpu_layers: 999, mmproj: None };
+    cfg.mmproj = vision::find_projector(&req.model);
     if let Some(entry) = core.library.find(&req.model) {
-        let v = probe::assess(&entry.info, &hardware::detect());
+        let mut hw = hardware::detect();
+        // Зрение тоже живёт в видеокарте: веса дополнения плюс рабочий буфер на картинку.
+        // Считаем, что этой памяти просто нет, — тогда память разговора и слои подберутся
+        // с учётом зрения.
+        if let (Some(mm), Some(gpu)) = (&cfg.mmproj, hw.gpu.as_mut()) {
+            let size = std::fs::metadata(mm).map_or(0, |m| m.len());
+            gpu.vram_free = gpu.vram_free.saturating_sub(size + (300 << 20));
+        }
+        let v = probe::assess(&entry.info, &hw);
         if let Some(ctx) = v.ctx {
             cfg.ctx = ctx as u32;
         }
@@ -899,7 +964,8 @@ fn chat_presets() -> presets::All {
     presets::All { roles: presets::ROLES, styles: presets::STYLES }
 }
 
-/// Ответ на весь разговор. Текст идёт кусками в `llm://token`, итог — `llm://answer`.
+/// Ответ на весь разговор. Текст идёт кусками в `llm://token`, размышления думающей
+/// модели — в `llm://thought`, итог — `llm://answer`.
 /// Разговор целиком присылает окно: движок ничего не помнит между запросами.
 /// `role` и `style` — id пресетов; неизвестные значат «Помощник» и «Обычно».
 #[tauri::command]
@@ -910,18 +976,29 @@ async fn llm_chat(
     role: String,
     style: String,
 ) -> Result<(), trouble::Problem> {
-    let port = match core.llm.try_lock() {
-        Ok(slot) => slot.as_ref().map(|l| l.port).ok_or_else(|| trouble::chat("модель не запущена"))?,
+    let (port, vision) = match core.llm.try_lock() {
+        Ok(slot) => slot.as_ref().map(|l| (l.port, l.vision)).ok_or_else(|| trouble::chat("модель не запущена"))?,
         Err(_) => return Err(trouble::chat("модель ещё загружается")),
     };
     let cancel = CancellationToken::new();
     // Новый вопрос обрывает недоговорённый ответ.
     std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
-    let done = app.clone();
+    let (done, thought_app) = (app.clone(), app.clone());
     tauri::async_runtime::spawn(async move {
-        let res = llm::chat(port, &messages, presets::role(&role), presets::style(&style), &cancel, |text| {
-            let _ = app.emit("llm://token", text);
-        })
+        let res = llm::chat(
+            port,
+            vision,
+            &messages,
+            presets::role(&role),
+            presets::style(&style),
+            &cancel,
+            |text| {
+                let _ = thought_app.emit("llm://thought", text);
+            },
+            |text| {
+                let _ = app.emit("llm://token", text);
+            },
+        )
         .await;
         let payload = match res {
             Ok(stats) => ChatDone { stats: Some(stats), problem: None },
@@ -936,16 +1013,30 @@ async fn llm_chat(
 /// считает она сама (`/tokenize`): прикидка по буквам для английского завышена в полтора раза.
 #[tauri::command]
 async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attachment, String> {
-    let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path))
+    let images = core.attachments.clone();
+    let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path, &images))
         .await
         .map_err(|e| e.to_string())??;
     let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
-    if let Some(port) = port {
+    if let (Some(port), "document") = (port, a.kind.as_str()) {
         if let Some(n) = llm::count_tokens(port, &a.text).await {
             a.tokens = n;
         }
     }
     Ok(a)
+}
+
+/// Картинка из разговора для показа в окне. Только из своей папки: окно не должно
+/// уметь читать произвольные файлы с диска.
+#[tauri::command]
+async fn attach_preview(core: CoreState<'_>, path: PathBuf) -> Result<String, String> {
+    let inside = path.parent().is_some_and(|p| p == core.attachments) && path.is_file();
+    if !inside {
+        return Err("картинка потерялась".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || attach::image_data_url(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Только начало документа — то, что поместится в память модели.
@@ -1036,6 +1127,7 @@ pub fn run() {
                 catalog: catalog::Catalog::bundled(),
                 library: library::Library::open(config_dir.join("models.json")),
                 chats: chats::Store::new(config_dir.join("chats")),
+                attachments: config_dir.join("attachments"),
                 downloader: RwLock::new(Arc::new(downloader)),
                 running: Mutex::new(HashMap::new()),
                 supervisor: process::Supervisor::new(),
@@ -1083,6 +1175,9 @@ pub fn run() {
             llm_chat_stop,
             attach_file,
             attach_trim,
+            attach_preview,
+            vision_offer,
+            vision_download,
             update_check,
             update_install,
         ])
@@ -1106,7 +1201,7 @@ mod tests {
         let logs = std::env::temp_dir().join("ollivo-oom-test");
         let model = root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf");
         // 262144 токенов памяти разговора у 3B — ~9 ГБ сверх весов: на 8 ГБ не влезет.
-        let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999 };
+        let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999, mmproj: None };
         let err = llm::start(&sup, &engine, &cfg, &logs, &CancellationToken::new()).await.err().expect("должно не хватить");
         let p = trouble::start(&err, true);
         println!("{}
@@ -1122,7 +1217,7 @@ mod tests {
 
     #[test]
     fn lighter_steps() {
-        let cfg = llm::Config { model: PathBuf::new(), ctx: 16384, gpu_layers: 999 };
+        let cfg = llm::Config { model: PathBuf::new(), ctx: 16384, gpu_layers: 999, mmproj: None };
         let at = |steps, layers| {
             let c = lighter(cfg.clone(), steps, layers);
             (c.ctx, c.gpu_layers)

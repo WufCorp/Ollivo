@@ -332,6 +332,7 @@ mod tests {
             text: "текст".into(),
             tokens: 2,
             trimmed: false,
+            path: None,
         });
         assert_eq!(title_from(&[with_doc]), "Договор.pdf");
     }

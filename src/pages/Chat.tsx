@@ -2,10 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ATTACH_EXTENSIONS,
   attachFile,
+  attachPreview,
   attachTrim,
-  DOCUMENT_EXTENSIONS,
+  formatBytes,
+  onDownloadFinished,
+  onDownloadProgress,
+  visionDownload,
+  visionOffer,
   type Attachment,
+  type Projector,
   chatPresets,
   chatsGet,
   chatsSave,
@@ -15,6 +22,7 @@ import {
   llmStatus,
   onLlmAnswer,
   onLlmState,
+  onLlmThought,
   onLlmToken,
   type Chat as Talk,
   type ChatRole,
@@ -31,14 +39,29 @@ import { memoryPages, wordsPerSecond } from "../words";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
-/** Плашки приложенных документов; `onRemove` — у ещё не отправленных. */
+/** Картинка из папки программы; пропала — вместо неё имя файла. */
+function Thumb({ file }: { file: Attachment }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (file.path) attachPreview(file.path).then(setSrc, () => setSrc(null));
+  }, [file.path]);
+  return src ? <img className="thumb" src={src} alt={file.name} title={file.name} /> : <>🖼 {file.name}</>;
+}
+
+/** Плашки приложенных документов и картинок; `onRemove` — у ещё не отправленных. */
 function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number) => void }) {
   return (
     <div className="files">
       {files.map((f, i) => (
-        <span key={i} className="file">
-          📄 {f.name} · {f.trimmed ? "только начало, " : ""}
-          {memoryPages(f.tokens)}
+        <span key={i} className={f.kind === "image" ? "file image" : "file"}>
+          {f.kind === "image" ? (
+            <Thumb file={f} />
+          ) : (
+            <>
+              📄 {f.name} · {f.trimmed ? "только начало, " : ""}
+              {memoryPages(f.tokens)}
+            </>
+          )}
           {onRemove && (
             <button className="link" title="Убрать" onClick={() => onRemove(i)}>
               ✕
@@ -50,10 +73,24 @@ function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number
   );
 }
 
+/** Зрение для модели, которая его не имеет. `offer`: `undefined` — ещё узнаём,
+ *  `null` — докачать нельзя. `task` — id идущей загрузки. */
+interface Eyes {
+  images: Attachment[];
+  offer?: Projector | null;
+  task?: string;
+  done?: number;
+  restarting?: boolean;
+  error?: string;
+}
+
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
   stats?: LlmStats | null;
   problem?: Problem | null;
+  /** Как думающая модель рассуждала перед ответом. В историю не пишется: модели
+   *  прошлые рассуждения не нужны, а человеку они интересны только сейчас. */
+  thought?: string;
 }
 
 /** Ядро отвечает на ошибку готовой `Problem`; строка — значит, сломалось что-то по дороге. */
@@ -94,6 +131,10 @@ export default function Chat({
   /** Документ, который целиком не помещается в память модели: ждёт решения человека. */
   const [tooBig, setTooBig] = useState<{ file: Attachment; room: number } | null>(null);
   const [over, setOver] = useState(false);
+  /** Картинки для модели, которая пока не видит: ждут, пока докачается зрение. */
+  const [eyes, setEyes] = useState<Eyes | null>(null);
+  const eyesRef = useRef<Eyes | null>(null);
+  eyesRef.current = eyes;
 
   // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
   const linesRef = useRef<Line[]>([]);
@@ -120,10 +161,35 @@ export default function Chat({
         attachRef.current(e.payload.paths);
       } else setOver(false);
     });
+    // Загрузка зрения: прогресс и итог приходят теми же событиями, что у моделей.
+    const eyesProgress = onDownloadProgress((p) => {
+      if (p.id === eyesRef.current?.task) setEyes((e) => e && { ...e, done: p.done });
+    });
+    const eyesDone = onDownloadFinished((f) => {
+      const e = eyesRef.current;
+      if (f.id !== e?.task) return;
+      if (f.error) {
+        setEyes({ ...e, task: undefined, error: f.error === "paused" ? "Загрузка прервалась." : f.error });
+        return;
+      }
+      // Зрение подключается при запуске — перезапускаем модель с теми же настройками.
+      setEyes({ ...e, task: undefined, restarting: true });
+      const llm = llmRef.current;
+      if (llm?.model) llmStart(llm.model, { lighter: llm.lighter });
+    });
     const subs = [
       drop,
+      eyesProgress,
+      eyesDone,
       // Модель могли запустить или остановить на вкладке «Модели».
       onLlmState(setLlm),
+      onLlmThought((text) =>
+        setLines((prev) => {
+          const last = prev[prev.length - 1];
+          if (!last || last.role !== "assistant") return prev;
+          return [...prev.slice(0, -1), { ...last, thought: (last.thought ?? "") + text }];
+        }),
+      ),
       onLlmToken((text) =>
         setLines((prev) => {
           const last = prev[prev.length - 1];
@@ -144,6 +210,17 @@ export default function Chat({
       subs.forEach((s) => s.then((un) => un()));
     };
   }, []);
+
+  // Модель перезапустилась со зрением — ждавшие картинки встают к вопросу.
+  useEffect(() => {
+    if (!eyes?.restarting || llm?.state !== "ready") return;
+    if (llm.vision) {
+      setFiles((f) => [...f, ...eyes.images]);
+      setEyes(null);
+    } else {
+      setEyes({ ...eyes, restarting: false, error: "Зрение скачалось, но модель его не подключила." });
+    }
+  }, [llm]);
 
   // Открыли другой разговор в меню (или начали новый).
   useEffect(() => {
@@ -242,6 +319,7 @@ export default function Chat({
     setTooBig(null);
     setReading(true);
     let pending = filesRef.current;
+    const blind: Attachment[] = [];
     try {
       for (const p of paths) {
         let a: Attachment;
@@ -249,6 +327,10 @@ export default function Chat({
           a = await attachFile(p);
         } catch (e) {
           setFileError(`«${fileName(p)}»: ${String(e)}.`);
+          continue;
+        }
+        if (a.kind === "image" && !llmRef.current?.vision) {
+          blind.push(a);
           continue;
         }
         const free = room(pending);
@@ -262,6 +344,25 @@ export default function Chat({
     } finally {
       setReading(false);
     }
+    if (blind.length) {
+      const model = llmRef.current?.model ?? "";
+      setEyes({ images: [...(eyesRef.current?.images ?? []), ...blind] });
+      visionOffer(model).then(
+        (offer) => setEyes((e) => e && { ...e, offer }),
+        () => setEyes((e) => e && { ...e, offer: null }),
+      );
+    }
+  };
+
+  const getEyes = async () => {
+    const model = llmRef.current?.model;
+    if (!eyes || !model) return;
+    try {
+      const task = await visionDownload(model);
+      setEyes({ ...eyes, task, done: 0, error: undefined });
+    } catch (e) {
+      setEyes({ ...eyes, error: String(e) });
+    }
   };
   // Обработчик перетаскивания заведён один раз — зовём через ref свежую версию.
   const attachRef = useRef(attach);
@@ -270,7 +371,7 @@ export default function Chat({
   const pickFiles = async () => {
     const picked = await open({
       multiple: true,
-      filters: [{ name: "Документы и текст", extensions: DOCUMENT_EXTENSIONS }],
+      filters: [{ name: "Документы, текст и картинки", extensions: ATTACH_EXTENSIONS }],
     });
     if (picked) attach(Array.isArray(picked) ? picked : [picked]);
   };
@@ -357,7 +458,19 @@ export default function Chat({
                 {l.content && <p className="answer">{l.content}</p>}
               </>
             ) : (
-              <Answer text={l.content || (answering && i === lines.length - 1 ? "…" : "")} />
+              <>
+                {l.thought && (
+                  <details className="thought">
+                    <summary>
+                      {answering && i === lines.length - 1 && !l.content
+                        ? "Модель обдумывает ответ…"
+                        : "Как модель рассуждала"}
+                    </summary>
+                    <p>{l.thought}</p>
+                  </details>
+                )}
+                <Answer text={l.content || (answering && i === lines.length - 1 && !l.thought ? "…" : "")} />
+              </>
             )}
             {l.problem && (
               <ProblemCard
@@ -372,7 +485,8 @@ export default function Chat({
             )}
             {l.stats && l.stats.tokens > 0 && (
               <p className="muted small">
-                {wordsPerSecond(l.content, l.stats.tokens, l.stats.speed)}
+                {/* Токены ответа включают и рассуждения — слова считаем там же. */}
+                {wordsPerSecond(`${l.thought ?? ""} ${l.content}`, l.stats.tokens, l.stats.speed)}
               </p>
             )}
             {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
@@ -397,6 +511,37 @@ export default function Chat({
         </div>
       ) : (
         <div className={over ? "ask over" : "ask"}>
+          {eyes && (
+            <div className="card notice">
+              <p>
+                {eyes.images.length > 1 ? `Картинки (${eyes.images.length})` : `«${eyes.images[0].name}»`} — а эта
+                модель пока не видит картинки.{" "}
+                {eyes.offer === undefined
+                  ? "Проверяю, можно ли докачать ей зрение…"
+                  : eyes.offer === null
+                    ? "Зрение ей не докачать. Видят картинки модели с пометкой «видит картинки» в каталоге."
+                    : eyes.restarting
+                      ? "Перезапускаю модель со зрением…"
+                      : eyes.task
+                        ? `Качаю зрение: ${formatBytes(eyes.done ?? 0)} из ${formatBytes(eyes.offer.size)}.`
+                        : `Ей можно докачать зрение — ${formatBytes(eyes.offer.size)}, потом модель перезапустится.`}
+              </p>
+              {eyes.task && eyes.offer && <progress value={eyes.done ?? 0} max={eyes.offer.size} />}
+              {eyes.error && <p className="error small">{eyes.error}</p>}
+              {!eyes.task && !eyes.restarting && eyes.offer !== undefined && (
+                <div className="actions">
+                  {eyes.offer ? (
+                    <button onClick={getEyes}>{eyes.error ? "Ещё раз" : "Докачать зрение"}</button>
+                  ) : (
+                    <button onClick={() => onGo("catalog")}>В каталог</button>
+                  )}
+                  <button className="secondary" onClick={() => setEyes(null)}>
+                    Не надо
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {tooBig && (
             <div className="card notice">
               {/* Меньше страницы места — резать нечего, остаётся новый разговор. */}
@@ -453,8 +598,8 @@ export default function Chat({
             )}
             <button
               className="secondary"
-              title="Приложить документ: PDF, Word, текст или код. Файл можно и перетащить в окно."
-              disabled={answering || reading}
+              title="Приложить документ или картинку: PDF, Word, текст, код, фото. Файл можно и перетащить в окно."
+              disabled={answering || reading || !!eyes?.task}
               onClick={pickFiles}
             >
               📎
