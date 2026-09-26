@@ -16,6 +16,7 @@ import {
   type Model,
   type ScanReport,
 } from "../api";
+import License from "../components/License";
 import RunningModel from "../components/RunningModel";
 
 const EXTENSIONS = ["gguf", "safetensors", "bin", "pt", "ckpt", "pth"];
@@ -188,7 +189,8 @@ export default function Models({ onGoToChat }: { onGoToChat: () => void }) {
               </p>
             ))}
             {m.info.needs.length > 0 && <p className="muted small">Ещё нужно скачать: {m.info.needs.join(", ")}</p>}
-            {m.info.license && <p className="muted small">Лицензия: {m.info.license}</p>}
+            {/* Лицензия со страницы модели точнее: в файле её пишут не всегда. */}
+            <License code={m.license ?? m.info.license} repo={m.repo} />
 
             <div className="actions">
               {m.info.kind === "llm" && m.info.engine === "llama_cpp" && !m.missing && (

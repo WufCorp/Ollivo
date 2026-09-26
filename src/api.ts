@@ -316,6 +316,10 @@ export interface Model {
   added: number;
   /** Понятное имя, если по имени файла не разобрать (у Ollama файлы — по хешу). */
   title: string | null;
+  /** Откуда скачали: `автор/репозиторий` на HuggingFace. */
+  repo: string | null;
+  /** Лицензия со страницы модели; в `info.license` — та, что в самом файле. */
+  license: string | null;
   info: ModelInfo;
   file: string;
   kind_ru: string;
@@ -413,8 +417,13 @@ export const catalogSearch = (query: string) => invoke<CatalogRepo[]>("catalog_s
 export const catalogFiles = (repo: string) => invoke<CatalogFiles>("catalog_files", { repo });
 
 /** Качает файл в фоне; возвращает id задачи — по нему идут прогресс и пауза. */
-export const catalogDownload = (repo: string, name: string, sha256: string | null, title?: string) =>
-  invoke<string>("catalog_download", { repo, name, sha256, title: title ?? null });
+export const catalogDownload = (
+  repo: string,
+  name: string,
+  sha256: string | null,
+  title?: string,
+  license?: string | null,
+) => invoke<string>("catalog_download", { repo, name, sha256, title: title ?? null, license: license ?? null });
 
 // --- Текстовая модель (llama-server) ---
 

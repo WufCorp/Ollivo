@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import License from "../components/License";
 import {
   LIGHTS,
   catalogDownload,
@@ -144,11 +145,12 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
     };
   }, []);
 
-  const start = async (repo: string, v: CatalogVariant, title?: string) => {
+  /** `license` едет вместе с файлом в библиотеку: в заголовке GGUF её обычно нет. */
+  const start = async (repo: string, v: CatalogVariant, license: string | null, title?: string) => {
     const id = taskId(repo, v.name);
     patch(id, { error: null, done: null });
     try {
-      await catalogDownload(repo, v.name, v.sha256, title);
+      await catalogDownload(repo, v.name, v.sha256, title, license);
     } catch (e) {
       patch(id, { error: String(e) });
     }
@@ -223,14 +225,14 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
                   {[m.vendor, params(m.params), ...m.tags].join(" · ")}
                 </p>
                 <p>{m.about}</p>
-                {m.license && <p className="muted small">Лицензия: {m.license}</p>}
+                <License code={m.license} repo={m.repo} />
                 {variants.map((v) => (
                   <Variant
                     key={v.name}
                     v={v}
                     repo={m.repo}
                     task={tasks[taskId(m.repo, v.name)]}
-                    onStart={(x) => start(m.repo, x, `${m.title} ${x.quant}`)}
+                    onStart={(x) => start(m.repo, x, m.license, `${m.title} ${x.quant}`)}
                     onGoToChat={onGoToChat}
                   />
                 ))}
@@ -264,10 +266,9 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
             <div className="card model" key={r.repo}>
               <p className="model-title">{r.name}</p>
               <p className="muted small">
-                {[r.author, `скачали ${r.downloads.toLocaleString("ru")} раз`, r.license ?? ""]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {[r.author, `скачали ${r.downloads.toLocaleString("ru")} раз`].join(" · ")}
               </p>
+              <License code={r.license} repo={r.repo} />
               {r.gated && (
                 <p className="muted small">
                   Закрытая модель: нужен токен HuggingFace в настройках и согласие на её странице.
@@ -289,7 +290,7 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
                       v={v}
                       repo={r.repo}
                       task={tasks[taskId(r.repo, v.name)]}
-                      onStart={(x) => start(r.repo, x)}
+                      onStart={(x) => start(r.repo, x, r.license)}
                       onGoToChat={onGoToChat}
                     />
                   ))}

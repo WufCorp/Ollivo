@@ -572,6 +572,7 @@ fn catalog_download(
     name: String,
     sha256: Option<String>,
     title: Option<String>,
+    license: Option<String>,
 ) -> Result<String, String> {
     let base = core.settings.get().hf.base()?;
     let dest = model_dest(&core.data_dir(), &repo, &name)?;
@@ -592,7 +593,8 @@ fn catalog_download(
             // Заголовок читается с диска — это надолго, окно ждать не должно.
             Ok(()) => {
                 let (lib, path) = (core.clone(), dest.clone());
-                match tauri::async_runtime::spawn_blocking(move || lib.library.add(&path, title)).await {
+                let src = library::Source { title, repo: Some(repo), license };
+                match tauri::async_runtime::spawn_blocking(move || lib.library.add(&path, src)).await {
                     Ok(Ok(_)) => (None, None, Some(dest)),
                     Ok(Err(e)) => (Some(e), Some("broken"), None),
                     Err(e) => (Some(e.to_string()), Some("other"), None),
@@ -641,7 +643,7 @@ async fn models_add(core: CoreState<'_>, paths: Vec<PathBuf>) -> Result<Vec<Adde
             .into_iter()
             .map(|p| Added {
                 file: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                error: core.library.add(&p, None).err(),
+                error: core.library.add(&p, library::Source::default()).err(),
             })
             .collect()
     })
