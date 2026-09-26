@@ -469,7 +469,33 @@ export interface Problem {
 export interface Msg {
   role: "system" | "user" | "assistant";
   content: string;
+  /** Приложенные документы: модель видит их перед вопросом. */
+  files?: Attachment[];
 }
+
+/** Приложенный документ. `text` — ровно то, что получит модель. */
+export interface Attachment {
+  name: string;
+  kind: "document";
+  text: string;
+  /** Сколько займёт в памяти модели: точно, если модель запущена, иначе прикидка. */
+  tokens: number;
+  /** Приложено только начало — целиком не поместилось. */
+  trimmed: boolean;
+}
+
+/** Читает документ; ошибка — строка человеческими словами («старый формат Word…»). */
+export const attachFile = (path: string) => invoke<Attachment>("attach_file", { path });
+
+/** Только начало документа — сколько поместится. */
+export const attachTrim = (file: Attachment, maxTokens: number) =>
+  invoke<Attachment>("attach_trim", { file, maxTokens });
+
+/** Что предлагаем в окне выбора файла; перетащить можно и любой другой текстовый файл. */
+export const DOCUMENT_EXTENSIONS = [
+  "pdf", "docx", "odt", "txt", "md", "csv", "json", "xml", "html", "log",
+  "py", "js", "ts", "tsx", "rs", "c", "cpp", "h", "cs", "java", "go", "php", "sql", "ps1", "bat", "sh",
+];
 
 /** Числа по ответу: сколько токенов и как быстро. */
 export interface LlmStats {

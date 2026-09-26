@@ -60,10 +60,14 @@ fn now() -> u64 {
 
 /// Название из первого вопроса: одна строка, не длиннее `TITLE_LEN`.
 pub fn title_from(messages: &[Msg]) -> String {
+    // Приложили документ без вопроса — разговор называем по файлу.
     let first = messages
         .iter()
         .find(|m| m.role == "user")
-        .map(|m| m.content.trim())
+        .map(|m| match (m.content.trim(), m.files.first()) {
+            ("", Some(f)) => f.name.as_str(),
+            (text, _) => text,
+        })
         .unwrap_or_default();
     let line = first.lines().next().unwrap_or_default().trim();
     if line.is_empty() {
@@ -255,7 +259,7 @@ mod tests {
     use super::*;
 
     fn msg(role: &str, content: &str) -> Msg {
-        Msg { role: role.into(), content: content.into() }
+        Msg::new(role, content.into())
     }
 
     fn store(name: &str) -> Store {
@@ -321,6 +325,15 @@ mod tests {
         assert_eq!(title_from(&[msg("user", &long)]).chars().count(), TITLE_LEN + 1);
         assert_eq!(title_from(&[msg("user", "Строка\nи ещё строка")]), "Строка");
         assert_eq!(title_from(&[]), "Без названия");
+        let mut with_doc = msg("user", "");
+        with_doc.files.push(crate::attach::Attachment {
+            name: "Договор.pdf".into(),
+            kind: "document".into(),
+            text: "текст".into(),
+            tokens: 2,
+            trimmed: false,
+        });
+        assert_eq!(title_from(&[with_doc]), "Договор.pdf");
     }
 
     /// Имя файла берётся из id, поэтому путь наружу не должен пролезать.

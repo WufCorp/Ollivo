@@ -698,6 +698,38 @@ label.check.filter {
   font-size: 13px;
 }
 
+/* Приложенные документы: плашки над полем ввода и в реплике. */
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.files .file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.14);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask .notice {
+  margin-bottom: 8px;
+}
+
+/* Файл тащат над чатом — поле ввода подсвечивается: сюда и упадёт. */
+.ask.over textarea {
+  border-color: #4c8bf5;
+  box-shadow: 0 0 0 2px rgba(76, 139, 245, 0.3);
+}
+
 .ask textarea {
   width: 100%;
   box-sizing: border-box;

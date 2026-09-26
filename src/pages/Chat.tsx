@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
+  attachFile,
+  attachTrim,
+  DOCUMENT_EXTENSIONS,
+  type Attachment,
   chatPresets,
   chatsGet,
   chatsSave,
@@ -21,9 +27,28 @@ import {
 import Answer, { copyText } from "../components/Answer";
 import ProblemCard from "../components/ProblemCard";
 import { crashActions } from "../components/RunningModel";
-import { wordsPerSecond } from "../words";
+import { memoryPages, wordsPerSecond } from "../words";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+/** Плашки приложенных документов; `onRemove` — у ещё не отправленных. */
+function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number) => void }) {
+  return (
+    <div className="files">
+      {files.map((f, i) => (
+        <span key={i} className="file">
+          📄 {f.name} · {f.trimmed ? "только начало, " : ""}
+          {memoryPages(f.tokens)}
+          {onRemove && (
+            <button className="link" title="Убрать" onClick={() => onRemove(i)}>
+              ✕
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
@@ -62,10 +87,21 @@ export default function Chat({
   const [role, setRole] = useState("helper");
   const [style, setStyle] = useState("balanced");
   const bottom = useRef<HTMLDivElement>(null);
+  /** Документы к следующему вопросу. */
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  /** Документ, который целиком не помещается в память модели: ждёт решения человека. */
+  const [tooBig, setTooBig] = useState<{ file: Attachment; room: number } | null>(null);
+  const [over, setOver] = useState(false);
 
   // Свежие реплики для сохранения: обработчик событий помнит только первый рендер.
   const linesRef = useRef<Line[]>([]);
   linesRef.current = lines;
+  const filesRef = useRef<Attachment[]>([]);
+  filesRef.current = files;
+  const llmRef = useRef<LlmState | null>(null);
+  llmRef.current = llm;
   const wasAnswering = useRef(false);
   /** Разговор, который мы сами только что записали, — перечитывать его не надо. */
   const savedId = useRef<string | null>(null);
@@ -76,7 +112,16 @@ export default function Chat({
       setRoles(p.roles);
       setStyles(p.styles);
     });
+    // Файл, перетащенный в окно чата, — то же, что скрепка.
+    const drop = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "over") setOver(true);
+      else if (e.payload.type === "drop") {
+        setOver(false);
+        attachRef.current(e.payload.paths);
+      } else setOver(false);
+    });
     const subs = [
+      drop,
       // Модель могли запустить или остановить на вкладке «Модели».
       onLlmState(setLlm),
       onLlmToken((text) =>
@@ -124,8 +169,8 @@ export default function Chat({
   useEffect(() => {
     if (wasAnswering.current && !answering) {
       const messages = linesRef.current
-        .filter((l) => l.content.trim())
-        .map(({ role, content }) => ({ role, content }));
+        .filter((l) => l.content.trim() || l.files?.length)
+        .map(({ role, content, files }) => ({ role, content, files }));
       if (messages.length) {
         chatsSave({
           id: chatId ?? "",
@@ -158,7 +203,7 @@ export default function Chat({
     setAnswering(true);
     try {
       await llmChat(
-        talk.map(({ role, content }) => ({ role, content })),
+        talk.map(({ role, content, files }) => ({ role, content, files })),
         role,
         style,
       );
@@ -170,9 +215,72 @@ export default function Chat({
 
   const send = () => {
     const text = draft.trim();
-    if (!text || answering) return;
+    if ((!text && !files.length) || answering || reading) return;
     setDraft("");
-    ask([...lines, { role: "user", content: text }]);
+    setFiles([]);
+    setTooBig(null);
+    setFileError(null);
+    ask([...lines, { role: "user", content: text, files: files.length ? files : undefined }]);
+  };
+
+  /** Сколько памяти модели свободно под документ. Разговор меряем прикидкой по буквам
+   *  (2,7 знака на токен, как в ядре), документы — их точным числом. Четверть памяти
+   *  оставляем на вопрос и ответ: без неё модель прочтёт документ, но ответить не сможет. */
+  const room = (pending: Attachment[]) => {
+    const ctx = llmRef.current?.ctx;
+    if (!ctx) return Infinity;
+    const tokens = (fs?: Attachment[]) => (fs ?? []).reduce((n, f) => n + f.tokens, 0);
+    const used =
+      linesRef.current.reduce((n, l) => n + l.content.length / 2.7 + tokens(l.files), 0) + tokens(pending);
+    return Math.max(0, Math.floor(ctx * 0.75 - used));
+  };
+
+  /** Читает файлы по одному; не поместившийся останавливает очередь и спрашивает, что делать. */
+  const attach = async (paths: string[]) => {
+    if (!paths.length || llmRef.current?.state !== "ready") return;
+    setFileError(null);
+    setTooBig(null);
+    setReading(true);
+    let pending = filesRef.current;
+    try {
+      for (const p of paths) {
+        let a: Attachment;
+        try {
+          a = await attachFile(p);
+        } catch (e) {
+          setFileError(`«${fileName(p)}»: ${String(e)}.`);
+          continue;
+        }
+        const free = room(pending);
+        if (a.tokens > free) {
+          setTooBig({ file: a, room: free });
+          break;
+        }
+        pending = [...pending, a];
+        setFiles(pending);
+      }
+    } finally {
+      setReading(false);
+    }
+  };
+  // Обработчик перетаскивания заведён один раз — зовём через ref свежую версию.
+  const attachRef = useRef(attach);
+  attachRef.current = attach;
+
+  const pickFiles = async () => {
+    const picked = await open({
+      multiple: true,
+      filters: [{ name: "Документы и текст", extensions: DOCUMENT_EXTENSIONS }],
+    });
+    if (picked) attach(Array.isArray(picked) ? picked : [picked]);
+  };
+
+  /** «Приложить только начало»: сколько поместится. */
+  const attachHead = async () => {
+    if (!tooBig) return;
+    const head = await attachTrim(tooBig.file, tooBig.room);
+    setTooBig(null);
+    setFiles([...filesRef.current, head]);
   };
 
   /** «Ответить заново»: убираем последний ответ и спрашиваем то же самое ещё раз. */
@@ -244,7 +352,10 @@ export default function Chat({
         {lines.map((l, i) => (
           <div key={i} className={l.role === "user" ? "line you" : "line bot"}>
             {l.role === "user" ? (
-              <p className="answer">{l.content}</p>
+              <>
+                {l.files?.length ? <Files files={l.files} /> : null}
+                {l.content && <p className="answer">{l.content}</p>}
+              </>
             ) : (
               <Answer text={l.content || (answering && i === lines.length - 1 ? "…" : "")} />
             )}
@@ -285,11 +396,50 @@ export default function Chat({
           <div className="card">{waiting}</div>
         </div>
       ) : (
-        <div className="ask">
+        <div className={over ? "ask over" : "ask"}>
+          {tooBig && (
+            <div className="card notice">
+              {/* Меньше страницы места — резать нечего, остаётся новый разговор. */}
+              {tooBig.room >= 650 ? (
+                <>
+                  <p>
+                    «{tooBig.file.name}» — это {memoryPages(tooBig.file.tokens)}, а в память модели сейчас
+                    поместится {memoryPages(tooBig.room)}. Целиком модель его не прочтёт.
+                  </p>
+                  <div className="actions">
+                    <button onClick={attachHead}>Приложить только начало</button>
+                    <button className="secondary" onClick={() => setTooBig(null)}>
+                      Не прикладывать
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p>
+                    Разговор уже занял почти всю память модели — «{tooBig.file.name}» сюда не поместится.
+                    В новом разговоре места больше.
+                  </p>
+                  <div className="actions">
+                    <button onClick={onNewChat}>Новый разговор</button>
+                    <button className="secondary" onClick={() => setTooBig(null)}>
+                      Не прикладывать
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {files.length > 0 && <Files files={files} onRemove={(i) => setFiles(files.filter((_, j) => j !== i))} />}
+          {reading && <p className="muted small">Читаю файл…</p>}
+          {fileError && <p className="error small">{fileError}</p>}
           <textarea
             rows={3}
             value={draft}
-            placeholder="Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
+            placeholder={
+              files.length
+                ? "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать."
+                : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
+            }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={keys}
           />
@@ -297,10 +447,18 @@ export default function Chat({
             {answering ? (
               <button onClick={() => llmChatStop()}>Остановить</button>
             ) : (
-              <button onClick={send} disabled={!draft.trim()}>
+              <button onClick={send} disabled={(!draft.trim() && !files.length) || reading}>
                 Отправить
               </button>
             )}
+            <button
+              className="secondary"
+              title="Приложить документ: PDF, Word, текст или код. Файл можно и перетащить в окно."
+              disabled={answering || reading}
+              onClick={pickFiles}
+            >
+              📎
+            </button>
             <select
               className="role"
               value={role}

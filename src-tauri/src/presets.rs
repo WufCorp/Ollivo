@@ -92,17 +92,23 @@ pub const STYLES: &[Style] = &[
 /// английский текст как есть, копируя прошлую пару «русский → английский»: переводу
 /// история не нужна, а маленькие модели указание в самом сообщении слушают лучше.
 pub fn prepare(role: &Role, messages: &[Msg]) -> Vec<Msg> {
-    let system = |content: String| Msg { role: "system".into(), content };
+    let system = |content: String| Msg::new("system", content);
     if !role.prompt.contains("{target}") {
         return std::iter::once(system(role.prompt.into())).chain(messages.iter().cloned()).collect();
     }
-    let last = messages.iter().rev().find(|m| m.role == "user").map_or("", |m| m.content.as_str());
+    // Приложенный документ переводчик переводит вместе с вопросом.
+    let last = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map_or(String::new(), |m| crate::attach::for_model(&m.files, &m.content));
+    let last = last.as_str();
     let target = if mostly_cyrillic(last) { "английский" } else { "русский" };
     vec![
         system(role.prompt.replace("{target}", target)),
-        Msg { role: "user".into(), content: format!("Переведи на {target} язык:
+        Msg::new("user", format!("Переведи на {target} язык:
 
-{last}") },
+{last}")),
     ]
 }
 
@@ -157,7 +163,7 @@ mod tests {
     }
 
     fn msg(role: &str, t: &str) -> Msg {
-        Msg { role: role.into(), content: t.into() }
+        Msg::new(role, t.into())
     }
 
     #[test]

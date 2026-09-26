@@ -119,6 +119,21 @@ pub async fn start(
 pub struct Msg {
     pub role: String,
     pub content: String,
+    /// Приложенные документы. Модель их видит перед вопросом (`attach::for_model`),
+    /// а в окне и в истории они лежат отдельно — вопрос не тонет в тексте документа.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<crate::attach::Attachment>,
+}
+
+impl Msg {
+    pub fn new(role: &str, content: String) -> Self {
+        Msg { role: role.into(), content, files: vec![] }
+    }
+
+    /// Реплика в том виде, в каком её ждёт llama-server.
+    fn wire(&self) -> serde_json::Value {
+        serde_json::json!({"role": self.role, "content": crate::attach::for_model(&self.files, &self.content)})
+    }
 }
 
 /// Чем закончился ответ: сколько токенов и как быстро.
@@ -151,7 +166,7 @@ pub async fn chat(
     // идёт уже по новой.
     let all = crate::presets::prepare(role, messages);
     let mut body = serde_json::json!({
-        "messages": all,
+        "messages": all.iter().map(Msg::wire).collect::<Vec<_>>(),
         "temperature": style.temperature,
         "top_p": style.top_p,
         "stream": true,
@@ -217,6 +232,21 @@ pub async fn chat(
         }
     }
     Ok(stats)
+}
+
+/// Сколько токенов займёт текст у этой модели. `None` — движок не ответил,
+/// тогда обходимся прикидкой.
+pub async fn count_tokens(port: u16, text: &str) -> Option<u64> {
+    let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(30)).build().ok()?;
+    let resp = client
+        .post(format!("http://127.0.0.1:{port}/tokenize"))
+        .body(serde_json::json!({"content": text}).to_string())
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&resp.bytes().await.ok()?).ok()?;
+    v["tokens"].as_array().map(|t| t.len() as u64)
 }
 
 /// Вопрос без стриминга — для проверки движка.
@@ -300,7 +330,7 @@ mod tests {
             .await
             .unwrap();
 
-        let msgs = vec![Msg { role: "user".into(), content: "Посчитай вслух от 1 до 20.".into() }];
+        let msgs = vec![Msg::new("user", "Посчитай вслух от 1 до 20.".into())];
         let chunks = std::sync::Mutex::new(Vec::<String>::new());
         let stats = chat(llm.port, &msgs, presets::role(""), presets::style(""), &CancellationToken::new(), |t| {
             chunks.lock().unwrap().push(t.to_string())
@@ -321,7 +351,7 @@ mod tests {
             c.cancel();
         });
         let t = Instant::now();
-        let long = vec![Msg { role: "user".into(), content: "Напиши рассказ на 2000 слов.".into() }];
+        let long = vec![Msg::new("user", "Напиши рассказ на 2000 слов.".into())];
         chat(llm.port, &long, presets::role(""), presets::style(""), &cancel, |_| {}).await.unwrap();
         println!("остановлено за {:.1} с", t.elapsed().as_secs_f64());
         assert!(t.elapsed() < Duration::from_secs(5));
@@ -340,7 +370,7 @@ mod tests {
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-ctx-test"), &CancellationToken::new())
             .await
             .unwrap();
-        let long = vec![Msg { role: "user".into(), content: "слово ".repeat(2000) }];
+        let long = vec![Msg::new("user", "слово ".repeat(2000))];
         let err = chat(llm.port, &long, presets::role(""), presets::style(""), &CancellationToken::new(), |_| {})
             .await
             .err()
@@ -370,7 +400,7 @@ mod tests {
             let port = llm.port;
             async move {
                 let out = std::sync::Mutex::new(String::new());
-                let msgs = vec![Msg { role: "user".into(), content: text.into() }];
+                let msgs = vec![Msg::new("user", text.into())];
                 chat(port, &msgs, presets::role(role), presets::style(style), &CancellationToken::new(), |t| {
                     out.lock().unwrap().push_str(t)
                 })
@@ -392,9 +422,9 @@ mod tests {
         // В разговоре: прошлая пара «русский → английский» не должна сбить направление
         // (так 0.5B повторяла английский как есть, найдено в окне).
         let talk = vec![
-            Msg { role: "user".into(), content: "Доброе утро! Как спалось?".into() },
-            Msg { role: "assistant".into(), content: "Good morning! How did you sleep?".into() },
-            Msg { role: "user".into(), content: "The weather is nice today, let's go for a walk.".into() },
+            Msg::new("user", "Доброе утро! Как спалось?".into()),
+            Msg::new("assistant", "Good morning! How did you sleep?".into()),
+            Msg::new("user", "The weather is nice today, let's go for a walk.".into()),
         ];
         let out = std::sync::Mutex::new(String::new());
         chat(llm.port, &talk, presets::role("translator"), presets::style("precise"), &CancellationToken::new(), |t| {
@@ -457,5 +487,44 @@ mod tests {
         let err = start(&sup, &engine, &cfg, &dir.join("logs"), &cancel).await.err().unwrap();
         assert_eq!(err, CANCELLED);
         assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Документ на настоящей модели: `/tokenize` считает, модель отвечает по тексту PDF.
+    /// `cargo test llm::tests::real_document -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_document() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        let sup = Supervisor::new();
+        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-doc-test"), &CancellationToken::new())
+            .await
+            .unwrap();
+        let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/borsch.pdf");
+        let text = crate::attach::pdf_text_here(&pdf).unwrap();
+        let exact = count_tokens(llm.port, &text).await.unwrap();
+        let guess = crate::attach::estimate_tokens(&text);
+        println!("токенов: {exact}, прикидка по буквам {guess}");
+        assert!(exact > 500 && guess >= exact * 9 / 10, "прикидка не должна сильно занижать");
+
+        let mut q = Msg::new("user", "Сколько штук картофеля нужно по таблице? Ответь одним числом.".into());
+        q.files.push(crate::attach::Attachment {
+            name: "borsch.pdf".into(),
+            kind: "document".into(),
+            tokens: exact,
+            text,
+            trimmed: false,
+        });
+        let out = std::sync::Mutex::new(String::new());
+        chat(llm.port, &[q], presets::role("helper"), presets::style("precise"), &CancellationToken::new(), |t| {
+            out.lock().unwrap().push_str(t)
+        })
+        .await
+        .unwrap();
+        let out = out.into_inner().unwrap();
+        println!("→ {out}");
+        assert!(out.contains('3'), "{out}");
+        llm.handle.stop().await;
     }
 }

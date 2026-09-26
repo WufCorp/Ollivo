@@ -1,3 +1,4 @@
+mod attach;
 mod catalog;
 mod chats;
 mod download;
@@ -931,6 +932,28 @@ async fn llm_chat(
     Ok(())
 }
 
+/// Документ для чата: текст и сколько он займёт в памяти модели. Если модель запущена,
+/// считает она сама (`/tokenize`): прикидка по буквам для английского завышена в полтора раза.
+#[tauri::command]
+async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attachment, String> {
+    let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path))
+        .await
+        .map_err(|e| e.to_string())??;
+    let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    if let Some(port) = port {
+        if let Some(n) = llm::count_tokens(port, &a.text).await {
+            a.tokens = n;
+        }
+    }
+    Ok(a)
+}
+
+/// Только начало документа — то, что поместится в память модели.
+#[tauri::command]
+fn attach_trim(file: attach::Attachment, max_tokens: u64) -> attach::Attachment {
+    attach::trim(file, max_tokens)
+}
+
 /// «Остановить»: обрывает ответ, написанное остаётся.
 #[tauri::command]
 fn llm_chat_stop(core: CoreState<'_>) {
@@ -993,6 +1016,8 @@ async fn update_install(app: AppHandle, core: CoreState<'_>) -> Result<(), Strin
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub use attach::helper_main;
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -1056,6 +1081,8 @@ pub fn run() {
             chats_remove,
             llm_chat,
             llm_chat_stop,
+            attach_file,
+            attach_trim,
             update_check,
             update_install,
         ])
