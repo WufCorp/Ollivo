@@ -798,6 +798,15 @@ fn chats_list(core: CoreState<'_>) -> Vec<chats::Summary> {
     core.chats.list()
 }
 
+/// Поиск по всем разговорам. Читает все файлы — поэтому не в потоке окна.
+#[tauri::command]
+async fn chats_search(core: CoreState<'_>, query: String) -> Result<Vec<chats::Hit>, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || core.chats.search(&query))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Разговор целиком; `None` — такого нет.
 #[tauri::command]
 fn chats_get(core: CoreState<'_>, id: String) -> Option<chats::Chat> {
@@ -966,6 +975,7 @@ pub fn run() {
             llm_start,
             llm_stop,
             chats_list,
+            chats_search,
             chats_get,
             chats_save,
             chats_remove,
