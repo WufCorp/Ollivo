@@ -1115,3 +1115,20 @@ pre.log.report {
 .card .apart {
   margin-top: 22px;
 }
+
+/* Сколько занято: название слева, размер справа. */
+.usage {
+  border-collapse: collapse;
+  margin: 4px 0 12px;
+  min-width: 320px;
+}
+
+.usage td {
+  padding: 3px 0;
+}
+
+.usage td:last-child {
+  text-align: right;
+  padding-left: 24px;
+  font-variant-numeric: tabular-nums;
+}

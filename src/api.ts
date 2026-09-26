@@ -142,6 +142,37 @@ export const settingsReset = () => invoke<SettingsView>("settings_reset");
 
 export const chatsOpenFolder = () => invoke<void>("chats_open_folder");
 
+// --- Папка программы ---
+
+/** Сколько занято в папке программы, байты. */
+export interface StorageUsage {
+  dir: string;
+  models: number;
+  engines: number;
+  /** Недокачанное, архивы движков, временные записи. */
+  cache: number;
+  logs: number;
+  /** Свободно на её диске. */
+  free: number;
+}
+
+export const storageUsage = () => invoke<StorageUsage>("storage_usage");
+
+/** Сколько освободили. */
+export const storageClean = () => invoke<number>("storage_clean");
+
+/** Переносит папку программы в `picked` (или `<picked>\Ollivo`); сразу возвращает, куда.
+ *  Прогресс — `storage://progress`, итог — `storage://moved`, отмена — `taskPause(MOVE_TASK)`. */
+export const storageMove = (picked: string) => invoke<string>("storage_move", { picked });
+
+export const MOVE_TASK = "storage:move";
+
+export const onStorageProgress = (cb: (p: { done: number; total: number }) => void): Promise<UnlistenFn> =>
+  listen<{ done: number; total: number }>("storage://progress", (e) => cb(e.payload));
+
+export const onStorageMoved = (cb: (m: { dir: string | null; error: string | null }) => void): Promise<UnlistenFn> =>
+  listen<{ dir: string | null; error: string | null }>("storage://moved", (e) => cb(e.payload));
+
 /** Секреты: undefined — не менять сохранённый, "" — удалить. */
 export const settingsSave = (settings: Settings, secrets: { proxyPassword?: string; hfToken?: string } = {}) =>
   invoke<void>("settings_save", {

@@ -80,6 +80,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
     a.as_os_str().to_string_lossy().to_lowercase() == b.as_os_str().to_string_lossy().to_lowercase()
 }
 
+/// Путь внутри папки `base` без учёта регистра (как в Windows): `D:\Ollivo\models\a.gguf`
+/// и `d:\ollivo` → `models\a.gguf`. `D:\Ollivo2\…` внутри `D:\Ollivo` не считается.
+pub fn strip_prefix_ci(path: &Path, base: &Path) -> Option<PathBuf> {
+    let mut p = path.components();
+    for b in base.components() {
+        let c = p.next()?;
+        if c.as_os_str().to_string_lossy().to_lowercase() != b.as_os_str().to_string_lossy().to_lowercase() {
+            return None;
+        }
+    }
+    Some(p.as_path().to_path_buf())
+}
+
 /// Итог поиска моделей по папкам.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Report {
@@ -159,6 +172,23 @@ impl Library {
         r
     }
 
+    /// Папку программы перенесли: модели, скачанные в неё, теперь лежат в новой.
+    /// Модели из чужих папок (LM Studio, Ollama) не трогаем. Возвращает, сколько переехало.
+    pub fn rebase(&self, old: &Path, new: &Path) -> Result<usize, String> {
+        let mut entries = self.entries.lock().unwrap();
+        let mut moved = 0;
+        for e in entries.iter_mut() {
+            if let Some(rel) = strip_prefix_ci(&e.path, old) {
+                e.path = new.join(rel);
+                moved += 1;
+            }
+        }
+        let list = entries.clone();
+        drop(entries);
+        self.save(&list).map_err(|e| format!("не записать список моделей: {e}"))?;
+        Ok(moved)
+    }
+
     pub fn remove(&self, path: &Path) -> Result<(), String> {
         let mut entries = self.entries.lock().unwrap();
         entries.retain(|e| !same_file(&e.path, path));
@@ -234,6 +264,25 @@ mod tests {
 
     fn hw() -> Hardware {
         crate::hardware::detect()
+    }
+
+    #[test]
+    fn rebase_moves_only_models_inside() {
+        let base = Path::new(r"D:\Ollivo");
+        assert_eq!(strip_prefix_ci(Path::new(r"d:\ollivo\models\a.gguf"), base), Some(PathBuf::from(r"models\a.gguf")));
+        assert_eq!(strip_prefix_ci(Path::new(r"D:\Ollivo2\a.gguf"), base), None);
+        assert_eq!(strip_prefix_ci(Path::new(r"C:\Users\x\.lmstudio\a.gguf"), base), None);
+
+        let dir = tmp("rebase");
+        let (old, new) = (dir.join("old"), dir.join("new"));
+        let model = old.join("models").join("m.gguf");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        write_gguf(&model);
+        let lib = Library::open(dir.join("models.json"));
+        lib.add(&model, Source::default()).unwrap();
+        assert_eq!(lib.rebase(&old, &new).unwrap(), 1);
+        let moved = Library::open(dir.join("models.json"));
+        assert_eq!(moved.entries.lock().unwrap()[0].path, new.join("models").join("m.gguf"));
     }
 
     #[test]

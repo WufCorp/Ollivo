@@ -10,6 +10,7 @@ import {
 import HfForm from "../components/HfForm";
 import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
+import StorageCard from "../components/StorageCard";
 import { openReport } from "../components/Report";
 
 /** Через сколько минут простоя выгружать модель; 0 — никогда. */
@@ -23,7 +24,6 @@ const UNLOAD: [number, string][] = [
 
 export default function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
-  const [dataDir, setDataDir] = useState("");
   const [hasPassword, setHasPassword] = useState(false);
   const [hasToken, setHasToken] = useState(false);
   // undefined — секрет не трогали, сохранённый остаётся.
@@ -38,7 +38,6 @@ export default function Settings() {
 
   const show = (v: SettingsView) => {
     setSettings(v.settings);
-    setDataDir(v.data_dir);
     setChatsDir(v.chats_dir);
     setHasPassword(v.proxy_has_password);
     setHasToken(v.hf_has_token);
@@ -87,7 +86,7 @@ export default function Settings() {
   return (
     <>
       <h2>Папка программы</h2>
-      <p className="muted">Сюда ставятся движки и скачиваются модели: {dataDir}</p>
+      <StorageCard />
 
       <h2>Сеть</h2>
       <div className="card form">

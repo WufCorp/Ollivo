@@ -88,11 +88,24 @@ pub fn engine_dir(root: &Path, engine: &Engine, build: Build) -> PathBuf {
 pub fn installed(root: &Path, id: &str) -> Vec<Installed> {
     let Ok(dirs) = std::fs::read_dir(root.join("engines").join(id)) else { return vec![] };
     dirs.filter_map(|d| {
-        let json = std::fs::read(d.ok()?.path().join(MARKER)).ok()?;
-        serde_json::from_slice::<Installed>(&json).ok()
+        let here = d.ok()?.path();
+        let json = std::fs::read(here.join(MARKER)).ok()?;
+        serde_json::from_slice::<Installed>(&json).ok().map(|i| i.moved_to(&here))
     })
     .filter(|i| i.exe.exists())
     .collect()
+}
+
+impl Installed {
+    /// Пометка хранит полные пути на момент установки, а папку программы могут
+    /// перенести на другой диск. Пути считаем от того места, где сборка лежит сейчас.
+    fn moved_to(mut self, here: &Path) -> Self {
+        if let Ok(rel) = self.exe.strip_prefix(&self.dir) {
+            self.exe = here.join(rel);
+        }
+        self.dir = here.to_path_buf();
+        self
+    }
 }
 
 pub async fn install(
@@ -337,6 +350,29 @@ fn wanted(only: &[String], name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Папку программы перенесли — движок находится на новом месте.
+    #[test]
+    fn installed_survives_moving_data_dir() {
+        let root = std::env::temp_dir().join(format!("ollivo-moved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("engines").join("llama.cpp").join("b1-vulkan");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin").join("llama-server.exe"), b"").unwrap();
+        let old = Path::new(r"C:\Ollivo\engines\llama.cpp\b1-vulkan");
+        let marker = Installed {
+            id: "llama.cpp".into(),
+            version: "b1".into(),
+            build: Build::Vulkan,
+            dir: old.to_path_buf(),
+            exe: old.join("bin").join("llama-server.exe"),
+        };
+        std::fs::write(dir.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
+        let found = installed(&root, "llama.cpp");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].exe, dir.join("bin").join("llama-server.exe"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
     use crate::manifest::EngineFile;
     use crate::testserver::{serve, sha};
     use std::io::Write;

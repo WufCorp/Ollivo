@@ -2,6 +2,7 @@ mod attach;
 mod media;
 mod vision;
 mod speech;
+mod storage;
 mod catalog;
 mod chats;
 mod download;
@@ -94,6 +95,10 @@ impl Core {
         let mut running = self.running.lock().unwrap();
         if running.contains_key(id) {
             return Err("уже идёт".into());
+        }
+        // Загрузка во время переноса писала бы в старую папку, которую перенос потом удалит.
+        if running.contains_key(MOVE_TASK) {
+            return Err("идёт перенос папки программы — дождитесь, пока он закончится".into());
         }
         let cancel = CancellationToken::new();
         running.insert(id.to_string(), cancel.clone());
@@ -408,6 +413,115 @@ fn download_start(
         emit_finished(&app, "download://finished", Finished::<()> { id, error, kind, result: None });
     });
     Ok(())
+}
+
+/// Перенос папки программы — тоже фоновая задача: так его отменяет `task_pause`,
+/// а новые загрузки на время переноса не начинаются.
+const MOVE_TASK: &str = "storage:move";
+
+/// Свободно на диске, где лежит папка.
+fn free_space(dir: &std::path::Path) -> u64 {
+    hardware::detect_disks()
+        .into_iter()
+        .filter(|d| library::strip_prefix_ci(dir, std::path::Path::new(&d.mount)).is_some())
+        .max_by_key(|d| d.mount.len())
+        .map_or(0, |d| d.free)
+}
+
+#[derive(serde::Serialize)]
+struct StorageView {
+    dir: PathBuf,
+    #[serde(flatten)]
+    usage: storage::Usage,
+}
+
+/// Сколько занято в папке программы. Обход файлов — в стороне от окна.
+#[tauri::command]
+async fn storage_usage(core: CoreState<'_>) -> Result<StorageView, String> {
+    let dir = core.data_dir();
+    tauri::async_runtime::spawn_blocking(move || StorageView { usage: storage::usage(&dir, free_space(&dir)), dir })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// «Очистить кэш и недокачанное». Во время загрузок — нельзя: идущая пишет в тот самый `.part`.
+#[tauri::command]
+async fn storage_clean(core: CoreState<'_>) -> Result<u64, String> {
+    if !core.running.lock().unwrap().is_empty() {
+        return Err("идут загрузки — дождитесь их или поставьте на паузу".into());
+    }
+    let dir = core.data_dir();
+    tauri::async_runtime::spawn_blocking(move || storage::clean(&dir)).await.map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize, Clone)]
+struct Moved {
+    /// Новая папка; `None` — не перенесли.
+    dir: Option<PathBuf>,
+    error: Option<String>,
+}
+
+/// Переносит папку программы в `picked` (или в `<picked>\Ollivo`). Модель останавливается:
+/// её файл открыт и переносу мешает. Прогресс — `storage://progress`, итог — `storage://moved`.
+/// Отмена — `task_pause("storage:move")`.
+#[tauri::command]
+async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> Result<PathBuf, String> {
+    let old = core.data_dir();
+    let new = storage::target_dir(&picked);
+    storage::check_target(&old, &new)?;
+    if !core.running.lock().unwrap().is_empty() {
+        return Err("идут загрузки — дождитесь их или поставьте на паузу".into());
+    }
+    let need = {
+        let (old, new) = (old.clone(), new.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            (storage::usage(&old, 0).total(), free_space(&new), storage::same_volume(&old, &new))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    // На другом диске нужно место под всё сразу: старое удаляется только после копирования.
+    // Гигабайт запаса — чтобы не забить диск Windows до отказа.
+    let (size, free, same) = need;
+    if !same && size + (1 << 30) > free {
+        return Err(format!(
+            "на новом диске не хватит места: нужно {}, свободно {}",
+            probe::fmt_bytes(size + (1 << 30)),
+            probe::fmt_bytes(free)
+        ));
+    }
+    let cancel = core.start(MOVE_TASK)?;
+    core.llm_loading.lock().unwrap().cancel();
+    if let Some(l) = core.llm.lock().await.take() {
+        l.handle.stop().await;
+    }
+    *core.llm_asleep.lock().unwrap() = None;
+    emit_llm(&app, LlmState::of("stopped"));
+    let core = core.inner().clone();
+    let target = new.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let progress = |p: storage::Progress| {
+            let _ = app.emit("storage://progress", p);
+        };
+        let res = storage::move_parts(&old, &new, &cancel, &progress).and_then(|()| {
+            core.library.rebase(&old, &new)?;
+            let mut s = core.settings.get();
+            s.data_dir = Some(new.clone());
+            core.settings.set(s).map_err(|e| format!("не записать настройки: {e}"))
+        });
+        core.finish(MOVE_TASK);
+        let moved = match res {
+            Ok(()) => Moved { dir: Some(new), error: None },
+            Err(e) => {
+                if e != "отменено" {
+                    core.note("Перенос папки программы", &e, &e);
+                }
+                Moved { dir: None, error: Some(e) }
+            }
+        };
+        let _ = app.emit("storage://moved", moved);
+    });
+    Ok(target)
 }
 
 /// Какие фоновые задачи идут прямо сейчас. Нужно окну, когда экран открыли заново:
@@ -1718,6 +1832,9 @@ pub fn run() {
             settings_save,
             settings_reset,
             chats_open_folder,
+            storage_usage,
+            storage_clean,
+            storage_move,
             proxy_test,
             hf_check_token,
             setup_check,

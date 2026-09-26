@@ -572,7 +572,7 @@ fn dominant_dtype(s: &st::Safetensors) -> String {
 const MIB: u64 = 1 << 20;
 const GIB: u64 = 1 << 30;
 
-fn fmt_bytes(b: u64) -> String {
+pub fn fmt_bytes(b: u64) -> String {
     let gb = b as f64 / GIB as f64;
     if gb >= 1.0 {
         format!("{gb:.1} ГБ").replace('.', ",")
