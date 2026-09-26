@@ -741,10 +741,40 @@ label.check.filter {
 .chat-row button.tab {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 13px;
+}
+
+.chat-title,
+.chat-snippet {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Кусок реплики под названием — только когда что-то ищут. */
+.chat-snippet {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.chats mark {
+  background: rgba(250, 200, 60, 0.45);
+  color: inherit;
+  border-radius: 2px;
+}
+
+input.chat-search {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.chat-none {
+  font-size: 13px;
+  padding: 4px 10px;
+  margin: 0;
 }
 
 .chat-row.active {

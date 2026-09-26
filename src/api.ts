@@ -473,6 +473,15 @@ export interface Chat {
 
 export const chatsList = () => invoke<ChatSummary[]>("chats_list");
 
+/** Найденный разговор: строка списка и кусок реплики вокруг совпадения. */
+export interface ChatHit extends ChatSummary {
+  /** `null` — слова нашлись только в названии. */
+  snippet: string | null;
+}
+
+/** Разговоры, где есть все слова запроса; регистр и «ё/е» не важны. */
+export const chatsSearch = (query: string) => invoke<ChatHit[]>("chats_search", { query });
+
 export const chatsGet = (id: string) => invoke<Chat | null>("chats_get", { id });
 
 /** Без `id` заводит новый разговор и возвращает его с номером и названием. */
