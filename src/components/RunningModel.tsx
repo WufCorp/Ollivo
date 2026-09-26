@@ -4,12 +4,17 @@ import ProblemCard from "./ProblemCard";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
-/** Что досталось видеокарте: 999 — «сколько влезет», выбор оставлен движку. */
-const whoComputes = (layers: number | null) => {
-  if (layers === null) return null;
-  if (layers === 0) return "Считает процессор — ответы будут медленными";
-  if (layers >= 900) return "Считает видеокарта";
-  return `Видеокарта считает ${layers} слоёв, остальное — процессор`;
+/**
+ * Что досталось видеокарте. 999 — «сколько влезет», выбор оставлен движку;
+ * больше, чем слоёв у модели, — тоже всё (ядро добавляет выходной слой).
+ */
+const whoComputes = (onGpu: number | null, total: number | null) => {
+  if (onGpu === null) return null;
+  if (onGpu === 0) return "Считает процессор — ответы будут медленными";
+  if (onGpu >= 900 || (total !== null && onGpu >= total)) return "Считает видеокарта";
+  return total !== null
+    ? `Видеокарта считает ${onGpu} слоёв из ${total}, остальное — процессор`
+    : `Видеокарта считает ${onGpu} слоёв, остальное — процессор`;
 };
 
 /** Что сейчас загружено в видеокарту: состояние и «Остановить». Разговор — на вкладке «Чат». */
@@ -47,7 +52,7 @@ export default function RunningModel({
             {state.started_in?.toFixed(1).replace(".", ",")} с
           </p>
           <p className="muted small">
-            {whoComputes(state.gpu_layers)}. Память разговора — до {state.ctx} токенов.
+            {whoComputes(state.gpu_layers, state.layers)}. Память разговора — до {state.ctx} токенов.
           </p>
         </>
       )}

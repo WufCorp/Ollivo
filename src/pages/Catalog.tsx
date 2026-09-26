@@ -33,6 +33,8 @@ const NOTHING: Task = { progress: null, error: null, done: null };
 /** Задачи загрузки зовутся `model:<репозиторий>/<файл>` — так их шлёт ядро. */
 const taskId = (repo: string, name: string) => `model:${repo}/${name}`;
 
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function params(n: number): string {
   return `${(n / 1e9).toFixed(1).replace(".", ",").replace(",0", "")} млрд параметров`;
 }
@@ -60,10 +62,12 @@ function Variant({
     <div className="variant">
       <span className="light">{LIGHTS[v.verdict.light]}</span>
       <div className="variant-text">
+        {/* Крупно — смысл сжатия словами; код («Q4_K_M») — мелко, для тех, кто его знает,
+            и чтобы различить варианты с одинаковым описанием. */}
         <p>
-          <b>{v.quant}</b> · {formatBytes(v.size)} — {v.verdict.headline}
+          <b>{capitalize(v.quality)}</b> · {formatBytes(v.size)} — {v.verdict.headline}
         </p>
-        <p className="muted small">{v.quality}</p>
+        <p className="muted small">вариант {v.quant}</p>
         {v.verdict.details.map((d) => (
           <p key={d} className="muted small">
             {d}

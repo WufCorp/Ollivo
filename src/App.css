@@ -30,9 +30,10 @@ body {
   height: 100%;
 }
 
+/* Шире, чем нужно меню: под ним список разговоров с кусками реплик из поиска. */
 .side {
   flex: none;
-  width: 190px;
+  width: 240px;
   box-sizing: border-box;
   padding: 22px 12px;
   border-right: 1px solid rgba(128, 128, 128, 0.2);
@@ -498,7 +499,8 @@ button.link {
   justify-content: center;
 }
 
-.card.model {
+.card.model,
+.dropzone ~ .card {
   margin-top: 14px;
 }
 
@@ -708,8 +710,18 @@ label.check.filter {
   resize: vertical;
 }
 
+/* Отправить, роль, манера и имя модели: на узком окне переносятся, а не обрезаются. */
 .ask .actions {
   margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.ask .model-name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .grow-right {
@@ -804,6 +816,7 @@ select.role {
 
 /* Переключатель в три положения: слева точнее, справа креативнее. */
 .seg {
+  flex: none;
   display: inline-flex;
   border: 1px solid rgba(128, 128, 128, 0.35);
   border-radius: 8px;

@@ -49,8 +49,9 @@ pub struct Hit {
     pub snippet: Option<String>,
 }
 
-/// Сколько символов показать вокруг найденного.
-const SNIPPET_BEFORE: usize = 30;
+/// Сколько символов показать вокруг найденного. До совпадения — немного:
+/// в боковой панели видно символов 30, и слово не должно уйти за «…».
+const SNIPPET_BEFORE: usize = 12;
 const SNIPPET_AFTER: usize = 90;
 
 fn now() -> u64 {

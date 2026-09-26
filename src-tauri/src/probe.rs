@@ -655,11 +655,18 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
         let mut v = verdict(Light::Green, "поместится в видеокарту целиком");
         v.gpu_layers = Some(d.layers + 1);
         v.ctx = Some(want_ctx);
+        // Запускаем с `want_ctx`, а не с максимумом: так меньше памяти и быстрее ответ
+        // на длинный вопрос. Пишем оба числа — иначе после запуска «до 8192» выглядит
+        // как обман после обещанных «до 32768» (найдено в окне).
+        let memory = if max_ctx > want_ctx {
+            format!("память разговора {want_ctx} токенов, можно до {max_ctx}")
+        } else {
+            format!("память разговора {want_ctx} токенов")
+        };
         v.details.push(format!(
-            "занято будет ~{} из {} свободных; память разговора до {} токенов",
+            "занято будет ~{} из {} свободных; {memory}",
             fmt_bytes(full(want_ctx)),
-            fmt_bytes(vram_free),
-            max_ctx
+            fmt_bytes(vram_free)
         ));
         if let Some(tps) = speed(weights, 0, hw) {
             v.details.push(format!("скорость примерно {tps:.0} токенов/с"));

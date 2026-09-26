@@ -7,17 +7,19 @@ import { openUrl } from "@tauri-apps/plugin-opener";
  */
 type Kind = "free" | "terms" | "personal" | "unknown";
 
-const FREE = /^(apache-2\.0|mit|bsd(-\d-clause)?|cc0-1\.0|cc-by-4\.0|cc-by-sa-4\.0|unlicense|(l|a)?gpl(-\d\.\d)?)$/;
+// Коды HF (`apache-2.0`) и полные названия из заголовков файлов
+// («CreativeML Open RAIL++-M License») приводим к одному виду: строчные, пробелы → дефис.
+// «nc» (non-commercial) проверяем первым: `cc-by-nc-4.0` начинается как свободная `cc-by`.
+const PERSONAL = /(^|-)cc-by-nc|non-?commercial|research/;
+const FREE = /^(apache|mit(-license)?$|bsd|cc0|cc-by-|unlicense|(l|a)?gpl)/;
 // Можно для работы, но автор ставит условия: для кого, для чего, сколько пользователей.
-const TERMS = /^(llama\d(\.\d)?|gemma|(creativeml-|bigscience-)?openrail(\+\+|-m)?|deepseek)$/;
-// «nc» — non-commercial: зарабатывать нельзя.
-const PERSONAL = /^cc-by-nc(-sa|-nd)?-\d\.\d$/;
+const TERMS = /llama|gemma|rail|deepseek/;
 
 const NAMES: Record<string, string> = {
   "apache-2.0": "Apache 2.0",
   mit: "MIT",
   gemma: "Gemma",
-  other: "своя",
+  other: "особая",
 };
 
 const SAYS: Record<Kind, string> = {
@@ -28,10 +30,10 @@ const SAYS: Record<Kind, string> = {
 };
 
 export function licenseKind(code: string): Kind {
-  const c = code.toLowerCase();
+  const c = code.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  if (PERSONAL.test(c)) return "personal";
   if (FREE.test(c)) return "free";
   if (TERMS.test(c)) return "terms";
-  if (PERSONAL.test(c)) return "personal";
   return "unknown";
 }
 

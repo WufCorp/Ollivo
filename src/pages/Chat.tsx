@@ -101,7 +101,10 @@ export default function Chat({
 
   // Открыли другой разговор в меню (или начали новый).
   useEffect(() => {
-    if (chatId === savedId.current) return;
+    // Номер пришёл из нашего же сохранения — на экране уже то, что надо.
+    // У нового разговора номера нет: `null === null` не повод оставить старую переписку.
+    if (chatId !== null && chatId === savedId.current) return;
+    savedId.current = null;
     if (!chatId) {
       setLines([]);
       setTitle("");
@@ -196,33 +199,33 @@ export default function Chat({
 
   if (!llm) return null;
 
-  if (llm.state === "crashed" && llm.problem) {
-    return (
+  // Модель не готова: вместо поля ввода — что с ней и что делать.
+  // Переписку при этом показываем: старый разговор можно прочитать и без модели.
+  const waiting =
+    llm.state === "ready" ? null : llm.state === "crashed" && llm.problem ? (
+      <ProblemCard problem={llm.problem} on={{ ...crashActions(llm, onGo), models: onGoToModels }} />
+    ) : (
       <>
-        <h2>Чат</h2>
-        <div className="card">
-          <ProblemCard problem={llm.problem} on={{ ...crashActions(llm, onGo), models: onGoToModels }} />
-        </div>
+        <p>
+          {llm.state === "starting"
+            ? `Загружаю ${fileName(llm.model ?? "")} в видеокарту — это займёт немного времени.`
+            : lines.length
+              ? "Чтобы продолжить разговор, запустите модель."
+              : "Чтобы начать разговор, выберите модель и запустите её."}
+        </p>
+        {llm.state !== "starting" && (
+          <div className="actions">
+            <button onClick={onGoToModels}>К моделям</button>
+          </div>
+        )}
       </>
     );
-  }
 
-  if (llm.state !== "ready") {
+  if (waiting && lines.length === 0) {
     return (
       <>
         <h2>Чат</h2>
-        <div className="card">
-          <p>
-            {llm.state === "starting"
-              ? `Загружаю ${fileName(llm.model ?? "")} в видеокарту — это займёт немного времени.`
-              : "Чтобы начать разговор, выберите модель и запустите её."}
-          </p>
-          {llm.state !== "starting" && (
-            <div className="actions">
-              <button onClick={onGoToModels}>К моделям</button>
-            </div>
-          )}
-        </div>
+        <div className="card">{waiting}</div>
       </>
     );
   }
@@ -261,7 +264,7 @@ export default function Chat({
               </p>
             )}
             {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
-            {l.role === "assistant" && !answering && i === lines.length - 1 && l.content.trim() && (
+            {l.role === "assistant" && !answering && !waiting && i === lines.length - 1 && l.content.trim() && (
               <div className="after">
                 <button className="link" onClick={() => copyText(l.content)}>
                   Копировать
@@ -276,53 +279,61 @@ export default function Chat({
         <div ref={bottom} />
       </div>
 
-      <div className="ask">
-        <textarea
-          rows={3}
-          value={draft}
-          placeholder="Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={keys}
-        />
-        <div className="actions">
-          {answering ? (
-            <button onClick={() => llmChatStop()}>Остановить</button>
-          ) : (
-            <button onClick={send} disabled={!draft.trim()}>
-              Отправить
-            </button>
-          )}
-          <select
-            className="role"
-            value={role}
-            title={roleNow?.hint}
-            disabled={answering}
-            onChange={(e) => pickRole(e.target.value)}
-          >
-            {roles.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-          <div className="seg" role="radiogroup" aria-label="Как отвечать">
-            {styles.map((s) => (
-              <button
-                key={s.id}
-                role="radio"
-                aria-checked={s.id === style}
-                className={s.id === style ? "active" : ""}
-                title={s.hint}
-                disabled={answering}
-                onClick={() => setStyle(s.id)}
-              >
-                {s.name}
-              </button>
-            ))}
-          </div>
-          <span className="muted small grow-right">{fileName(llm.model ?? "")}</span>
+      {waiting ? (
+        <div className="ask">
+          <div className="card">{waiting}</div>
         </div>
-      </div>
+      ) : (
+        <div className="ask">
+          <textarea
+            rows={3}
+            value={draft}
+            placeholder="Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={keys}
+          />
+          <div className="actions">
+            {answering ? (
+              <button onClick={() => llmChatStop()}>Остановить</button>
+            ) : (
+              <button onClick={send} disabled={!draft.trim()}>
+                Отправить
+              </button>
+            )}
+            <select
+              className="role"
+              value={role}
+              title={roleNow?.hint}
+              disabled={answering}
+              onChange={(e) => pickRole(e.target.value)}
+            >
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+            <div className="seg" role="radiogroup" aria-label="Как отвечать">
+              {styles.map((s) => (
+                <button
+                  key={s.id}
+                  role="radio"
+                  aria-checked={s.id === style}
+                  className={s.id === style ? "active" : ""}
+                  title={s.hint}
+                  disabled={answering}
+                  onClick={() => setStyle(s.id)}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+            <span className="muted small grow-right model-name" title={llm.model ?? ""}>
+              {fileName(llm.model ?? "")}
+            </span>
+          </div>
+        </div>
+      )}
     </>
   );
 }
