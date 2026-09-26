@@ -25,7 +25,22 @@ pub struct Entry {
     /// Понятное имя, если по имени файла не разобрать (у Ollama файлы — по хешу).
     #[serde(default)]
     pub title: Option<String>,
+    /// Откуда скачали (`автор/репозиторий` на HF) — для ссылки на условия модели.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Лицензия со страницы модели (`apache-2.0`, `other`…). В заголовке файла её
+    /// часто нет, а на HF она есть почти всегда — поэтому запоминаем при скачивании.
+    #[serde(default)]
+    pub license: Option<String>,
     pub info: ModelInfo,
+}
+
+/// Что известно о файле кроме него самого: имя из поиска, страница на HF, лицензия.
+#[derive(Debug, Clone, Default)]
+pub struct Source {
+    pub title: Option<String>,
+    pub repo: Option<String>,
+    pub license: Option<String>,
 }
 
 /// Модель для окна: запись плюс всё, что считается на лету.
@@ -102,15 +117,18 @@ impl Library {
 
     /// Добавляет файл: читает заголовок и запоминает. Уже добавленный — обновляет.
     /// Ошибка — только если файл не открылся или формат не наш.
-    pub fn add(&self, path: &Path, title: Option<String>) -> Result<Entry, String> {
+    pub fn add(&self, path: &Path, src: Source) -> Result<Entry, String> {
         let (size, mtime) = stat(path).ok_or_else(|| format!("файл не найден: {}", path.display()))?;
         let info = probe::probe(path).map_err(|e| format!("{e:#}"))?;
         let mut entries = self.entries.lock().unwrap();
         let old = entries.iter().find(|e| same_file(&e.path, path));
         let added = old.map_or_else(now, |e| e.added);
-        // Имя, данное при поиске, не теряем, если файл добавляют ещё раз вручную.
-        let title = title.or_else(|| old.and_then(|e| e.title.clone()));
-        let entry = Entry { path: path.to_path_buf(), size, mtime, added, title, info };
+        // Имя, страницу и лицензию, известные с прошлого раза, не теряем,
+        // если файл добавляют ещё раз вручную.
+        let title = src.title.or_else(|| old.and_then(|e| e.title.clone()));
+        let repo = src.repo.or_else(|| old.and_then(|e| e.repo.clone()));
+        let license = src.license.or_else(|| old.and_then(|e| e.license.clone()));
+        let entry = Entry { path: path.to_path_buf(), size, mtime, added, title, repo, license, info };
         entries.retain(|e| !same_file(&e.path, path));
         entries.push(entry.clone());
         let list = entries.clone();
@@ -132,7 +150,7 @@ impl Library {
                 .any(|e| same_file(&e.path, &f.path) && stat(&f.path) == Some((e.size, e.mtime)));
             if known {
                 r.already += 1;
-            } else if self.add(&f.path, f.title).is_ok() {
+            } else if self.add(&f.path, Source { title: f.title, ..Source::default() }).is_ok() {
                 r.added += 1;
             } else {
                 r.skipped += 1;
@@ -224,9 +242,9 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model, None).unwrap();
+        lib.add(&model, Source::default()).unwrap();
         // Повторное добавление не плодит дубли.
-        lib.add(&model, None).unwrap();
+        lib.add(&model, Source::default()).unwrap();
         let list = lib.list(&hw());
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].file, "model.gguf");
@@ -241,6 +259,21 @@ mod tests {
         assert!(Library::open(dir.join("models.json")).list(&hw()).is_empty());
     }
 
+    /// Лицензия из каталога не теряется, когда тот же файл добавляют руками.
+    #[test]
+    fn license_from_catalog_survives_manual_add() {
+        let dir = tmp("license");
+        let model = dir.join("model.gguf");
+        write_gguf(&model);
+        let lib = Library::open(dir.join("models.json"));
+        let src = Source { title: None, repo: Some("unsloth/X-GGUF".into()), license: Some("apache-2.0".into()) };
+        lib.add(&model, src).unwrap();
+        lib.add(&model, Source::default()).unwrap();
+        let m = &Library::open(dir.join("models.json")).list(&hw())[0];
+        assert_eq!(m.entry.license.as_deref(), Some("apache-2.0"));
+        assert_eq!(m.entry.repo.as_deref(), Some("unsloth/X-GGUF"));
+    }
+
     /// Путь в другом регистре — тот же файл (Windows).
     #[test]
     fn same_path_other_case() {
@@ -248,8 +281,8 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model, None).unwrap();
-        lib.add(&dir.join("MODEL.GGUF"), None).unwrap();
+        lib.add(&model, Source::default()).unwrap();
+        lib.add(&dir.join("MODEL.GGUF"), Source::default()).unwrap();
         assert_eq!(lib.list(&hw()).len(), 1);
     }
 
@@ -259,7 +292,7 @@ mod tests {
         let model = dir.join("model.gguf");
         write_gguf(&model);
         let lib = Library::open(dir.join("models.json"));
-        lib.add(&model, None).unwrap();
+        lib.add(&model, Source::default()).unwrap();
         std::fs::remove_file(&model).unwrap();
         let list = lib.list(&hw());
         assert_eq!(list.len(), 1);
@@ -273,7 +306,7 @@ mod tests {
         let junk = dir.join("readme.txt");
         std::fs::write(&junk, "не модель").unwrap();
         let lib = Library::open(dir.join("models.json"));
-        assert!(lib.add(&junk, None).is_err());
+        assert!(lib.add(&junk, Source::default()).is_err());
         assert!(lib.list(&hw()).is_empty());
     }
 }
