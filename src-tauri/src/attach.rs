@@ -26,7 +26,7 @@ pub const IMAGE_TOKENS: u64 = 1100;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Attachment {
     pub name: String,
-    /// Пока только `document`; дальше — `image`.
+    /// `document` или `image`; расшифровка записи — `audio`.
     pub kind: String,
     /// Текст документа — ровно то, что получит модель.
     #[serde(default)]
@@ -68,10 +68,13 @@ pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
             return Err("старый формат Word — откройте файл в Word и сохраните как DOCX или PDF".into())
         }
         "xls" | "xlsx" | "ods" => return Err("таблицы пока не читаю — сохраните таблицу как CSV".into()),
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" => return store_image(path, name, &ext, images, meta.len()),
-        // Движок открывает картинки через stb_image, а он этих форматов не знает.
-        "webp" | "heic" | "heif" | "avif" | "tif" | "tiff" => {
-            return Err("такие картинки модель не открывает — сохраните их как JPG или PNG".into())
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "tif" | "tiff" => {
+            return store_image(path, name, images, meta.len())
+        }
+        // Внутри HEIC — кадр видео HEVC, в AVIF — AV1: чистых разборщиков на Rust нет,
+        // а кодеки Windows для них ставятся отдельно из Microsoft Store.
+        "heic" | "heif" | "avif" => {
+            return Err("такие картинки пока не открываю — сохраните их как JPG или PNG".into())
         }
         // wav, mp3, ogg, flac расшифровывает `speech.rs` — сюда они не доходят.
         "m4a" | "aac" | "opus" | "wma" | "amr" | "mp4" | "webm" | "mkv" | "avi" | "mov" => {
@@ -98,27 +101,34 @@ pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
 }
 
 /// Копия картинки под именем по её содержимому: одну и ту же картинку в десяти разговорах
-/// храним один раз.
-fn store_image(path: &Path, name: String, ext: &str, images: &Path, size: u64) -> Result<Attachment, String> {
+/// храним один раз. Движок открывает картинки через stb_image: JPG, PNG, GIF, BMP он знает,
+/// WebP и TIFF — нет, их перекодируем сами.
+fn store_image(path: &Path, name: String, images: &Path, size: u64) -> Result<Attachment, String> {
     use sha2::{Digest, Sha256};
     if size > MAX_IMAGE {
         return Err("картинка больше 20 МБ — уменьшите её".into());
     }
     let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
-    let real = bytes.starts_with(&[0xFF, 0xD8, 0xFF])
-        || bytes.starts_with(b"\x89PNG")
-        || bytes.starts_with(b"GIF8")
-        || bytes.starts_with(b"BM");
-    if !real {
-        return Err("файл называется картинкой, но внутри не картинка".into());
-    }
+    // По первым байтам, а не по имени: бывает PNG, переименованный в .jpg.
+    let format = sniff(&bytes).ok_or("файл называется картинкой, но внутри не картинка")?;
     let hash = hex::encode(Sha256::digest(&bytes));
-    let ext = if ext == "jpeg" { "jpg" } else { ext };
-    let dest = images.join(format!("{}.{ext}", &hash[..16]));
-    if !dest.exists() {
-        std::fs::create_dir_all(images).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
-        std::fs::write(&dest, &bytes).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
-    }
+    let stem = &hash[..16];
+    // Уже прикладывали: перекодированная лежит под хешем исходного файла.
+    let ready = ["jpg", "png", "gif", "bmp"].iter().map(|e| images.join(format!("{stem}.{e}"))).find(|p| p.exists());
+    let dest = match ready {
+        Some(p) => p,
+        None => {
+            let (bytes, ext) = match format {
+                "webp" | "tiff" => convert(&bytes)?,
+                "jpg" => upright_jpeg(&bytes).unwrap_or((bytes, "jpg")),
+                other => (bytes, other),
+            };
+            let dest = images.join(format!("{stem}.{ext}"));
+            std::fs::create_dir_all(images).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
+            std::fs::write(&dest, &bytes).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
+            dest
+        }
+    };
     Ok(Attachment {
         name,
         kind: "image".into(),
@@ -127,6 +137,72 @@ fn store_image(path: &Path, name: String, ext: &str, images: &Path, size: u64) -
         trimmed: false,
         path: Some(dest),
     })
+}
+
+/// Что за картинка по первым байтам; `None` — не картинка или формат, которого мы не знаем.
+fn sniff(bytes: &[u8]) -> Option<&'static str> {
+    Some(match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => "jpg",
+        [0x89, b'P', b'N', b'G', ..] => "png",
+        [b'G', b'I', b'F', b'8', ..] => "gif",
+        [b'B', b'M', ..] => "bmp",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
+        [b'I', b'I', b'*', 0, ..] | [b'M', b'M', 0, b'*', ..] => "tiff",
+        _ => return None,
+    })
+}
+
+/// Качество JPG при перекодировании: мелкий текст на снимке экрана ещё читается,
+/// а размер в разы меньше PNG.
+const JPEG_QUALITY: u8 = 92;
+
+/// Картинка, которую движок не откроет, → JPG или PNG. С прозрачностью — PNG, иначе
+/// JPG: фото с телефона в PNG весит 15–20 МБ, а в разговоре оно уходит движку
+/// с каждым вопросом заново.
+fn convert(bytes: &[u8]) -> Result<(Vec<u8>, &'static str), String> {
+    let img = decode_upright(bytes)?;
+    let transparent = img.color().has_alpha() && img.to_rgba8().pixels().any(|p| p.0[3] < 255);
+    let mut out = std::io::Cursor::new(Vec::new());
+    let ext = if transparent {
+        img.write_to(&mut out, image::ImageFormat::Png).map(|_| "png")
+    } else {
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
+            .encode_image(&img.to_rgb8())
+            .map(|_| "jpg")
+    }
+    .map_err(|e| format!("не удалось перекодировать картинку: {e}"))?;
+    Ok((out.into_inner(), ext))
+}
+
+/// Картинка с учётом поворота из EXIF. Телефон пишет кадр как держали камеру и помечает
+/// «повернуть на 90°»; stb_image пометку не читает, и модель увидела бы фото на боку —
+/// а надписи на боку она читает плохо.
+fn decode_upright(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    use image::ImageDecoder;
+    let broken = |e: image::ImageError| match e {
+        image::ImageError::Limits(_) => "картинка слишком большая — уменьшите её".to_string(),
+        _ => "картинка повреждена — не удалось её открыть".to_string(),
+    };
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| "картинка повреждена — не удалось её открыть".to_string())?
+        .into_decoder()
+        .map_err(broken)?;
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = image::DynamicImage::from_decoder(decoder).map_err(broken)?;
+    img.apply_orientation(orientation);
+    Ok(img)
+}
+
+/// JPG с пометкой о повороте → повёрнутый JPG; `None` — поворачивать не нужно
+/// (или не вышло — тогда пусть уходит как есть).
+fn upright_jpeg(bytes: &[u8]) -> Option<(Vec<u8>, &'static str)> {
+    use image::ImageDecoder;
+    let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    if decoder.orientation().ok()? == image::metadata::Orientation::NoTransforms {
+        return None;
+    }
+    convert(bytes).ok()
 }
 
 /// Картинка как `data:`-адрес — так её принимает движок и показывает окно.
@@ -607,8 +683,66 @@ mod tests {
         let fake = tmp("fake.jpg");
         std::fs::write(&fake, b"not an image").unwrap();
         assert!(read(&fake, &images).unwrap_err().contains("не картинка"));
-        let webp = tmp("pic.webp");
-        std::fs::write(&webp, b"RIFF").unwrap();
-        assert!(read(&webp, &images).unwrap_err().contains("JPG"));
+        let heic = tmp("pic.heic");
+        std::fs::write(&heic, b"....ftypheic").unwrap();
+        assert!(read(&heic, &images).unwrap_err().contains("JPG"));
+    }
+
+    fn encoded(img: &image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, format).unwrap();
+        out.into_inner()
+    }
+
+    fn stored(name: &str, bytes: &[u8]) -> image::DynamicImage {
+        let p = tmp(name);
+        std::fs::write(&p, bytes).unwrap();
+        let a = read(&p, &tmp("conv")).unwrap();
+        assert_eq!(a.name, name);
+        let path = a.path.unwrap();
+        assert!(matches!(sniff(&std::fs::read(&path).unwrap()), Some("jpg" | "png")), "{path:?}");
+        image::open(&path).unwrap()
+    }
+
+    /// WebP и TIFF движок не открывает — они перекодируются; прозрачность сохраняется.
+    #[test]
+    fn webp_and_tiff_are_converted() {
+        let photo = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(64, 48, |x, y| {
+            image::Rgb([x as u8 * 4, y as u8 * 5, 90])
+        }));
+        let mut logo = image::RgbaImage::from_pixel(32, 32, image::Rgba([200, 30, 30, 255]));
+        logo.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
+        let logo = image::DynamicImage::ImageRgba8(logo);
+
+        let a = stored("фото.webp", &encoded(&photo, image::ImageFormat::WebP));
+        assert_eq!((a.width(), a.height(), a.color().has_alpha()), (64, 48, false));
+        let b = stored("лого.webp", &encoded(&logo, image::ImageFormat::WebP));
+        assert_eq!((b.width(), b.to_rgba8().get_pixel(0, 0).0[3]), (32, 0));
+        let c = stored("скан.tiff", &encoded(&photo, image::ImageFormat::Tiff));
+        assert_eq!((c.width(), c.height()), (64, 48));
+        // Цвета после JPG — почти те же.
+        let (was, now) = (photo.to_rgb8().get_pixel(40, 30).0, c.to_rgb8().get_pixel(40, 30).0);
+        assert!(was.iter().zip(now).all(|(a, b)| a.abs_diff(b) < 12), "{was:?} {now:?}");
+
+        let broken = tmp("битая.webp");
+        std::fs::write(&broken, b"RIFF\0\0\0\0WEBPVP8 garbage").unwrap();
+        assert!(read(&broken, &tmp("conv")).unwrap_err().contains("повреждена"));
+    }
+
+    /// Фото с телефона, снятое «портретом»: кадр 40×20 и пометка EXIF «повернуть на 90°».
+    #[test]
+    fn phone_photo_is_turned_upright() {
+        let wide = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(40, 20, image::Rgb([10, 120, 200])));
+        let jpg = encoded(&wide, image::ImageFormat::Jpeg);
+        // APP1 с EXIF: один тег Orientation (0x0112) = 6, сразу после начала файла.
+        let exif: &[u8] = b"Exif\0\0MM\0*\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0";
+        let len = (exif.len() + 2) as u16;
+        let rotated = [&jpg[..2], &[0xFF, 0xE1], &len.to_be_bytes(), exif, &jpg[2..]].concat();
+        let img = stored("портрет.jpg", &rotated);
+        assert_eq!((img.width(), img.height()), (20, 40));
+        // Без пометки — файл уходит как есть, байт в байт.
+        let p = tmp("ровно.jpg");
+        std::fs::write(&p, &jpg).unwrap();
+        assert_eq!(std::fs::read(read(&p, &tmp("conv")).unwrap().path.unwrap()).unwrap(), jpg);
     }
 }

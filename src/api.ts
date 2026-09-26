@@ -599,7 +599,7 @@ export const attachTrim = (file: Attachment, maxTokens: number) =>
 
 /** Что предлагаем в окне выбора файла; перетащить можно и любой другой текстовый файл. */
 export const ATTACH_EXTENSIONS = [
-  "jpg", "jpeg", "png", "gif", "bmp",
+  "jpg", "jpeg", "png", "gif", "bmp", "webp", "tif", "tiff",
   "mp3", "wav", "ogg", "flac",
   "pdf", "docx", "odt", "txt", "md", "csv", "json", "xml", "html", "log",
   "py", "js", "ts", "tsx", "rs", "c", "cpp", "h", "cs", "java", "go", "php", "sql", "ps1", "bat", "sh",
