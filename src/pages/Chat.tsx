@@ -5,6 +5,7 @@ import {
   chatsSave,
   llmChat,
   llmChatStop,
+  llmStart,
   llmStatus,
   onLlmAnswer,
   onLlmState,
@@ -15,26 +16,39 @@ import {
   type LlmState,
   type LlmStats,
   type Msg,
+  type Problem,
 } from "../api";
 import Answer, { copyText } from "../components/Answer";
+import ProblemCard from "../components/ProblemCard";
+import { crashActions } from "../components/RunningModel";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
   stats?: LlmStats | null;
-  error?: string | null;
+  problem?: Problem | null;
 }
+
+/** Ядро отвечает на ошибку готовой `Problem`; строка — значит, сломалось что-то по дороге. */
+const asProblem = (e: unknown): Problem =>
+  typeof e === "object" && e !== null && "text" in e
+    ? (e as Problem)
+    : { text: "Не получилось получить ответ.", hint: null, actions: ["retry"], details: String(e) };
 
 export default function Chat({
   chatId,
   onSaved,
   onGoToModels,
+  onGo,
+  onNewChat,
 }: {
   /** Открытый разговор; `null` — новый, ещё не сохранённый. */
   chatId: string | null;
   onSaved: (chat: Talk) => void;
   onGoToModels: () => void;
+  onGo: (tab: "catalog" | "computer") => void;
+  onNewChat: () => void;
 }) {
   const [llm, setLlm] = useState<LlmState | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
@@ -76,7 +90,7 @@ export default function Chat({
         setLines((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== "assistant") return prev;
-          return [...prev.slice(0, -1), { ...last, stats: d.stats, error: d.error }];
+          return [...prev.slice(0, -1), { ...last, stats: d.stats, problem: d.problem }];
         });
       }),
     ];
@@ -146,7 +160,7 @@ export default function Chat({
       );
     } catch (e) {
       setAnswering(false);
-      setLines((prev) => [...prev.slice(0, -1), { role: "assistant", content: "", error: String(e) }]);
+      setLines((prev) => [...prev.slice(0, -1), { role: "assistant", content: "", problem: asProblem(e) }]);
     }
   };
 
@@ -181,6 +195,17 @@ export default function Chat({
   const roleNow = roles.find((r) => r.id === role);
 
   if (!llm) return null;
+
+  if (llm.state === "crashed" && llm.problem) {
+    return (
+      <>
+        <h2>Чат</h2>
+        <div className="card">
+          <ProblemCard problem={llm.problem} on={{ ...crashActions(llm, onGo), models: onGoToModels }} />
+        </div>
+      </>
+    );
+  }
 
   if (llm.state !== "ready") {
     return (
@@ -219,7 +244,17 @@ export default function Chat({
             ) : (
               <Answer text={l.content || (answering && i === lines.length - 1 ? "…" : "")} />
             )}
-            {l.error && <p className="error">{l.error}</p>}
+            {l.problem && (
+              <ProblemCard
+                problem={l.problem}
+                on={{
+                  retry: again,
+                  restart: () => llm.model && llmStart(llm.model, { lighter: llm.lighter }),
+                  new_chat: onNewChat,
+                  models: onGoToModels,
+                }}
+              />
+            )}
             {l.stats && l.stats.tokens > 0 && (
               <p className="muted small">
                 {l.stats.tokens} токенов, {Math.round(l.stats.speed)} ток/с

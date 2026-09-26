@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { llmStop, llmStatus, onLlmState, type LlmState } from "../api";
+import { llmStart, llmStop, llmStatus, modelsRemove, onLlmState, vcredistInstall, type LlmState } from "../api";
+import ProblemCard from "./ProblemCard";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -12,7 +13,17 @@ const whoComputes = (layers: number | null) => {
 };
 
 /** Что сейчас загружено в видеокарту: состояние и «Остановить». Разговор — на вкладке «Чат». */
-export default function RunningModel({ onGoToChat }: { onGoToChat: () => void }) {
+export default function RunningModel({
+  onGoToChat,
+  onGo,
+  onRemoved,
+}: {
+  onGoToChat: () => void;
+  /** Перейти в раздел: каталог — за версией поменьше, «Компьютер» — за движком. */
+  onGo: (tab: "catalog" | "computer") => void;
+  /** Модель убрали из списка кнопкой под ошибкой — список надо перечитать. */
+  onRemoved: () => void;
+}) {
   const [state, setState] = useState<LlmState | null>(null);
 
   useEffect(() => {
@@ -41,19 +52,55 @@ export default function RunningModel({ onGoToChat }: { onGoToChat: () => void })
         </>
       )}
 
-      {state.state === "crashed" && (
-        <>
-          <p className="error">Модель не запустилась.</p>
-          {state.error && <pre className="error log">{state.error}</pre>}
-        </>
+      {state.state === "crashed" && state.problem && (
+        <ProblemCard
+          problem={state.problem}
+          on={crashActions(state, onGo, onRemoved)}
+          extra={
+            <button className="secondary" onClick={() => llmStop()}>
+              Понятно
+            </button>
+          }
+        />
       )}
 
-      <div className="actions">
-        {state.state === "ready" && <button onClick={onGoToChat}>Перейти в чат</button>}
-        <button className="secondary" onClick={() => llmStop()}>
-          {state.state === "starting" ? "Отменить" : state.state === "crashed" ? "Понятно" : "Остановить"}
-        </button>
-      </div>
+      {state.state !== "crashed" && (
+        <div className="actions">
+          {state.state === "ready" && <button onClick={onGoToChat}>Перейти в чат</button>}
+          <button className="secondary" onClick={() => llmStop()}>
+            {state.state === "starting" ? "Отменить" : "Остановить"}
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+/** Кнопки под ошибкой запуска. Модель и ступень «экономнее» ядро прислало вместе с ошибкой. */
+export function crashActions(
+  state: LlmState,
+  onGo: (tab: "catalog" | "computer") => void,
+  onRemoved?: () => void,
+) {
+  const model = state.model;
+  if (!model) return {};
+  return {
+    retry: () => llmStart(model, { lighter: state.lighter }),
+    restart: () => llmStart(model, { lighter: state.lighter }),
+    lighter: () => llmStart(model, { lighter: state.lighter + 1 }),
+    catalog: () => onGo("catalog"),
+    engine: () => onGo("computer"),
+    // Компоненты поставились — сразу пробуем снова, второй кнопки не надо.
+    vcredist: async () => {
+      await vcredistInstall();
+      await llmStart(model, { lighter: state.lighter });
+    },
+    ...(onRemoved && {
+      forget: async () => {
+        await modelsRemove(model);
+        await llmStop();
+        onRemoved();
+      },
+    }),
+  };
 }

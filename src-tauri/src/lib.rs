@@ -11,6 +11,7 @@ mod llm;
 mod net;
 mod presets;
 mod probe;
+mod trouble;
 mod process;
 mod scan;
 mod safetensors;
@@ -420,7 +421,10 @@ struct LlmState {
     /// С чем запустили: память разговора в токенах и слоёв на видеокарте.
     ctx: Option<u32>,
     gpu_layers: Option<u32>,
-    error: Option<String>,
+    /// Ступень «экономнее», с которой запускали (0 — как посчитало ядро).
+    lighter: u8,
+    /// Что пошло не так — уже человеческими словами и с кнопками.
+    problem: Option<trouble::Problem>,
 }
 
 impl LlmState {
@@ -432,8 +436,15 @@ impl LlmState {
             started_in: None,
             ctx: None,
             gpu_layers: None,
-            error: None,
+            lighter: 0,
+            problem: None,
         }
+    }
+
+    /// Не запустилась или упала. Модель и ступень нужны окну для кнопок
+    /// «Попробовать ещё раз» и «Запустить экономнее».
+    fn crashed(model: &std::path::Path, lighter: u8, problem: trouble::Problem) -> Self {
+        Self { model: Some(model.to_path_buf()), lighter, problem: Some(problem), ..Self::of("crashed") }
     }
 
     /// Состояние запущенной модели.
@@ -445,7 +456,8 @@ impl LlmState {
             started_in: Some(l.started_in.as_secs_f64()),
             ctx: Some(l.ctx),
             gpu_layers: Some(l.gpu_layers),
-            error: None,
+            lighter: 0,
+            problem: None,
         }
     }
 }
@@ -698,7 +710,17 @@ struct StartRequest {
     ctx: Option<u32>,
     #[serde(default)]
     gpu_layers: Option<u32>,
+    /// Ступень «экономнее» после нехватки видеопамяти: 0 — как посчитало ядро.
+    #[serde(default)]
+    lighter: u8,
 }
+
+/// Сколько раз можно нажать «Запустить экономнее». После трёх ступеней память
+/// разговора уже в 8 раз меньше, а на видеокарте меньше половины слоёв —
+/// дальше модель проще взять поменьше, чем урезать.
+const LIGHTER_MAX: u8 = 3;
+/// Память разговора меньше этой — модель забывает начало вопроса.
+const LIGHTER_MIN_CTX: u32 = 2048;
 
 /// Подбирает настройки запуска под то, что сейчас свободно: сколько слоёв уйдёт
 /// на видеокарту и сколько токенов поместится в память разговора. Считается перед
@@ -717,8 +739,27 @@ fn plan(core: &Core, req: &StartRequest) -> llm::Config {
             cfg.gpu_layers = layers as u32;
         }
     }
+    let layers = core.library.find(&req.model).and_then(|e| e.info.llm.map(|d| d.layers as u32));
+    cfg = lighter(cfg, req.lighter.min(LIGHTER_MAX), layers);
     cfg.ctx = req.ctx.unwrap_or(cfg.ctx);
     cfg.gpu_layers = req.gpu_layers.unwrap_or(cfg.gpu_layers);
+    cfg
+}
+
+/// «Запустить экономнее»: каждая ступень вдвое урезает память разговора (она и съела
+/// память в замере — буфер памяти разговора, «kv cache») и отдаёт процессору четверть слоёв.
+/// «Все слои» (999) без числа слоёв в файле урезать не из чего — остаётся только память разговора.
+fn lighter(mut cfg: llm::Config, steps: u8, layers: Option<u32>) -> llm::Config {
+    for _ in 0..steps {
+        cfg.ctx = (cfg.ctx / 2).max(LIGHTER_MIN_CTX);
+        let on_gpu = match (cfg.gpu_layers, layers) {
+            (n, Some(total)) if n > total => total + 1,
+            (n, _) => n,
+        };
+        if on_gpu < 900 {
+            cfg.gpu_layers = on_gpu * 3 / 4;
+        }
+    }
     cfg
 }
 
@@ -726,10 +767,17 @@ fn plan(core: &Core, req: &StartRequest) -> llm::Config {
 #[tauri::command]
 async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) -> Result<(), String> {
     let root = core.data_dir();
+    let lighter = config.lighter.min(LIGHTER_MAX);
+    let can_lighter = lighter < LIGHTER_MAX;
     let engine = engines::installed(&root, "llama.cpp")
         .into_iter()
-        .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version))
-        .ok_or("движок чата не установлен")?;
+        .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version));
+    // Без движка — не ошибка вызова, а состояние с кнопкой «Установить движок».
+    let Some(engine) = engine else {
+        let p = trouble::start("движок чата не установлен", can_lighter);
+        emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
+        return Ok(());
+    };
     let core = core.inner().clone();
     let cancel = CancellationToken::new();
     std::mem::replace(&mut *core.llm_loading.lock().unwrap(), cancel.clone()).cancel();
@@ -741,23 +789,24 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         if let Some(old) = slot.take() {
             old.handle.stop().await;
         }
-        emit_llm(&app, LlmState { model: Some(config.model.clone()), ..LlmState::of("starting") });
+        emit_llm(&app, LlmState { model: Some(config.model.clone()), lighter, ..LlmState::of("starting") });
         // Разбор заголовка и NVML блокируют поток — считаем настройки в стороне.
         let cfg = {
-            let (core, config) = (core.clone(), config.clone());
-            match tauri::async_runtime::spawn_blocking(move || plan(&core, &config)).await {
+            let (core, req) = (core.clone(), config.clone());
+            match tauri::async_runtime::spawn_blocking(move || plan(&core, &req)).await {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    emit_llm(&app, LlmState { error: Some(e.to_string()), ..LlmState::of("crashed") });
+                    let p = trouble::start(&e.to_string(), can_lighter);
+                    emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
                     return;
                 }
             }
         };
         match llm::start(&core.supervisor, &engine, &cfg, &root.join("logs"), &cancel).await {
             Ok(l) => {
-                emit_llm(&app, LlmState::ready(&l));
+                emit_llm(&app, LlmState { lighter, ..LlmState::ready(&l) });
                 // Сторож: движок упал сам — сообщаем с хвостом лога.
-                let (handle, app2, core2) = (l.handle.clone(), app.clone(), core.clone());
+                let (handle, app2, core2, model) = (l.handle.clone(), app.clone(), core.clone(), l.model.clone());
                 *slot = Some(l);
                 tauri::async_runtime::spawn(async move {
                     let exit = handle.wait().await;
@@ -769,16 +818,14 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
                         *slot = None;
                     }
                     let tail = process::log_tail(&handle.log, 15);
-                    emit_llm(
-                        &app2,
-                        LlmState { error: Some(format!("движок чата упал (код {:?})
-{tail}", exit.code)), ..LlmState::of("crashed") },
-                    );
+                    let raw = format!("движок чата упал (код {:?})
+{tail}", exit.code);
+                    emit_llm(&app2, LlmState::crashed(&model, lighter, trouble::crashed(&raw, can_lighter)));
                 });
             }
             // Отменили: итог сообщит тот, кто отменил (llm_stop или новый llm_start).
             Err(e) if e == llm::CANCELLED => {}
-            Err(e) => emit_llm(&app, LlmState { error: Some(e), ..LlmState::of("crashed") }),
+            Err(e) => emit_llm(&app, LlmState::crashed(&config.model, lighter, trouble::start(&e, can_lighter))),
         }
     });
     Ok(())
@@ -831,7 +878,7 @@ fn chats_remove(core: CoreState<'_>, id: String) -> Result<(), String> {
 #[derive(serde::Serialize, Clone)]
 struct ChatDone {
     stats: Option<llm::Stats>,
-    error: Option<String>,
+    problem: Option<trouble::Problem>,
 }
 
 /// Роли и манеры ответа для окна: только названия и пояснения, без чисел.
@@ -850,10 +897,10 @@ async fn llm_chat(
     messages: Vec<llm::Msg>,
     role: String,
     style: String,
-) -> Result<(), String> {
+) -> Result<(), trouble::Problem> {
     let port = match core.llm.try_lock() {
-        Ok(slot) => slot.as_ref().map(|l| l.port).ok_or("модель не запущена")?,
-        Err(_) => return Err("модель ещё загружается".into()),
+        Ok(slot) => slot.as_ref().map(|l| l.port).ok_or_else(|| trouble::chat("модель не запущена"))?,
+        Err(_) => return Err(trouble::chat("модель ещё загружается")),
     };
     let cancel = CancellationToken::new();
     // Новый вопрос обрывает недоговорённый ответ.
@@ -865,8 +912,8 @@ async fn llm_chat(
         })
         .await;
         let payload = match res {
-            Ok(stats) => ChatDone { stats: Some(stats), error: None },
-            Err(e) => ChatDone { stats: None, error: Some(e) },
+            Ok(stats) => ChatDone { stats: Some(stats), problem: None },
+            Err(e) => ChatDone { stats: None, problem: Some(trouble::chat(&e)) },
         };
         let _ = done.emit("llm://answer", payload);
     });
@@ -1008,6 +1055,51 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Нехватка видеопамяти на настоящем движке: понятная ошибка с «экономнее»,
+    /// и после одной ступени модель запускается.
+    /// `cargo test tests::real_out_of_memory_then_lighter -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_out_of_memory_then_lighter() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let engine = engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let sup = process::Supervisor::new();
+        let logs = std::env::temp_dir().join("ollivo-oom-test");
+        let model = root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf");
+        // 262144 токенов памяти разговора у 3B — ~9 ГБ сверх весов: на 8 ГБ не влезет.
+        let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999 };
+        let err = llm::start(&sup, &engine, &cfg, &logs, &CancellationToken::new()).await.err().expect("должно не хватить");
+        let p = trouble::start(&err, true);
+        println!("{}
+{:?}
+{:?}", p.text, p.hint, p.actions);
+        assert_eq!(p.actions, [trouble::Action::Lighter, trouble::Action::Catalog]);
+
+        let cfg = lighter(cfg, 1, Some(36));
+        println!("экономнее: память разговора {}, слоёв {}", cfg.ctx, cfg.gpu_layers);
+        let l = llm::start(&sup, &engine, &cfg, &logs, &CancellationToken::new()).await.expect("экономнее должно влезть");
+        l.handle.stop().await;
+    }
+
+    #[test]
+    fn lighter_steps() {
+        let cfg = llm::Config { model: PathBuf::new(), ctx: 16384, gpu_layers: 999 };
+        let at = |steps, layers| {
+            let c = lighter(cfg.clone(), steps, layers);
+            (c.ctx, c.gpu_layers)
+        };
+        assert_eq!(at(0, Some(36)), (16384, 999));
+        // «Все слои» при известных 36 — это 37 (с выходным), дальше по четверти.
+        assert_eq!(at(1, Some(36)), (8192, 27));
+        assert_eq!(at(3, Some(36)), (2048, 15));
+        // Слоёв не знаем — урезаем только память разговора.
+        assert_eq!(at(2, None), (4096, 999));
+        // Ниже порога память разговора не опускается.
+        let small = llm::Config { ctx: 4096, gpu_layers: 20, ..cfg.clone() };
+        let c = lighter(small, 3, Some(36));
+        assert_eq!((c.ctx, c.gpu_layers), (2048, 8));
+    }
 
     /// Имена файлов и репозиториев приходят с чужого сервера: в путь не должно
     /// пролезть ничего, кроме простого имени.

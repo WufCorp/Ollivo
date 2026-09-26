@@ -100,11 +100,13 @@ export default function App() {
                 setChatsKey((n) => n + 1);
               }}
               onGoToModels={() => setTab("models")}
+              onGo={setTab}
+              onNewChat={() => setChatId(null)}
             />
           ) : tab === "catalog" ? (
             <Catalog onGoToChat={() => setTab("chat")} />
           ) : tab === "models" ? (
-            <Models onGoToChat={() => setTab("chat")} />
+            <Models onGoToChat={() => setTab("chat")} onGo={setTab} />
           ) : tab === "computer" ? (
             <Computer />
           ) : (

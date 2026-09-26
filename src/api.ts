@@ -436,7 +436,31 @@ export interface LlmState {
   /** С чем запустили: память разговора в токенах и слоёв на видеокарте. */
   ctx: number | null;
   gpu_layers: number | null;
-  error: string | null;
+  /** Ступень «экономнее», с которой запускали. */
+  lighter: number;
+  problem: Problem | null;
+}
+
+// --- Понятные ошибки ---
+
+/** Кнопка под ошибкой: ядро решает, какие уместны, окно — что они делают. */
+export type ProblemAction =
+  | "retry"
+  | "lighter"
+  | "catalog"
+  | "forget"
+  | "restart"
+  | "new_chat"
+  | "engine"
+  | "vcredist"
+  | "models";
+
+/** Ошибка человеческими словами. `details` — сырой текст для «Подробностей». */
+export interface Problem {
+  text: string;
+  hint: string | null;
+  actions: ProblemAction[];
+  details: string;
 }
 
 /** Реплика разговора. Роли как у OpenAI. */
@@ -455,7 +479,7 @@ export interface LlmStats {
 /** Итог ответа: числа или ошибка. */
 export interface ChatDone {
   stats: LlmStats | null;
-  error: string | null;
+  problem: Problem | null;
 }
 
 // --- История разговоров ---
@@ -536,7 +560,8 @@ export const onLlmAnswer = (cb: (d: ChatDone) => void): Promise<UnlistenFn> =>
 
 export const llmStatus = () => invoke<LlmState>("llm_status");
 /** Слои и контекст ядро подбирает само; числа передаются только из режима «Профи». */
-export const llmStart = (model: string, manual?: { ctx?: number; gpu_layers?: number }) =>
+/** `lighter` — ступень «экономнее» после нехватки видеопамяти. */
+export const llmStart = (model: string, manual?: { ctx?: number; gpu_layers?: number; lighter?: number }) =>
   invoke<void>("llm_start", { config: { model, ...manual } });
 export const llmStop = () => invoke<void>("llm_stop");
 

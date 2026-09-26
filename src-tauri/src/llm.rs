@@ -168,7 +168,11 @@ pub async fn chat(
         .await
         .map_err(|e| format!("движок не отвечает: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("движок ответил ошибкой {}", resp.status().as_u16()));
+        // В теле — причина: например, `exceed_context_size_error`, когда разговор
+        // перерос память модели. По ней `trouble::chat` подбирает понятный текст.
+        let code = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("движок ответил ошибкой {code}: {}", body.chars().take(500).collect::<String>()));
     }
 
     let mut stream = resp.bytes_stream();
@@ -319,6 +323,30 @@ mod tests {
         chat(llm.port, &long, presets::role(""), presets::style(""), &cancel, |_| {}).await.unwrap();
         println!("остановлено за {:.1} с", t.elapsed().as_secs_f64());
         assert!(t.elapsed() < Duration::from_secs(5));
+        llm.handle.stop().await;
+    }
+
+    /// Разговор длиннее памяти модели: движок отвечает 400 с причиной в теле,
+    /// и `trouble::chat` предлагает новый разговор.
+    #[tokio::test]
+    #[ignore]
+    async fn real_context_overflow() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999 };
+        let sup = Supervisor::new();
+        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-ctx-test"), &CancellationToken::new())
+            .await
+            .unwrap();
+        let long = vec![Msg { role: "user".into(), content: "слово ".repeat(2000) }];
+        let err = chat(llm.port, &long, presets::role(""), presets::style(""), &CancellationToken::new(), |_| {})
+            .await
+            .err()
+            .expect("должно не влезть");
+        let p = crate::trouble::chat(&err);
+        println!("{err}
+→ {}", p.text);
+        assert_eq!(p.actions, [crate::trouble::Action::NewChat]);
         llm.handle.stop().await;
     }
 
