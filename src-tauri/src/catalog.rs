@@ -184,6 +184,12 @@ struct ApiModel {
     tags: Vec<String>,
 }
 
+/// Закрыта, только если HF прямо так сказал (`true`, `"auto"`, `"manual"`).
+/// Нет поля — не значит «закрыта»: раньше из-за этого закрытыми выглядели все.
+fn is_gated(v: &serde_json::Value) -> bool {
+    matches!(v, serde_json::Value::Bool(true) | serde_json::Value::String(_))
+}
+
 /// Поиск моделей в формате GGUF: их запускает llama.cpp, остальное в фазе 2 не нужно.
 pub async fn search(
     client: &reqwest::Client,
@@ -196,7 +202,9 @@ pub async fn search(
         return Ok(vec![]);
     }
     let url = format!(
-        "{base}/api/models?filter=gguf&search={}&sort=downloads&direction=-1&limit={SEARCH_LIMIT}",
+        // `gated` в выдаче поиска по умолчанию нет — просим явно, вместе с остальным,
+        // что показываем: `expand` заменяет набор полей целиком.
+        "{base}/api/models?filter=gguf&search={}&sort=downloads&direction=-1&limit={SEARCH_LIMIT}&expand[]=gated&expand[]=downloads&expand[]=likes&expand[]=tags",
         urlencode(query)
     );
     let models: Vec<ApiModel> = get_json(client, &url, token).await?;
@@ -209,7 +217,7 @@ pub async fn search(
                 author: author.to_string(),
                 downloads: m.downloads,
                 likes: m.likes,
-                gated: !matches!(m.gated, serde_json::Value::Bool(false)),
+                gated: is_gated(&m.gated),
                 license: m.tags.iter().find_map(|t| t.strip_prefix("license:")).map(str::to_string),
                 repo: m.id,
             }
@@ -327,6 +335,13 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gated_only_when_said_so() {
+        use serde_json::json;
+        assert!(is_gated(&json!(true)) && is_gated(&json!("manual")) && is_gated(&json!("auto")));
+        assert!(!is_gated(&json!(false)) && !is_gated(&serde_json::Value::Null));
+    }
 
     #[test]
     fn bundled_is_valid() {

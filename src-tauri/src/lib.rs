@@ -421,6 +421,9 @@ struct LlmState {
     /// С чем запустили: память разговора в токенах и слоёв на видеокарте.
     ctx: Option<u32>,
     gpu_layers: Option<u32>,
+    /// Слоёв у модели всего: без этого окно не отличит «все 25 на видеокарте»
+    /// от «25 на видеокарте, остальное — процессор». `None` — модели нет в библиотеке.
+    layers: Option<u32>,
     /// Ступень «экономнее», с которой запускали (0 — как посчитало ядро).
     lighter: u8,
     /// Что пошло не так — уже человеческими словами и с кнопками.
@@ -436,6 +439,7 @@ impl LlmState {
             started_in: None,
             ctx: None,
             gpu_layers: None,
+            layers: None,
             lighter: 0,
             problem: None,
         }
@@ -456,10 +460,16 @@ impl LlmState {
             started_in: Some(l.started_in.as_secs_f64()),
             ctx: Some(l.ctx),
             gpu_layers: Some(l.gpu_layers),
+            layers: None,
             lighter: 0,
             problem: None,
         }
     }
+}
+
+/// Сколько слоёв у модели по её заголовку в библиотеке.
+fn model_layers(core: &Core, model: &std::path::Path) -> Option<u32> {
+    core.library.find(model)?.info.llm.map(|d| d.layers as u32)
 }
 
 fn emit_llm(app: &AppHandle, s: LlmState) {
@@ -696,7 +706,7 @@ async fn llm_status(core: CoreState<'_>) -> Result<LlmState, String> {
     // Занято — значит, идёт загрузка (llm_start держит слот до конца), ждать её не будем.
     let Ok(slot) = core.llm.try_lock() else { return Ok(LlmState::of("starting")) };
     Ok(match slot.as_ref() {
-        Some(l) => LlmState::ready(l),
+        Some(l) => LlmState { layers: model_layers(&core, &l.model), ..LlmState::ready(l) },
         None => LlmState::of("stopped"),
     })
 }
@@ -804,7 +814,8 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         };
         match llm::start(&core.supervisor, &engine, &cfg, &root.join("logs"), &cancel).await {
             Ok(l) => {
-                emit_llm(&app, LlmState { lighter, ..LlmState::ready(&l) });
+                let layers = model_layers(&core, &l.model);
+                emit_llm(&app, LlmState { lighter, layers, ..LlmState::ready(&l) });
                 // Сторож: движок упал сам — сообщаем с хвостом лога.
                 let (handle, app2, core2, model) = (l.handle.clone(), app.clone(), core.clone(), l.model.clone());
                 *slot = Some(l);

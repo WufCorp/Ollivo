@@ -67,7 +67,8 @@ export default function ChatList({
             <span className="chat-title">
               <Marked text={c.title} words={words} />
             </span>
-            {c.snippet && (
+            {/* Вопрос и есть название — второй раз его не показываем. */}
+            {c.snippet && c.snippet !== c.title && (
               <span className="chat-snippet">
                 <Marked text={c.snippet} words={words} />
               </span>

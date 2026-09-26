@@ -436,6 +436,8 @@ export interface LlmState {
   /** С чем запустили: память разговора в токенах и слоёв на видеокарте. */
   ctx: number | null;
   gpu_layers: number | null;
+  /** Слоёв у модели всего; `null` — модели нет в библиотеке. */
+  layers: number | null;
   /** Ступень «экономнее», с которой запускали. */
   lighter: number;
   problem: Problem | null;

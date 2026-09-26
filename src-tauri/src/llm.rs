@@ -147,11 +147,10 @@ pub async fn chat(
         // а обрыв — дело кнопки «Остановить».
         .build()
         .map_err(|e| e.to_string())?;
-    // Системный промпт роли — первой репликой. В историю разговора он не пишется:
-    // сменили роль — следующий ответ идёт уже по новой.
-    let system = Msg { role: "system".into(), content: crate::presets::system(role, messages) };
-    let all: Vec<&Msg> = std::iter::once(&system).chain(messages).collect();
-    let body = serde_json::json!({
+    // Промпт роли в историю разговора не пишется: сменили роль — следующий ответ
+    // идёт уже по новой.
+    let all = crate::presets::prepare(role, messages);
+    let mut body = serde_json::json!({
         "messages": all,
         "temperature": style.temperature,
         "top_p": style.top_p,
@@ -160,6 +159,9 @@ pub async fn chat(
         "stream_options": {"include_usage": true},
         "timings_per_token": true,
     });
+    if role.no_cjk {
+        body["grammar"] = crate::presets::NO_CJK.into();
+    }
     let resp = client
         .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
         .body(body.to_string())
@@ -357,7 +359,9 @@ mod tests {
     async fn real_roles() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999 };
+        // OLLIVO_MODEL — имя файла в D:\Ollivo\models, чтобы проверить и маленькую модель.
+        let file = std::env::var("OLLIVO_MODEL").unwrap_or("qwen2.5-3b-instruct-q4_k_m.gguf".into());
+        let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999 };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-roles-test"), &CancellationToken::new())
             .await
@@ -385,6 +389,23 @@ mod tests {
         assert!(!cyrillic(&en), "с русского — на английский");
         let ru = ask("translator", "precise", "The cat is sleeping on the sofa.").await;
         assert!(cyrillic(&ru), "с английского — на русский");
+        // В разговоре: прошлая пара «русский → английский» не должна сбить направление
+        // (так 0.5B повторяла английский как есть, найдено в окне).
+        let talk = vec![
+            Msg { role: "user".into(), content: "Доброе утро! Как спалось?".into() },
+            Msg { role: "assistant".into(), content: "Good morning! How did you sleep?".into() },
+            Msg { role: "user".into(), content: "The weather is nice today, let's go for a walk.".into() },
+        ];
+        let out = std::sync::Mutex::new(String::new());
+        chat(llm.port, &talk, presets::role("translator"), presets::style("precise"), &CancellationToken::new(), |t| {
+            out.lock().unwrap().push_str(t)
+        })
+        .await
+        .unwrap();
+        let out = out.into_inner().unwrap();
+        println!("[в разговоре] → {out}
+");
+        assert!(cyrillic(&out), "в разговоре — тоже на русский");
         ask("coder", "precise", "Как на Python прочитать файл построчно?").await;
         for style in ["precise", "creative"] {
             ask("helper", style, "Придумай название для кофейни.").await;
