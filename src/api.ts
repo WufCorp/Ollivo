@@ -468,6 +468,9 @@ export interface Chat {
   updated: number;
   /** Модель, на которой шёл разговор. */
   model: string | null;
+  /** id роли и манеры ответа; пусто — «Помощник» и «Обычно». */
+  role: string;
+  style: string;
   messages: Msg[];
 }
 
@@ -489,8 +492,29 @@ export const chatsSave = (chat: Chat) => invoke<Chat>("chats_save", { chat });
 
 export const chatsRemove = (id: string) => invoke<void>("chats_remove", { id });
 
+// --- Пресеты: роль и манера ответа ---
+
+/** Роль: за ней в ядре — системный промпт, окну он не нужен. */
+export interface ChatRole {
+  id: string;
+  name: string;
+  hint: string;
+  /** Манера, которую ставим, когда роль выбрали. */
+  style: string;
+}
+
+/** «Точнее ↔ Креативнее»: за ней в ядре — температура и top-p. */
+export interface ChatStyle {
+  id: string;
+  name: string;
+  hint: string;
+}
+
+export const chatPresets = () => invoke<{ roles: ChatRole[]; styles: ChatStyle[] }>("chat_presets");
+
 /** Просит ответ на весь разговор: текст придёт кусками в `onLlmToken`. */
-export const llmChat = (messages: Msg[]) => invoke<void>("llm_chat", { messages });
+export const llmChat = (messages: Msg[], role: string, style: string) =>
+  invoke<void>("llm_chat", { messages, role, style });
 
 /** «Остановить»: обрывает ответ, написанное остаётся. */
 export const llmChatStop = () => invoke<void>("llm_chat_stop");

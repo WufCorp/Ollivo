@@ -9,6 +9,7 @@ mod library;
 mod manifest;
 mod llm;
 mod net;
+mod presets;
 mod probe;
 mod process;
 mod scan;
@@ -831,10 +832,23 @@ struct ChatDone {
     error: Option<String>,
 }
 
+/// Роли и манеры ответа для окна: только названия и пояснения, без чисел.
+#[tauri::command]
+fn chat_presets() -> presets::All {
+    presets::All { roles: presets::ROLES, styles: presets::STYLES }
+}
+
 /// Ответ на весь разговор. Текст идёт кусками в `llm://token`, итог — `llm://answer`.
 /// Разговор целиком присылает окно: движок ничего не помнит между запросами.
+/// `role` и `style` — id пресетов; неизвестные значат «Помощник» и «Обычно».
 #[tauri::command]
-async fn llm_chat(app: AppHandle, core: CoreState<'_>, messages: Vec<llm::Msg>) -> Result<(), String> {
+async fn llm_chat(
+    app: AppHandle,
+    core: CoreState<'_>,
+    messages: Vec<llm::Msg>,
+    role: String,
+    style: String,
+) -> Result<(), String> {
     let port = match core.llm.try_lock() {
         Ok(slot) => slot.as_ref().map(|l| l.port).ok_or("модель не запущена")?,
         Err(_) => return Err("модель ещё загружается".into()),
@@ -844,7 +858,7 @@ async fn llm_chat(app: AppHandle, core: CoreState<'_>, messages: Vec<llm::Msg>) 
     std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
     let done = app.clone();
     tauri::async_runtime::spawn(async move {
-        let res = llm::chat(port, &messages, &cancel, |text| {
+        let res = llm::chat(port, &messages, presets::role(&role), presets::style(&style), &cancel, |text| {
             let _ = app.emit("llm://token", text);
         })
         .await;
@@ -976,6 +990,7 @@ pub fn run() {
             llm_stop,
             chats_list,
             chats_search,
+            chat_presets,
             chats_get,
             chats_save,
             chats_remove,

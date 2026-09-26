@@ -22,6 +22,12 @@ pub struct Chat {
     /// Модель, на которой шёл разговор — по ней понятно, чем его продолжать.
     #[serde(default)]
     pub model: Option<PathBuf>,
+    /// Пресеты разговора (`presets.rs`): продолжили разговор — роль и манера те же.
+    /// Пусто у разговоров, сохранённых до пресетов, — это «Помощник» и «Обычно».
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub style: String,
     pub messages: Vec<Msg>,
 }
 
@@ -258,7 +264,16 @@ mod tests {
     }
 
     fn empty(messages: Vec<Msg>) -> Chat {
-        Chat { id: String::new(), title: String::new(), created: 0, updated: 0, model: None, messages }
+        Chat {
+            id: String::new(),
+            title: String::new(),
+            created: 0,
+            updated: 0,
+            model: None,
+            role: String::new(),
+            style: String::new(),
+            messages,
+        }
     }
 
     #[test]
