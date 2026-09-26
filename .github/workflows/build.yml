@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Репозиторий публичный: попавший в историю ключ увидят все, поэтому каждый push
+  # проверяется на секреты. Вся история, а не только новые коммиты, — её мало (2 МБ, 1 с).
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        # Закреплённая версия со сверкой SHA256: сканер секретов сам не должен быть подменой.
+        run: |
+          curl -sSfL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git --redact --no-banner --verbose .
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 60
