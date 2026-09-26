@@ -193,6 +193,7 @@ fn settings_get(core: CoreState<'_>) -> SettingsView {
 /// Секреты: `None` — не менять сохранённый, `""` — удалить.
 #[tauri::command]
 fn settings_save(
+    app: AppHandle,
     core: CoreState<'_>,
     settings: settings::Settings,
     proxy_password: Option<String>,
@@ -206,9 +207,17 @@ fn settings_save(
         net::secret::store(net::secret::HF_TOKEN, t.trim())?;
     }
     let downloader = build_downloader(&settings)?;
+    apply_theme(&app, settings.theme);
     core.settings.set(settings).map_err(|e| e.to_string())?;
     *core.downloader.write().unwrap() = Arc::new(downloader);
     Ok(())
+}
+
+/// Тема всех окон; WebView2 следом меняет `prefers-color-scheme`.
+fn apply_theme(app: &AppHandle, theme: settings::Theme) {
+    for w in app.webview_windows().values() {
+        let _ = w.set_theme(theme.tauri());
+    }
 }
 
 /// Проверка прокси до сохранения. `password: None` — взять сохранённый.
@@ -1671,6 +1680,7 @@ pub fn run() {
                 llm_asleep: Mutex::new(None),
             }));
             tauri::async_runtime::spawn(idle_watch(app.handle().clone()));
+            apply_theme(app.handle(), app.state::<Arc<Core>>().settings.get().theme);
             // Уборка при запуске, в стороне: папки могут быть большими.
             let core = app.state::<Arc<Core>>().inner().clone();
             tauri::async_runtime::spawn_blocking(move || sweep(&core));

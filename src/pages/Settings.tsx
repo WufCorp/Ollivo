@@ -86,6 +86,21 @@ export default function Settings() {
         />
       </div>
 
+      <h2>Оформление</h2>
+      <div className="card form">
+        <label>
+          Цвет окна
+          <select
+            value={settings.theme}
+            onChange={(e) => update({ theme: e.target.value as SettingsData["theme"] })}
+          >
+            <option value="system">Как в Windows</option>
+            <option value="light">Светлое</option>
+            <option value="dark">Тёмное</option>
+          </select>
+        </label>
+      </div>
+
       <h2>Видеокарта</h2>
       <div className="card form">
         <label>

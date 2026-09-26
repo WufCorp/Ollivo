@@ -109,6 +109,8 @@ export interface Settings {
   setup_done: boolean;
   updates: UpdateSettings;
   models: ModelSettings;
+  /** Оформление окна: `system` — как в Windows. */
+  theme: "system" | "light" | "dark";
 }
 
 export interface SettingsView {

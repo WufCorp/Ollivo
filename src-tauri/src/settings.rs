@@ -18,6 +18,31 @@ pub struct Settings {
     pub setup_done: bool,
     pub updates: UpdateSettings,
     pub models: ModelSettings,
+    pub theme: Theme,
+}
+
+/// Оформление окна. Меняется темой самого окна, а WebView2 подхватывает её
+/// в `prefers-color-scheme` — стили для тёмной темы остаются одни.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Light,
+    Dark,
+    /// Как в Windows. Незнакомое значение (файл от будущей версии) — тоже сюда:
+    /// иначе из-за одного поля сбросились бы все настройки.
+    #[default]
+    #[serde(other)]
+    System,
+}
+
+impl Theme {
+    pub fn tauri(self) -> Option<tauri::Theme> {
+        match self {
+            Theme::System => None,
+            Theme::Light => Some(tauri::Theme::Light),
+            Theme::Dark => Some(tauri::Theme::Dark),
+        }
+    }
 }
 
 /// Модель в видеокарте. Пока она загружена, видеопамять занята — игре или другой
@@ -113,7 +138,14 @@ mod tests {
 
         // Файл от старой версии, где выгрузки ещё не было, — выгружать через 10 минут.
         std::fs::write(&path, br#"{"setup_done":true}"#).unwrap();
-        assert_eq!(Store::open(path).get().models.unload_after, 10);
+        assert_eq!(Store::open(path.clone()).get().models.unload_after, 10);
+        assert_eq!(Store::open(path.clone()).get().theme, Theme::System);
+
+        // Тема из будущей версии не сбрасывает остальное.
+        std::fs::write(&path, br#"{"setup_done":true,"theme":"sepia"}"#).unwrap();
+        let s = Store::open(path).get();
+        assert!(s.setup_done);
+        assert_eq!(s.theme, Theme::System);
     }
 
     #[test]
