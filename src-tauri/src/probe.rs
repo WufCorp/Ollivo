@@ -581,6 +581,66 @@ fn fmt_bytes(b: u64) -> String {
     }
 }
 
+// Токены — внутренняя единица модели, человеку она ничего не говорит; переводим в слова
+// и страницы. Замер 2026-09-26, токенизатор Qwen2.5 (llama-tokenize): русский текст
+// в 251 слово и 1656 знаков — 612 токенов, то есть 2,4 токена на слово и 2,7 знака на токен.
+// По-английски слов на токен вдвое больше (1,2 токена на слово), но окно русское,
+// и занижать скорость честнее, чем завышать. Те же числа — в `src/words.ts`.
+const TOKENS_PER_WORD: f64 = 2.4;
+/// Страница — ~1800 знаков: 1800 / 2,7 ≈ 650 токенов.
+const TOKENS_PER_PAGE: u64 = 650;
+
+fn plural<'a>(n: u64, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
+    let (d, h) = (n % 10, n % 100);
+    if d == 1 && h != 11 {
+        one
+    } else if (2..=4).contains(&d) && !(12..=14).contains(&h) {
+        few
+    } else {
+        many
+    }
+}
+
+/// «пишет примерно 24 слова в секунду — быстрее, чем вы читаете». Про себя взрослый
+/// читает 200–250 слов в минуту, это 3–4 слова в секунду.
+pub fn speed_words(tokens_per_sec: f64) -> String {
+    let w = tokens_per_sec / TOKENS_PER_WORD;
+    if w < 1.0 {
+        // Абзац — ~60 слов: так «медленно» превращается в ожидание, которое можно представить.
+        let sec = (60.0 / w.max(0.01)).round() as u64;
+        // Меньше слова в секунду — это всегда дольше минуты на абзац.
+        let wait = if sec < 90 {
+            "около минуты".to_string()
+        } else {
+            let min = (sec + 30) / 60;
+            format!("около {min} {}", plural(min, "минуты", "минут", "минут"))
+        };
+        return format!("пишет меньше слова в секунду — абзац ответа будет писаться {wait}");
+    }
+    let n = w.round() as u64;
+    let words = plural(n, "слово", "слова", "слов");
+    let pace = if w < 3.0 {
+        "медленнее, чем вы читаете"
+    } else if w < 6.0 {
+        "примерно как вы читаете"
+    } else {
+        "быстрее, чем вы читаете"
+    };
+    format!("пишет примерно {n} {words} в секунду — {pace}")
+}
+
+/// Сколько страниц разговора модель держит в памяти: «около 12 страниц».
+pub fn memory_pages(ctx: u64) -> String {
+    let p = pages(ctx);
+    format!("около {p} {}", plural(p, "страницы", "страниц", "страниц"))
+}
+
+fn pages(ctx: u64) -> u64 {
+    let p = (ctx / TOKENS_PER_PAGE).max(1);
+    // Больше двадцати страниц точность до единицы ни к чему: границы всё равно примерные.
+    if p > 20 { (p + 5) / 10 * 10 } else { p }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Light {
@@ -658,10 +718,10 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
         // Запускаем с `want_ctx`, а не с максимумом: так меньше памяти и быстрее ответ
         // на длинный вопрос. Пишем оба числа — иначе после запуска «до 8192» выглядит
         // как обман после обещанных «до 32768» (найдено в окне).
-        let memory = if max_ctx > want_ctx {
-            format!("память разговора {want_ctx} токенов, можно до {max_ctx}")
+        let memory = if pages(max_ctx) > pages(want_ctx) {
+            format!("модель помнит {} разговора, можно до {}", memory_pages(want_ctx), pages(max_ctx))
         } else {
-            format!("память разговора {want_ctx} токенов")
+            format!("модель помнит {} разговора", memory_pages(want_ctx))
         };
         v.details.push(format!(
             "занято будет ~{} из {} свободных; {memory}",
@@ -669,7 +729,7 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
             fmt_bytes(vram_free)
         ));
         if let Some(tps) = speed(weights, 0, hw) {
-            v.details.push(format!("скорость примерно {tps:.0} токенов/с"));
+            v.details.push(speed_words(tps));
         }
         return v;
     }
@@ -706,7 +766,7 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     v.gpu_layers = Some(gpu_layers);
     v.ctx = Some(ctx);
     if let Some(tps) = speed(on_gpu, weights - on_gpu, hw) {
-        v.details.push(format!("скорость примерно {tps:.1} токенов/с"));
+        v.details.push(speed_words(tps));
     }
     v
 }
@@ -725,7 +785,7 @@ pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
     let mut v = if hw.gpu.is_some() && need <= budget {
         let mut v = verdict(Light::Green, "поместится в видеокарту целиком");
         if let Some(tps) = speed(active, 0, hw) {
-            v.details.push(format!("скорость примерно {tps:.0} токенов/с"));
+            v.details.push(speed_words(tps));
         }
         v
     } else if need <= budget + hw.ram_avail {
@@ -741,7 +801,7 @@ pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
             _ => verdict(Light::Yellow, "поместится частично — будет медленнее"),
         };
         if let Some(t) = tps {
-            v.details.push(format!("скорость примерно {t:.1} токенов/с"));
+            v.details.push(speed_words(t));
         }
         v
     } else {
@@ -867,5 +927,26 @@ mod tests {
             );
             assert_eq!(m.kind, kind);
         }
+    }
+
+    /// Токены в окне не показываем: скорость — словами и сравнением с чтением.
+    #[test]
+    fn speed_in_words() {
+        // 57 ток/с — Qwen2.5 3B на GTX 1080 (замер фазы 2).
+        assert_eq!(speed_words(57.0), "пишет примерно 24 слова в секунду — быстрее, чем вы читаете");
+        assert_eq!(speed_words(9.6), "пишет примерно 4 слова в секунду — примерно как вы читаете");
+        assert_eq!(speed_words(3.0), "пишет примерно 1 слово в секунду — медленнее, чем вы читаете");
+        assert_eq!(
+            speed_words(1.2),
+            "пишет меньше слова в секунду — абзац ответа будет писаться около 2 минут"
+        );
+    }
+
+    #[test]
+    fn memory_in_pages() {
+        assert_eq!(memory_pages(4096), "около 6 страниц");
+        assert_eq!(memory_pages(8192), "около 12 страниц");
+        assert_eq!(memory_pages(32768), "около 50 страниц");
+        assert_eq!(memory_pages(512), "около 1 страницы");
     }
 }

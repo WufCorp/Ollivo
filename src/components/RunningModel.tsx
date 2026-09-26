@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { llmStart, llmStop, llmStatus, modelsRemove, onLlmState, vcredistInstall, type LlmState } from "../api";
+import { memoryPages } from "../words";
 import ProblemCard from "./ProblemCard";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
@@ -52,7 +53,7 @@ export default function RunningModel({
             {state.started_in?.toFixed(1).replace(".", ",")} с
           </p>
           <p className="muted small">
-            {whoComputes(state.gpu_layers, state.layers)}. Память разговора — до {state.ctx} токенов.
+            {whoComputes(state.gpu_layers, state.layers)}. {state.ctx !== null && <> Помнит {memoryPages(state.ctx)} разговора.</>}
           </p>
         </>
       )}

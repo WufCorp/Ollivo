@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatBytes, type EngineProgress } from "../api";
+import { plural } from "../words";
 
 /** Шаг установки: человеческое название, зачем он нужен и что с ним сейчас. */
 export interface InstallItem {
@@ -40,13 +41,6 @@ export function formatEta(seconds: number): string {
   if (min < 60) return `примерно ${min} ${plural(min, "минута", "минуты", "минут")}`;
   const h = Math.round(min / 6) / 10;
   return `примерно ${String(h).replace(".", ",")} ч`;
-}
-
-function plural(n: number, one: string, few: string, many: string) {
-  const d = n % 10, h = n % 100;
-  if (d === 1 && h !== 11) return one;
-  if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return few;
-  return many;
 }
 
 const STAGE_TEXT: Record<EngineProgress["stage"], string> = {
