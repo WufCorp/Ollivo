@@ -548,17 +548,25 @@ export const projectUndo = (folder: string, step: Step) => invoke<void>("project
 
 // --- Распознавание речи ---
 
-/** Записи, которые whisper читает сам; остальные просим пересохранить. */
-export const AUDIO_EXTENSIONS = ["wav", "mp3", "ogg", "flac"];
+/** Части, которые ставятся по требованию: движки `ffmpeg`, `whisper.cpp` и модель распознавания. */
+export const PART_SPEECH_MODEL = "speech:model";
+export const SPEECH_PARTS = ["whisper.cpp", PART_SPEECH_MODEL];
 
-export interface SpeechStatus {
-  engine: boolean;
-  model: boolean;
+export interface PartsStatus {
+  /** Чего не хватает, в порядке установки. */
+  missing: string[];
   /** Сколько байт осталось скачать. */
   download: number;
 }
 
-export const speechStatus = () => invoke<SpeechStatus>("speech_status");
+export const partsStatus = (parts: string[]) => invoke<PartsStatus>("parts_status", { parts });
+
+/** Что нужно, чтобы приложить файл. Запись ли это и что форматы требуют, решает ядро. */
+export interface AttachNeeds extends PartsStatus {
+  audio: boolean;
+}
+
+export const attachNeeds = (path: string) => invoke<AttachNeeds>("attach_needs", { path });
 
 /** Модель распознавания; итог — `download://finished` с id `speech:model`. */
 export const speechModelDownload = () => invoke<string>("speech_model_download");
@@ -599,8 +607,9 @@ export const attachTrim = (file: Attachment, maxTokens: number) =>
 
 /** Что предлагаем в окне выбора файла; перетащить можно и любой другой текстовый файл. */
 export const ATTACH_EXTENSIONS = [
-  "jpg", "jpeg", "png", "gif", "bmp", "webp", "tif", "tiff",
-  "mp3", "wav", "ogg", "flac",
+  "jpg", "jpeg", "png", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif", "avif",
+  "mp3", "wav", "ogg", "oga", "flac", "m4a", "aac", "opus", "wma", "amr",
+  "mp4", "mov", "mkv", "webm", "avi",
   "pdf", "docx", "odt", "txt", "md", "csv", "json", "xml", "html", "log",
   "py", "js", "ts", "tsx", "rs", "c", "cpp", "h", "cs", "java", "go", "php", "sql", "ps1", "bat", "sh",
 ];

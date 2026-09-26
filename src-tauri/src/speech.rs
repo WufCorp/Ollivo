@@ -5,7 +5,6 @@
 //! (замер в docs/phase-3.md). Модель small на 12 ядрах расшифровывает в 3,8 раза
 //! быстрее реального времени — для диктовки и записей этого хватает.
 
-use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -22,15 +21,6 @@ pub const MODEL_SHA256: &str = "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5
 /// Где лежит модель: там же, куда её положил бы каталог.
 pub fn model_path(root: &Path) -> PathBuf {
     root.join("models").join("ggerganov").join("whisper.cpp").join(MODEL_NAME)
-}
-
-/// Что готово для распознавания речи и сколько ещё качать.
-#[derive(Debug, Clone, Serialize)]
-pub struct Status {
-    pub engine: bool,
-    pub model: bool,
-    /// Сколько байт осталось скачать: движок и модель вместе.
-    pub download: u64,
 }
 
 /// Потоков — по числу физических ядер: на Xeon E5-2678 v3 (12 ядер) 12 потоков

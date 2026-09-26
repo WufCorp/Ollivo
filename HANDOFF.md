@@ -49,7 +49,7 @@ npm run tauri build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Сейчас 105 тестов проходят, 19 помечены `#[ignore]` — им нужны сеть, настоящие модели
+Сейчас 109 тестов проходят, 21 помечен `#[ignore]` — им нужны сеть, настоящие модели
 или запущенный движок. Самые полезные из них:
 
 ```bash
@@ -66,6 +66,8 @@ cargo test --manifest-path src-tauri/Cargo.toml catalog::tests::real_picks -- --
 - `tests::real_out_of_memory_then_lighter`, `llm::tests::real_context_overflow` — понятные ошибки на настоящем движке;
 - `update::tests::published_update_real` — описание версии и подпись из S3;
 - `chats::tests::search_speed` — скорость поиска по 500 разговорам (запускать с `--release`).
+- `media::tests::real`, `engines::tests::ffmpeg_7z_real` — ffmpeg: HEIC, AVIF, M4A, OPUS, видео;
+  распаковка настоящего 7z (пути к файлам — в переменных окружения, см. комментарии тестов).
 
 Пути с настоящими моделями в тестах зашиты как `D:\Ollivo\models\…` — на другой машине
 их надо поменять.
@@ -87,7 +89,8 @@ src/                  React + TypeScript
   recorder.ts         запись с микрофона сразу в WAV 16 кГц
   pages/              Chat, Catalog, Models, Computer, Settings, Wizard
   components/         Answer (markdown), ChatList, EngineCard, InstallScreen,
-                      HfForm, License, ProblemCard, Project (папка: «@», шаги, запись),
+                      HfForm, License, PartsSetup (докачать распознавание, ffmpeg),
+                      ProblemCard, Project (папка: «@», шаги, запись),
                       ProxyForm, RunningModel, UpdateCard
 src-tauri/src/        Rust-ядро
   lib.rs              все команды Tauri, общее состояние Core, план запуска модели
@@ -102,6 +105,7 @@ src-tauri/src/        Rust-ядро
   attach.rs           вложения: PDF (отдельным процессом), DOCX, ODT, текст, картинки
   vision.rs           зрение: подходящий mmproj рядом с моделью, выбор файла в репозитории HF
   speech.rs           whisper.cpp: расшифровка записей и диктовки, окно под длину фразы
+  media.rs            ffmpeg: M4A/OPUS/видео → WAV для whisper, HEIC/AVIF → картинка
   project.rs          папка проекта: список файлов, чтение, поиск, запись/правка/удаление с копией,
                       режимы «Вручную · Авто · План», границы папки
   trouble.rs          ошибки движка → что случилось, что делать, какие кнопки
@@ -267,10 +271,12 @@ scripts/              publish-update.ps1
 `llm_status` · `llm_start` · `llm_stop` · `llm_chat` · `llm_chat_stop` · `chat_presets` ·
 `chats_list` · `chats_search` · `chats_get` · `chats_save` · `chats_remove` ·
 `project_open` · `project_write_answer` · `project_undo` ·
+`attach_file` · `attach_trim` · `attach_preview` · `attach_needs` · `vision_offer` · `vision_download` ·
+`parts_status` · `speech_model_download` · `speech_dictate` · `speech_file` · `speech_stop` ·
 `update_check` · `update_install`
 
 События: `download://progress|finished`, `engine://progress|finished`,
-`llm://state|token|thought|answer`,
+`llm://state|token|thought|answer`, `speech://progress`,
 папка проекта — `llm://calling|step|write`, `update://progress|failed`.
 
 Долгие задачи регистрируются в `Core::start(id)`; id вида `engine:<движок>` и
@@ -290,8 +296,7 @@ scripts/              publish-update.ps1
 
 - **Закрыть фазу 3** ([docs/phase-3.md](docs/phase-3.md)): проверить в окне документы, картинки,
   «докачать зрение», диктовку (разрешение микрофона в WebView2, AudioWorklet), карточки «поправить»
-  и «удалить»; ffmpeg по требованию для M4A/AAC/OPUS, видео и картинок HEIC/AVIF (WebP и TIFF
-  уже перекодирует ядро);
+  и «удалить», установку ffmpeg; зеркало ffmpeg в S3;
   «модель не умеет с файлом — предложить подходящую» (обобщить `vision_offer`).
 - **«Сообщить о проблеме»** — перенесено из фазы 8: отчёт собирает ядро (версия, железо, движки,
   хвосты логов, ошибки `trouble.rs`, настройки без секретов, без переписки, имя пользователя
@@ -379,6 +384,10 @@ scripts/              publish-update.ps1
   выглядел как «модель читает по кругу и не может править».
 - CUDA-архив whisper.cpp без cuBLAS: `ggml-cuda.dll` молча не грузится, всё идёт на процессоре.
 - whisper всегда считает окно в 30 с — короткой фразе нужен `-ac` по длине, иначе вдвое дольше.
+- Сплошной 7z читается подряд: ненужный файл из архива надо дочитать до конца, иначе
+  следующий начнётся с его хвоста (`engines::unpack_7z`).
+- Голосовые Telegram — `.ogg`, но внутри Opus, а не Vorbis: whisper их не читает. Отличаем
+  по `OpusHead` в начале файла.
 - С `bundle.createUpdaterArtifacts` сборка без ключа подписи падает — CI из-за этого был
   красным четыре дня. В CI — `--config src-tauri/tauri.ci.conf.json`. Сборка без ключа
   оставляет рядом старый `.sig` — поэтому `publish-update -SkipBuild` подписывает заново.

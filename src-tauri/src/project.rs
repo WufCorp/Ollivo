@@ -229,7 +229,7 @@ pub fn read(root: &Path, rel: &str, from: usize, max_chars: usize) -> Result<Str
         return Err("это картинка — как текст её не прочесть".into());
     }
     let text = if DOCS.contains(&ext.as_str()) {
-        crate::attach::read(&path, Path::new(""))?.text
+        crate::attach::read(&path, Path::new(""), None)?.text
     } else {
         let bytes = std::fs::read(&path).map_err(|e| format!("файл не читается: {e}"))?;
         if crate::attach::looks_binary(&bytes) {

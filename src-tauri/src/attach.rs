@@ -49,8 +49,8 @@ pub fn estimate_tokens(text: &str) -> u64 {
 }
 
 /// Что за файл и как его читать — по расширению; неизвестное пробуем как текст.
-/// Картинки копируются в `images`.
-pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
+/// Картинки копируются в `images`; HEIC и AVIF открывает `ffmpeg`, если он установлен.
+pub fn read(path: &Path, images: &Path, ffmpeg: Option<&Path>) -> Result<Attachment, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let meta = std::fs::metadata(path).map_err(|_| "файл не открывается — возможно, его переместили".to_string())?;
     if meta.is_dir() {
@@ -68,18 +68,10 @@ pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
             return Err("старый формат Word — откройте файл в Word и сохраните как DOCX или PDF".into())
         }
         "xls" | "xlsx" | "ods" => return Err("таблицы пока не читаю — сохраните таблицу как CSV".into()),
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "tif" | "tiff" => {
-            return store_image(path, name, images, meta.len())
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "heic" | "heif" | "hif" | "avif" => {
+            return store_image(path, name, images, meta.len(), ffmpeg)
         }
-        // Внутри HEIC — кадр видео HEVC, в AVIF — AV1: чистых разборщиков на Rust нет,
-        // а кодеки Windows для них ставятся отдельно из Microsoft Store.
-        "heic" | "heif" | "avif" => {
-            return Err("такие картинки пока не открываю — сохраните их как JPG или PNG".into())
-        }
-        // wav, mp3, ogg, flac расшифровывает `speech.rs` — сюда они не доходят.
-        "m4a" | "aac" | "opus" | "wma" | "amr" | "mp4" | "webm" | "mkv" | "avi" | "mov" => {
-            return Err("такие записи пока не читаю — сохраните запись как MP3 или WAV".into())
-        }
+        // Записи и видео расшифровывает `speech.rs` — сюда они не доходят.
         _ => {
             let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
             if looks_binary(&bytes) {
@@ -102,8 +94,10 @@ pub fn read(path: &Path, images: &Path) -> Result<Attachment, String> {
 
 /// Копия картинки под именем по её содержимому: одну и ту же картинку в десяти разговорах
 /// храним один раз. Движок открывает картинки через stb_image: JPG, PNG, GIF, BMP он знает,
-/// WebP и TIFF — нет, их перекодируем сами.
-fn store_image(path: &Path, name: String, images: &Path, size: u64) -> Result<Attachment, String> {
+/// WebP и TIFF — нет, их перекодируем сами. В HEIC и AVIF — кадр HEVC и AV1: чистых
+/// разборщиков на Rust нет, а кодеки Windows для них ставятся из Store и есть не у всех,
+/// поэтому их открывает ffmpeg.
+fn store_image(path: &Path, name: String, images: &Path, size: u64, ffmpeg: Option<&Path>) -> Result<Attachment, String> {
     use sha2::{Digest, Sha256};
     if size > MAX_IMAGE {
         return Err("картинка больше 20 МБ — уменьшите её".into());
@@ -120,6 +114,10 @@ fn store_image(path: &Path, name: String, images: &Path, size: u64) -> Result<At
         None => {
             let (bytes, ext) = match format {
                 "webp" | "tiff" => convert(&bytes)?,
+                "heif" => {
+                    let ffmpeg = ffmpeg.ok_or("для таких картинок нужно докачать чтение файлов — приложите картинку ещё раз")?;
+                    convert(&crate::media::to_png(ffmpeg, path)?)?
+                }
                 "jpg" => upright_jpeg(&bytes).unwrap_or((bytes, "jpg")),
                 other => (bytes, other),
             };
@@ -148,9 +146,19 @@ fn sniff(bytes: &[u8]) -> Option<&'static str> {
         [b'B', b'M', ..] => "bmp",
         [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "webp",
         [b'I', b'I', b'*', 0, ..] | [b'M', b'M', 0, b'*', ..] => "tiff",
+        // HEIC и AVIF: коробка `ftyp` и марка формата. Просто `ftyp` не годится — так же
+        // начинается видео MP4.
+        [_, _, _, _, b'f', b't', b'y', b'p', b0, b1, b2, b3, ..]
+            if HEIF_BRANDS.contains(&[*b0, *b1, *b2, *b3]) =>
+        {
+            "heif"
+        }
         _ => return None,
     })
 }
+
+/// Марки HEIF: HEIC с телефонов, AVIF, общие `mif1`/`msf1`.
+const HEIF_BRANDS: &[[u8; 4]] = &[*b"heic", *b"heix", *b"heim", *b"heis", *b"hevc", *b"hevx", *b"mif1", *b"msf1", *b"avif", *b"avis"];
 
 /// Качество JPG при перекодировании: мелкий текст на снимке экрана ещё читается,
 /// а размер в разы меньше PNG.
@@ -548,7 +556,7 @@ mod tests {
         ] {
             let p = tmp(name);
             std::fs::write(&p, bytes).unwrap();
-            assert_eq!(read(&p, &tmp("images")).unwrap().text, "Привет, мир", "{name}");
+            assert_eq!(read(&p, &tmp("images"), None).unwrap().text, "Привет, мир", "{name}");
         }
     }
 
@@ -556,21 +564,21 @@ mod tests {
     fn code_file_is_text_binary_is_refused() {
         let p = tmp("main.rs");
         std::fs::write(&p, "fn main() {\r\n    println!(\"hi\");   \r\n}\r\n\r\n\r\n\r\n").unwrap();
-        let a = read(&p, &tmp("images")).unwrap();
+        let a = read(&p, &tmp("images"), None).unwrap();
         assert_eq!(a.text, "fn main() {\n    println!(\"hi\");\n}");
         assert_eq!(a.name, "main.rs");
         assert!(a.tokens > 0);
 
         let p = tmp("data.bin");
         std::fs::write(&p, [0x4D, 0x5A, 0x90, 0x00, 0x03]).unwrap();
-        assert!(read(&p, &tmp("images")).unwrap_err().contains("не текст"));
+        assert!(read(&p, &tmp("images"), None).unwrap_err().contains("не текст"));
     }
 
     #[test]
     fn old_formats_get_advice() {
         let p = tmp("old.doc");
         std::fs::write(&p, b"x").unwrap();
-        assert!(read(&p, &tmp("images")).unwrap_err().contains("DOCX"));
+        assert!(read(&p, &tmp("images"), None).unwrap_err().contains("DOCX"));
     }
 
     fn zip_with(path: &Path, entry: &str, xml: &str) {
@@ -592,7 +600,7 @@ mod tests {
 </w:body></w:document>"#;
         let p = tmp("dogovor.docx");
         zip_with(&p, "word/document.xml", xml);
-        assert_eq!(read(&p, &tmp("images")).unwrap().text, "Договор & условия\nЦена: 200\tруб.\n\nА  | Б  |");
+        assert_eq!(read(&p, &tmp("images"), None).unwrap().text, "Договор & условия\nЦена: 200\tруб.\n\nА  | Б  |");
     }
 
     #[test]
@@ -603,14 +611,14 @@ mod tests {
 </office:document-content>"#;
         let p = tmp("kniga.odt");
         zip_with(&p, "content.xml", xml);
-        assert_eq!(read(&p, &tmp("images")).unwrap().text, "Глава\u{a0}1\nПервый абзац");
+        assert_eq!(read(&p, &tmp("images"), None).unwrap().text, "Глава\u{a0}1\nПервый абзац");
     }
 
     #[test]
     fn broken_docx_is_explained() {
         let p = tmp("broken.docx");
         std::fs::write(&p, b"PK\x03\x04 not really").unwrap();
-        assert!(read(&p, &tmp("images")).unwrap_err().contains("повреждён"));
+        assert!(read(&p, &tmp("images"), None).unwrap_err().contains("повреждён"));
     }
 
     #[test]
@@ -670,22 +678,25 @@ mod tests {
         let png = [&b"\x89PNG\r\n\x1a\n"[..], &[0u8; 32]].concat();
         let p = tmp("фото.png");
         std::fs::write(&p, &png).unwrap();
-        let a = read(&p, &images).unwrap();
+        let a = read(&p, &images, None).unwrap();
         assert_eq!((a.kind.as_str(), a.name.as_str()), ("image", "фото.png"));
         let stored = a.path.clone().unwrap();
         assert!(stored.starts_with(&images) && stored.exists());
         // Та же картинка под другим именем — та же копия.
         let p2 = tmp("копия.PNG");
         std::fs::write(&p2, &png).unwrap();
-        assert_eq!(read(&p2, &images).unwrap().path, Some(stored.clone()));
+        assert_eq!(read(&p2, &images, None).unwrap().path, Some(stored.clone()));
         assert!(image_data_url(&stored).unwrap().starts_with("data:image/png;base64,iVBORw0KGgo"));
 
         let fake = tmp("fake.jpg");
         std::fs::write(&fake, b"not an image").unwrap();
-        assert!(read(&fake, &images).unwrap_err().contains("не картинка"));
+        assert!(read(&fake, &images, None).unwrap_err().contains("не картинка"));
+        // HEIC без ffmpeg не открыть; MP4, названный .heic, — не картинка.
         let heic = tmp("pic.heic");
-        std::fs::write(&heic, b"....ftypheic").unwrap();
-        assert!(read(&heic, &images).unwrap_err().contains("JPG"));
+        std::fs::write(&heic, b"\0\0\0\x18ftypheic\0\0\0\0mif1heic").unwrap();
+        assert!(read(&heic, &images, None).unwrap_err().contains("докачать"));
+        std::fs::write(&heic, b"\0\0\0\x18ftypisom\0\0\0\0").unwrap();
+        assert!(read(&heic, &images, None).unwrap_err().contains("не картинка"));
     }
 
     fn encoded(img: &image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
@@ -697,7 +708,7 @@ mod tests {
     fn stored(name: &str, bytes: &[u8]) -> image::DynamicImage {
         let p = tmp(name);
         std::fs::write(&p, bytes).unwrap();
-        let a = read(&p, &tmp("conv")).unwrap();
+        let a = read(&p, &tmp("conv"), None).unwrap();
         assert_eq!(a.name, name);
         let path = a.path.unwrap();
         assert!(matches!(sniff(&std::fs::read(&path).unwrap()), Some("jpg" | "png")), "{path:?}");
@@ -726,7 +737,7 @@ mod tests {
 
         let broken = tmp("битая.webp");
         std::fs::write(&broken, b"RIFF\0\0\0\0WEBPVP8 garbage").unwrap();
-        assert!(read(&broken, &tmp("conv")).unwrap_err().contains("повреждена"));
+        assert!(read(&broken, &tmp("conv"), None).unwrap_err().contains("повреждена"));
     }
 
     /// Фото с телефона, снятое «портретом»: кадр 40×20 и пометка EXIF «повернуть на 90°».
@@ -743,6 +754,6 @@ mod tests {
         // Без пометки — файл уходит как есть, байт в байт.
         let p = tmp("ровно.jpg");
         std::fs::write(&p, &jpg).unwrap();
-        assert_eq!(std::fs::read(read(&p, &tmp("conv")).unwrap().path.unwrap()).unwrap(), jpg);
+        assert_eq!(std::fs::read(read(&p, &tmp("conv"), None).unwrap().path.unwrap()).unwrap(), jpg);
     }
 }

@@ -3,13 +3,14 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ATTACH_EXTENSIONS,
-  AUDIO_EXTENSIONS,
+  SPEECH_PARTS,
   onSpeechProgress,
+  partsStatus,
   speechDictate,
   speechFile,
-  speechStatus,
   speechStop,
   attachFile,
+  attachNeeds,
   attachPreview,
   attachTrim,
   formatBytes,
@@ -49,7 +50,7 @@ import {
 } from "../api";
 import Answer, { copyText } from "../components/Answer";
 import ProblemCard from "../components/ProblemCard";
-import SpeechSetup from "../components/SpeechSetup";
+import PartsSetup from "../components/PartsSetup";
 import { Mentions, ModeSwitch, Steps, WriteCard, claimsChanges, matchFiles, mentionAt } from "../components/Project";
 import { record, type Recording } from "../recorder";
 import { crashActions } from "../components/RunningModel";
@@ -167,8 +168,8 @@ export default function Chat({
   const [eyes, setEyes] = useState<Eyes | null>(null);
   const eyesRef = useRef<Eyes | null>(null);
   eyesRef.current = eyes;
-  /** Распознавание речи не стоит: зачем понадобилось и какие записи ждут. */
-  const [speech, setSpeech] = useState<{ why: string; paths?: string[] } | null>(null);
+  /** Не хватает частей (распознавание речи, ffmpeg): зачем понадобились, какие и какие файлы ждут. */
+  const [setup, setSetup] = useState<{ why: string; parts: string[]; paths?: string[] } | null>(null);
   const [rec, setRec] = useState<Recording | null>(null);
   const [recSec, setRecSec] = useState(0);
   /** Диктовка записана и распознаётся. */
@@ -416,20 +417,22 @@ export default function Chat({
     setReading(true);
     let pending = filesRef.current;
     const blind: Attachment[] = [];
-    const deaf: string[] = [];
+    // Файлы, для которых сначала надо докачать части, и сами части.
+    const waiting: string[] = [];
+    const parts = new Set<string>();
+    let waitingAudio = false;
     try {
       for (const p of paths) {
         let a: Attachment;
-        const audio = AUDIO_EXTENSIONS.includes(p.split(".").pop()?.toLowerCase() ?? "");
-        if (audio) {
-          const s = await speechStatus();
-          if (!s.engine || !s.model) {
-            deaf.push(p);
-            continue;
-          }
+        const need = await attachNeeds(p);
+        if (need.missing.length) {
+          waiting.push(p);
+          need.missing.forEach((m) => parts.add(m));
+          waitingAudio ||= need.audio;
+          continue;
         }
         try {
-          if (audio) {
+          if (need.audio) {
             setTranscribing({ name: fileName(p), percent: 0 });
             a = await speechFile(p);
           } else {
@@ -460,7 +463,15 @@ export default function Chat({
     } finally {
       setReading(false);
     }
-    if (deaf.length) setSpeech({ why: "расшифровать запись", paths: deaf });
+    if (waiting.length) {
+      // Порядок установки — как у ядра: ffmpeg, движок распознавания, модель.
+      const order = ["ffmpeg", ...SPEECH_PARTS];
+      setSetup({
+        why: waitingAudio ? "расшифровать запись" : "открыть такую картинку",
+        parts: order.filter((p) => parts.has(p)),
+        paths: waiting,
+      });
+    }
     if (blind.length) {
       const model = llmRef.current?.model ?? "";
       setEyes({ images: [...(eyesRef.current?.images ?? []), ...blind] });
@@ -502,9 +513,9 @@ export default function Chat({
       return;
     }
     setFileError(null);
-    const s = await speechStatus();
-    if (!s.engine || !s.model) {
-      setSpeech({ why: "надиктовать вопрос" });
+    const s = await partsStatus(SPEECH_PARTS);
+    if (s.missing.length) {
+      setSetup({ why: "надиктовать вопрос", parts: SPEECH_PARTS });
       return;
     }
     try {
@@ -572,7 +583,7 @@ export default function Chat({
   const pickFiles = async () => {
     const picked = await open({
       multiple: true,
-      filters: [{ name: "Документы, текст и картинки", extensions: ATTACH_EXTENSIONS }],
+      filters: [{ name: "Документы, картинки и записи", extensions: ATTACH_EXTENSIONS }],
     });
     if (picked) attach(Array.isArray(picked) ? picked : [picked]);
   };
@@ -856,13 +867,15 @@ export default function Chat({
               )}
             </div>
           )}
-          {speech && (
-            <SpeechSetup
-              why={speech.why}
-              onCancel={() => setSpeech(null)}
+          {setup && (
+            <PartsSetup
+              key={setup.parts.join()}
+              why={setup.why}
+              parts={setup.parts}
+              onCancel={() => setSetup(null)}
               onReady={() => {
-                const waiting = speech.paths;
-                setSpeech(null);
+                const waiting = setup.paths;
+                setSetup(null);
                 if (waiting) attach(waiting);
               }}
             />

@@ -75,6 +75,27 @@
           ]
         }
       ]
+    },
+    {
+      "id": "ffmpeg",
+      "title": "Чтение записей и видео",
+      "version": "9.0.2",
+      "exe": "ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe",
+      "prefer": ["cpu"],
+      "builds": [
+        {
+          "build": "cpu",
+          "files": [
+            {
+              "name": "ffmpeg-9.0.2-essentials_build.7z",
+              "urls": ["https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.7z"],
+              "sha256": "4705843ccaaf54257c16ad90f3e952ece33c17df964ecf7bfdbb0f49c7171077",
+              "size": 35430500,
+              "only": ["ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe", "ffmpeg-9.0.2-essentials_build/LICENSE"]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

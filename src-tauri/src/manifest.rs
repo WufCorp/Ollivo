@@ -41,6 +41,10 @@ pub struct EngineFile {
     pub urls: Vec<String>,
     pub sha256: String,
     pub size: u64,
+    /// Что взять из архива — пути внутри него через `/`; пусто — всё. В сборке ffmpeg
+    /// рядом с нужным `ffmpeg.exe` лежат ещё две программы по стольку же мегабайт.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
 }
 
 impl Manifest {

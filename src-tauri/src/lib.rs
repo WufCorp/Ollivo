@@ -1,4 +1,5 @@
 mod attach;
+mod media;
 mod vision;
 mod speech;
 mod catalog;
@@ -699,27 +700,57 @@ async fn vision_download(app: AppHandle, core: CoreState<'_>, model: PathBuf) ->
     Ok(id)
 }
 
-/// Установленный движок распознавания текущей версии.
-fn speech_engine(core: &Core) -> Option<engines::Installed> {
-    let version = core.manifest.engine("whisper.cpp")?.version.clone();
-    engines::installed(&core.data_dir(), "whisper.cpp").into_iter().find(|i| i.version == version)
+/// Установленный движок текущей версии: `whisper.cpp`, `ffmpeg`.
+fn ready_engine(core: &Core, id: &str) -> Option<engines::Installed> {
+    let version = core.manifest.engine(id)?.version.clone();
+    engines::installed(&core.data_dir(), id).into_iter().find(|i| i.version == version)
 }
 
-/// Готово ли распознавание речи и сколько ещё качать.
-#[tauri::command]
-fn speech_status(core: CoreState<'_>) -> speech::Status {
-    let engine = speech_engine(&core).is_some();
-    let model = speech::model_path(&core.data_dir()).is_file();
-    let engine_size = core
-        .manifest
-        .engine("whisper.cpp")
-        .and_then(|e| e.builds.first())
-        .map_or(0, |b| b.size());
-    speech::Status {
-        engine,
-        model,
-        download: if engine { 0 } else { engine_size } + if model { 0 } else { speech::MODEL_SIZE },
+/// Что из докачиваемых по требованию частей ещё не стоит и сколько это весит.
+#[derive(serde::Serialize)]
+struct PartsStatus {
+    /// Недостающие части в порядке установки: `ffmpeg`, `whisper.cpp`, `speech:model`.
+    missing: Vec<String>,
+    /// Сколько байт осталось скачать.
+    download: u64,
+}
+
+fn parts_missing(core: &Core, parts: &[&str]) -> PartsStatus {
+    let mut s = PartsStatus { missing: vec![], download: 0 };
+    for &part in parts {
+        let size = if part == media::SPEECH_MODEL {
+            (!speech::model_path(&core.data_dir()).is_file()).then_some(speech::MODEL_SIZE)
+        } else {
+            // У ffmpeg и whisper одна сборка — на процессоре.
+            ready_engine(core, part)
+                .is_none()
+                .then(|| core.manifest.engine(part).and_then(|e| e.builds.first()).map_or(0, |b| b.size()))
+        };
+        if let Some(size) = size {
+            s.missing.push(part.to_string());
+            s.download += size;
+        }
     }
+    s
+}
+
+/// Готовы ли части (распознавание речи, ffmpeg) и сколько ещё качать.
+#[tauri::command]
+fn parts_status(core: CoreState<'_>, parts: Vec<String>) -> PartsStatus {
+    parts_missing(&core, &parts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// Что нужно, чтобы приложить файл: запись ли это и каких частей не хватает.
+#[derive(serde::Serialize)]
+struct AttachNeeds {
+    audio: bool,
+    #[serde(flatten)]
+    status: PartsStatus,
+}
+
+#[tauri::command]
+fn attach_needs(core: CoreState<'_>, path: PathBuf) -> AttachNeeds {
+    AttachNeeds { audio: media::is_audio(&path), status: parts_missing(&core, &media::parts_for(&path)) }
 }
 
 /// Модель распознавания. Прогресс и итог — события загрузок, id `speech:model`.
@@ -755,7 +786,7 @@ fn speech_model_download(app: AppHandle, core: CoreState<'_>) -> Result<String, 
 
 /// Движок и модель распознавания; ошибка — если что-то не поставлено.
 fn speech_parts(core: &Core) -> Result<(PathBuf, PathBuf), String> {
-    let exe = speech_engine(core).ok_or("распознавание речи не установлено")?.exe;
+    let exe = ready_engine(core, media::WHISPER).ok_or("распознавание речи не установлено")?.exe;
     let model = speech::model_path(&core.data_dir());
     if !model.is_file() {
         return Err("распознавание речи не установлено".into());
@@ -792,11 +823,26 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
     let cancel = CancellationToken::new();
     std::mem::replace(&mut *core.speech.lock().unwrap(), cancel.clone()).cancel();
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    // M4A, OPUS, видео: звук достаёт ffmpeg во временный WAV — whisper их не читает.
+    let wav = if media::parts_for(&path).contains(&media::FFMPEG) {
+        let ffmpeg = ready_engine(&core, media::FFMPEG).ok_or("чтение таких записей не установлено")?.exe;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let wav = core.data_dir().join("downloads").join(format!("speech-{stamp}.wav"));
+        std::fs::create_dir_all(wav.parent().unwrap()).map_err(|e| e.to_string())?;
+        media::to_wav(&ffmpeg, &path, &wav, &cancel).await?;
+        Some(wav)
+    } else {
+        None
+    };
     let p = path.clone();
-    let text = speech::transcribe(&exe, &model, &path, None, &cancel, |percent| {
+    let text = speech::transcribe(&exe, &model, wav.as_deref().unwrap_or(&path), None, &cancel, |percent| {
         let _ = app.emit("speech://progress", SpeechProgress { path: p.clone(), percent });
     })
-    .await?;
+    .await;
+    if let Some(wav) = wav {
+        let _ = std::fs::remove_file(wav);
+    }
+    let text = text?;
     if text.trim().is_empty() {
         return Err("в записи не нашлось речи".into());
     }
@@ -1226,7 +1272,8 @@ async fn project_undo(core: CoreState<'_>, folder: PathBuf, step: project::Step)
 #[tauri::command]
 async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attachment, String> {
     let images = core.attachments.clone();
-    let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path, &images))
+    let ffmpeg = ready_engine(&core, media::FFMPEG).map(|e| e.exe);
+    let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path, &images, ffmpeg.as_deref()))
         .await
         .map_err(|e| e.to_string())??;
     let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
@@ -1409,7 +1456,8 @@ pub fn run() {
             attach_preview,
             vision_offer,
             vision_download,
-            speech_status,
+            parts_status,
+            attach_needs,
             speech_model_download,
             speech_dictate,
             speech_file,

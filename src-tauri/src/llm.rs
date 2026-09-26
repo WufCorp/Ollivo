@@ -768,7 +768,7 @@ mod tests {
         assert!(llm.vision);
 
         let images = std::env::temp_dir().join("ollivo-vision-test").join("images");
-        let pic = crate::attach::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/circle42.png"), &images).unwrap();
+        let pic = crate::attach::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/circle42.png"), &images, None).unwrap();
         let ask = |question: &'static str, files: Vec<crate::attach::Attachment>| {
             let port = llm.port;
             async move {

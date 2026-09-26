@@ -2,7 +2,7 @@
 //!
 //! Раскладка в папке данных (`<диск>:\Ollivo`):
 //! ```text
-//! downloads\<архив>.zip                    — пока идёт установка, потом удаляется
+//! downloads\<архив>.zip|.7z                — пока идёт установка, потом удаляется
 //! engines\<id>\<версия>-<сборка>\          — готовый движок
 //! engines\<id>\<версия>-<сборка>\ollivo.json — метка «установлено полностью»
 //! engines\<id>\<версия>-<сборка>\ollivo.files.json — размеры и SHA256 файлов (для «Починить»)
@@ -128,7 +128,7 @@ pub async fn install(
         };
         dl.download(&req, cancel, &map).await?;
         offset += f.size;
-        archives.push(req.dest);
+        archives.push((req.dest, f.only.clone()));
     }
 
     on_progress(InstallProgress { stage: Stage::Unpack, done: total, total, speed: 0.0 });
@@ -158,7 +158,7 @@ pub async fn install(
         std::fs::remove_dir_all(&dir)?;
     }
     std::fs::rename(&tmp, &dir)?;
-    for a in &archives {
+    for (a, _) in &archives {
         let _ = std::fs::remove_file(a);
     }
     Ok(done)
@@ -267,19 +267,71 @@ fn file_sums(dir: &Path) -> std::io::Result<Vec<FileSum>> {
     Ok(out)
 }
 
-fn unpack_all(archives: &[PathBuf], into: &Path) -> Result<(), Error> {
+/// Архивы и что из каждого взять (пусто — всё).
+fn unpack_all(archives: &[(PathBuf, Vec<String>)], into: &Path) -> Result<(), Error> {
     if into.exists() {
         std::fs::remove_dir_all(into)?;
     }
     std::fs::create_dir_all(into)?;
-    for a in archives {
+    for (a, only) in archives {
         let name = a.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let bad = |e: &dyn std::fmt::Display| Error::Unpack(name.clone(), e.to_string());
+        if a.extension().is_some_and(|e| e.eq_ignore_ascii_case("7z")) {
+            unpack_7z(a, only, into).map_err(|e| bad(&e))?;
+            continue;
+        }
         let mut zip = zip::ZipArchive::new(std::fs::File::open(a)?).map_err(|e| bad(&e))?;
-        // `extract` сам отбрасывает пути вида `..\..\` (zip slip).
-        zip.extract(into).map_err(|e| bad(&e))?;
+        if only.is_empty() {
+            // `extract` сам отбрасывает пути вида `..\..\` (zip slip).
+            zip.extract(into).map_err(|e| bad(&e))?;
+            continue;
+        }
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| bad(&e))?;
+            let dest = inside(into, entry.name()).filter(|_| entry.is_file() && wanted(only, entry.name()));
+            if let Some(dest) = dest {
+                write_entry(&dest, &mut entry)?;
+            }
+        }
     }
     Ok(())
+}
+
+/// 7z: сборки ffmpeg в нём втрое меньше, чем в zip (35 МБ против 115).
+fn unpack_7z(archive: &Path, only: &[String], into: &Path) -> Result<(), sevenz_rust2::Error> {
+    let mut reader = sevenz_rust2::ArchiveReader::open(archive, sevenz_rust2::Password::empty())?;
+    reader.for_each_entries(|entry, data| {
+        match inside(into, entry.name()).filter(|_| !entry.is_directory() && wanted(only, entry.name())) {
+            Some(dest) => write_entry(&dest, data)?,
+            // Сплошной архив читается подряд: ненужный файл всё равно дочитываем до конца,
+            // иначе следующий начнётся с его хвоста.
+            None => {
+                std::io::copy(data, &mut std::io::sink())?;
+            }
+        }
+        Ok(true)
+    })
+}
+
+fn write_entry(dest: &Path, data: &mut dyn std::io::Read) -> std::io::Result<()> {
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::io::copy(data, &mut std::fs::File::create(dest)?)?;
+    Ok(())
+}
+
+/// Путь из архива внутри папки движка; `None` — путь пустой или ведёт наружу
+/// (`..`, `C:\`, `\\server`): архив с зеркала мог быть подменён.
+fn inside(into: &Path, name: &str) -> Option<PathBuf> {
+    let rel = Path::new(name);
+    let normal = rel.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+    (normal && rel.components().next().is_some()).then(|| into.join(rel))
+}
+
+fn wanted(only: &[String], name: &str) -> bool {
+    let name = name.replace('\\', "/");
+    only.is_empty() || only.iter().any(|o| *o == name)
 }
 
 #[cfg(test)]
@@ -310,6 +362,7 @@ mod tests {
                     urls: vec![srv.url.clone()],
                     sha256: sha(data),
                     size: data.len() as u64,
+                    only: vec![],
                 };
                 servers.push(srv);
                 f
@@ -349,6 +402,47 @@ mod tests {
         let before = srv[0].requests.load(Ordering::SeqCst);
         install(&dl, &root, &e, &e.builds[0], &CancellationToken::new(), &|_| {}).await.unwrap();
         assert_eq!(srv[0].requests.load(Ordering::SeqCst), before);
+    }
+
+    #[tokio::test]
+    async fn only_listed_files_are_unpacked() {
+        let main = make_zip(&[("ff/bin/ffmpeg.exe", b"exe"), ("ff/bin/ffplay.exe", b"big"), ("ff/LICENSE", b"GPL")]);
+        let (mut e, _srv) = engine(&[("ff.zip", &main)]);
+        e.exe = "ff/bin/ffmpeg.exe".into();
+        e.builds[0].files[0].only = vec!["ff/bin/ffmpeg.exe".into(), "ff/LICENSE".into()];
+        let root = tmp_root("only");
+        let got = install(&Downloader::new(), &root, &e, &e.builds[0], &CancellationToken::new(), &|_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&got.exe).unwrap(), b"exe");
+        assert!(got.dir.join("ff/LICENSE").is_file());
+        assert!(!got.dir.join("ff/bin/ffplay.exe").exists());
+    }
+
+    #[test]
+    fn archive_paths_stay_inside() {
+        let into = Path::new(r"D:\Ollivo\engines\x");
+        assert_eq!(inside(into, "bin/ffmpeg.exe"), Some(into.join("bin").join("ffmpeg.exe")));
+        for bad in ["../evil.exe", r"..\evil.exe", r"C:\Windows\evil.exe", "/etc/x", r"\\srv\share\x", ""] {
+            assert_eq!(inside(into, bad), None, "{bad}");
+        }
+        assert!(wanted(&["a/b.exe".into()], r"a\b.exe") && !wanted(&["a/b.exe".into()], "a/c.exe"));
+    }
+
+    /// Настоящая сборка ffmpeg в 7z: распаковать только ffmpeg.exe.
+    /// `OLLIVO_FF7Z=<путь к ffmpeg-9.0.2-essentials_build.7z> cargo test engines::tests::ffmpeg_7z_real -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn ffmpeg_7z_real() {
+        let archive = PathBuf::from(std::env::var("OLLIVO_FF7Z").unwrap());
+        let e = crate::manifest::Manifest::bundled();
+        let e = e.engine("ffmpeg").unwrap();
+        let into = tmp_root("ff7z");
+        let started = std::time::Instant::now();
+        unpack_all(&[(archive, e.builds[0].files[0].only.clone())], &into).unwrap();
+        println!("распаковано за {:.1} с", started.elapsed().as_secs_f64());
+        let sums = file_sums(&into).unwrap();
+        println!("{:#?}", sums.iter().map(|f| (&f.path, f.size)).collect::<Vec<_>>());
+        let out = std::process::Command::new(into.join(&e.exe)).arg("-version").output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("ffmpeg version 9.0.2"));
     }
 
     #[tokio::test]
