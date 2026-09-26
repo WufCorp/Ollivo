@@ -155,6 +155,11 @@ async fn idle_watch(app: AppHandle) {
         }
         // Занято — модель загружается или её останавливают: не мешаем.
         let Ok(mut slot) = core.llm.try_lock() else { continue };
+        // Ещё раз под замком: вопрос мог прийти, пока мы решали.
+        let idle = core.llm_used.lock().unwrap().elapsed();
+        if !idle_due(minutes, idle, core.llm_busy.load(std::sync::atomic::Ordering::SeqCst)) {
+            continue;
+        }
         let Some(l) = slot.take() else { continue };
         drop(slot);
         l.handle.stop().await;
@@ -1435,6 +1440,18 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
         return Ok(());
     };
+    // Во время переноса папки программы модель запустилась бы из старой папки,
+    // которую перенос потом удаляет.
+    if core.running.lock().unwrap().contains_key(MOVE_TASK) {
+        let p = trouble::Problem {
+            text: "Сейчас переносится папка программы.".into(),
+            hint: Some("Модель можно будет запустить, когда перенос закончится.".into()),
+            actions: vec![],
+            details: "идёт перенос папки программы".into(),
+        };
+        emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
+        return Ok(());
+    }
     let core = core.inner().clone();
     *core.llm_asleep.lock().unwrap() = None;
     let cancel = CancellationToken::new();
@@ -1568,6 +1585,9 @@ async fn llm_chat(
     folder: Option<PathBuf>,
     mode: String,
 ) -> Result<(), trouble::Problem> {
+    // «Занята» — раньше, чем берём порт: сторож простоя проверяет это под тем же замком
+    // и не выгрузит модель, которой уже задали вопрос.
+    let busy = Busy::new(core.inner().clone());
     let (port, vision, can_call, ctx) = match core.llm.try_lock() {
         Ok(slot) => slot
             .as_ref()
@@ -1595,7 +1615,6 @@ async fn llm_chat(
     let cancel = CancellationToken::new();
     // Новый вопрос обрывает недоговорённый ответ.
     std::mem::replace(&mut *core.chat.lock().unwrap(), cancel.clone()).cancel();
-    let busy = Busy::new(core.inner().clone());
     tauri::async_runtime::spawn(async move {
         let _busy = busy;
         let res = llm::chat(

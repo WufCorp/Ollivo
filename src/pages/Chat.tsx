@@ -130,9 +130,12 @@ function EyesCard({
 }) {
   const o = eyes.offer;
   const what = eyes.images.length > 1 ? `Картинки (${eyes.images.length})` : `«${eyes.images[0].name}»`;
-  // Скорость — первая строка подробностей у «зелёных»; у остальных там память, она лишняя.
-  const how = (v: Verdict) =>
-    `${LIGHTS[v.light]} ${v.headline}${v.light === "green" && v.details[0] ? `, ${v.details[0]}` : ""}`;
+  // Из подробностей — только скорость («пишет примерно…»): память и слои новичку ни к чему,
+  // а медленную модель он должен увидеть до загрузки. Стоит она у разных оценок в разных строках.
+  const how = (v: Verdict) => {
+    const speed = v.details.find((d) => d.startsWith("пишет"));
+    return `${LIGHTS[v.light]} ${v.headline}${speed ? `, ${speed}` : ""}`;
+  };
   let text: string;
   let action: { label: string; run: () => void } | null = null;
   if (eyes.restarting) {
@@ -178,6 +181,13 @@ function EyesCard({
     </div>
   );
 }
+
+/** Подсказка в поле ввода, когда что-то приложено: про то, что именно приложено. */
+const ASK_ABOUT: Record<Attachment["kind"], string> = {
+  document: "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать.",
+  image: "Что спросить про картинку? Например: «Что здесь написано?» Можно и ничего не писать.",
+  audio: "Что сделать с записью? Например: «Выпиши главное». Можно и ничего не писать.",
+};
 
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
@@ -349,8 +359,9 @@ export default function Chat({
       onLlmWrite((w) => setLast((l) => ({ ...l, write: w }))),
       onLlmStep((step) => {
         setLast((l) => ({ ...l, calling: null, write: null, steps: [...(l.steps ?? []), step] }));
-        // Модель создала файл — он должен появиться и в списке по «@».
-        if (step.kind === "write" && step.ok && folderRef.current) projectOpen(folderRef.current).then(setListing, () => {});
+        // Модель создала или удалила файл — список по «@» и счёт над разговором должны это знать.
+        const changed = step.kind === "write" || step.kind === "edit" || step.kind === "delete";
+        if (changed && step.ok && folderRef.current) projectOpen(folderRef.current).then(setListing, () => {});
       }),
       onLlmAnswer((d) => {
         setAnswering(false);
@@ -1028,7 +1039,7 @@ export default function Chat({
             value={draft}
             placeholder={
               files.length
-                ? "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать."
+                ? ASK_ABOUT[files.every((f) => f.kind === files[0].kind) ? files[0].kind : "document"]
                 : folder
                   ? "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка."
                   : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
