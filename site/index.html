@@ -316,6 +316,54 @@ ol.how b { color: var(--ink); }
 .faq details p + p { margin-top: -10px; }
 
 /* ---------- Финал ---------- */
+/* ---------- Поддержать ---------- */
+.support { background: var(--surface); border-block: 1px solid var(--line); }
+.give { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.give-card {
+  display: flex; align-items: center; gap: 18px; padding: 22px 24px;
+  border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg);
+  text-decoration: none; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.give-card:hover { transform: translateY(-2px); border-color: var(--brand); box-shadow: 0 16px 40px -24px var(--brand); }
+.give-card:focus-visible { outline: 3px solid var(--olive-bright); outline-offset: 3px; }
+.give-card b { display: block; font: 700 22px var(--font-display); letter-spacing: -0.02em; }
+.give-card b + span { color: var(--muted); font-size: 15px; }
+.give-mark {
+  flex: none; width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center;
+  background: var(--brand); color: #fff; font: 700 24px var(--font-display);
+}
+.give-go { margin-left: auto; font-size: 24px; color: var(--muted); transition: transform .15s ease, color .15s ease; }
+.give-card:hover .give-go { transform: translateX(4px); color: var(--brand); }
+.coins { margin-top: 56px; }
+.coins h3 { font-size: 26px; }
+.coins-warn {
+  margin: 14px 0 24px; padding: 14px 18px; max-width: 820px; font-size: 15px;
+  border-left: 3px solid var(--yellow); border-radius: 0 12px 12px 0;
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+}
+.coin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.coin {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 22px;
+  border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg);
+}
+/* QR всегда на белом: тёмный код на тёмном фоне телефоны читают плохо. */
+.coin img { width: 148px; height: 148px; padding: 6px; background: #fff; border-radius: 12px; margin-bottom: 6px; }
+.coin h4 { margin: 0; font: 700 20px var(--font-display); }
+.coin h4 span { font: 400 15px var(--font); color: var(--muted); margin-left: 4px; }
+.coin-note { font-size: 13px; color: var(--muted); }
+.addr {
+  width: 100%; margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2);
+  font: 13px/1.5 var(--mono); word-break: break-all; user-select: all;
+}
+.coin .copy { margin-top: auto; padding: 10px 16px; font-size: 14px; border-radius: 11px; }
+.coin .copy.done { border-color: var(--green); color: var(--green); }
+.give-more { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 56px; }
+.give-more .card { grid-column: auto; }
+.give-more ul { margin: 0; padding-left: 20px; color: var(--muted); font-size: 16px; display: grid; gap: 8px; }
+.give-more b { color: var(--ink); }
+@media (max-width: 960px) { .coin-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .give, .coin-grid, .give-more { grid-template-columns: 1fr; } }
+
 .final { text-align: center; padding: 120px 0; position: relative; isolation: isolate; }
 .final::before { content: ""; position: absolute; inset: 0; z-index: -1; background: radial-gradient(700px 360px at 50% 60%, var(--glow-1), transparent 70%); }
 .final h2 { font-size: clamp(36px, 5.4vw, 64px); max-width: 820px; margin: 0 auto; }
@@ -348,6 +396,7 @@ footer a:hover { color: var(--ink); }
       <a href="#privacy">Приватность</a>
       <a href="#road">Что дальше</a>
       <a href="#faq">Вопросы</a>
+      <a href="#support">Поддержать</a>
     </nav>
     <a class="btn btn-primary" href="#download">Скачать</a>
   </div>
@@ -681,10 +730,83 @@ footer a:hover { color: var(--ink); }
         <summary>Сколько стоит?</summary>
         <p>Сейчас — ничего: это ранняя версия, и нам важнее ваши отзывы. Если что-то не работает, нажмите в программе
           «Сообщить о проблеме».</p>
+        <p>Хотите помочь проекту деньгами — <a href="#support">вот как</a>.</p>
       </details>
     </div>
   </div>
 </section>
+
+<!-- support:start — Собрано scripts/make-support.mjs из site/support/support.json — правьте там. -->
+<section id="support" class="support">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Поддержать</span>
+      <h2>Ollivo делает один человек</h2>
+      <p>Программа бесплатная, без рекламы и слежки. Если она вам пригодилась — помогите ей расти.</p>
+    </div>
+    <div class="give">
+      <a class="give-card reveal" href="https://boosty.to/wufcorp/donate" style="--brand:#F15F2C">
+        <span class="give-mark" aria-hidden="true">B</span>
+        <span><b>Boosty</b><span>Подписка на развитие проекта — каждый месяц</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+      <a class="give-card reveal" href="https://yoomoney.ru/to/4100119273215272" style="--brand:#8B3FFD">
+        <span class="give-mark" aria-hidden="true">Ю</span>
+        <span><b>ЮMoney</b><span>Разово, любой суммой, картой любого банка</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+    </div>
+    <div class="coins reveal">
+      <h3>Криптовалюта</h3>
+      <p class="coins-warn">Отправляйте <b>только указанную монету и только в указанной сети</b> — иначе перевод не дойдёт,
+        и вернуть его не получится. После вставки сверьте первые и последние 4 символа адреса.</p>
+      <div class="coin-grid">
+        <article class="coin">
+          <img src="support/usdt-trc20.svg" alt="QR-код USDT" width="148" height="148" loading="lazy">
+          <h4>USDT <span>сеть TRON (TRC20)</span></h4>
+          <p class="coin-note">Минимум — 0.005 USDT.</p>
+          <code class="addr">TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7">Скопировать адрес</button>
+        </article>
+        <article class="coin">
+          <img src="support/ton.svg" alt="QR-код TON" width="148" height="148" loading="lazy">
+          <h4>TON <span>сеть TON</span></h4>
+          <p class="coin-note">На некоторых биржах монета называется GRAM.</p>
+          <p class="coin-note">Минимум — 0.005 TON.</p>
+          <code class="addr">UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls">Скопировать адрес</button>
+        </article>
+        <article class="coin">
+          <img src="support/btc.svg" alt="QR-код Bitcoin" width="148" height="148" loading="lazy">
+          <h4>Bitcoin <span>сеть Bitcoin</span></h4>
+          <p class="coin-note">Минимум — 0.00001 BTC.</p>
+          <code class="addr">1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq">Скопировать адрес</button>
+        </article>
+      </div>
+    </div>
+    <div class="give-more">
+      <article class="card reveal">
+        <h3>На что пойдут деньги</h3>
+        <ul>
+          <li><b>Видеокарты AMD и Intel для проверки.</b> Сейчас программа работает только с NVIDIA.</li>
+          <li><b>Сервер и трафик.</b> Обновления программы раздаются с нашего сервера.</li>
+          <li><b>Домен ollivo.ru.</b> Короткий адрес для сайта и обновлений.</li>
+          <li><b>Время.</b> Чем больше поддержки, тем быстрее выходят картинки, голос и видео.</li>
+        </ul>
+      </article>
+      <article class="card reveal">
+        <h3>Помочь можно и без денег</h3>
+        <ul>
+          <li>Расскажите о программе знакомым, которым хотелось попробовать ИИ у себя на компьютере.</li>
+          <li>Нашли ошибку — нажмите в программе «Сообщить о проблеме» или <a href="https://github.com/WufCorp/Ollivo/issues/new/choose">напишите на GitHub</a>.</li>
+          <li>Поставьте звезду <a href="https://github.com/WufCorp/Ollivo">репозиторию на GitHub</a> — так его чаще находят.</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+<!-- support:end -->
 
 <section class="final">
   <div class="wrap">
@@ -709,6 +831,7 @@ footer a:hover { color: var(--ink); }
       <a href="https://github.com/WufCorp/Ollivo">GitHub</a>
       <a href="https://github.com/WufCorp/Ollivo/releases">Все версии</a>
       <a href="https://github.com/WufCorp/Ollivo/issues">Сообщить о проблеме</a>
+      <a href="#support">Поддержать проект</a>
     </nav>
   </div>
 </footer>
@@ -725,6 +848,20 @@ const io = new IntersectionObserver((entries) => {
   for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
 }, { rootMargin: "0px 0px -8% 0px" });
 document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+// «Скопировать адрес»: без буфера обмена (старый браузер, http) адрес выделяется целиком — Ctrl+C.
+document.querySelectorAll(".copy").forEach((b) => b.addEventListener("click", async () => {
+  const text = b.dataset.copy;
+  try {
+    await navigator.clipboard.writeText(text);
+    b.textContent = "Скопировано ✓";
+    b.classList.add("done");
+    setTimeout(() => { b.textContent = "Скопировать адрес"; b.classList.remove("done"); }, 2000);
+  } catch {
+    const code = b.parentElement.querySelector(".addr");
+    getSelection().selectAllChildren(code);
+  }
+}));
 
 // Кнопка «Скачать» — прямо на установщик последней версии. Нет выпуска или GitHub недоступен —
 // кнопка остаётся ссылкой на страницу выпусков, это честнее, чем прятать её.

@@ -12,6 +12,7 @@ import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
 import StorageCard from "../components/StorageCard";
 import { openReport } from "../components/Report";
+import { openSupport } from "../support";
 
 /** Через сколько минут простоя выгружать модель; 0 — никогда. */
 const UNLOAD: [number, string][] = [
@@ -218,6 +219,18 @@ export default function Settings() {
           </>
         )}
         {resetError && <p className="error">{resetError}</p>}
+      </div>
+
+      <h2>Поддержать Ollivo</h2>
+      <div className="card">
+        <p>
+          Ollivo делает один человек. Программа бесплатная и без рекламы. Если она вам пригодилась — поддержите её
+          развитие: подпиской на Boosty, разово через ЮMoney или криптовалютой.
+        </p>
+        <p className="muted small">Откроется страница на сайте Ollivo, в браузере.</p>
+        <div className="actions">
+          <button onClick={openSupport}>Поддержать проект</button>
+        </div>
       </div>
     </>
   );

@@ -1,8 +1,8 @@
 // Собирает всё про поддержку проекта из одного файла site/support/support.json:
-// QR-коды и кнопки (site/support/*.svg), страницу DONATE.md, блок в README.md
-// и .github/FUNDING.yml (кнопка «Sponsor» на GitHub).
+// QR-коды и кнопки (site/support/*.svg), страницу DONATE.md, блок в README.md,
+// раздел «Поддержать» на сайте (site/index.html) и .github/FUNDING.yml (кнопка «Sponsor» на GitHub).
 // Адреса живут только в support.json: если их подменят, это видно в одном диффе,
-// а не в четырёх файлах, где легко пропустить один.
+// а не в пяти файлах, где легко пропустить один.
 //
 //   node scripts/make-support.mjs
 
@@ -119,6 +119,21 @@ ${c.address}
 
 const coins = data.crypto.map((c) => c.coin).join(", ");
 
+// Общий текст для GitHub и сайта. link — как оформить ссылку в нужном формате.
+const goals = [
+  ["Видеокарты AMD и Intel для проверки.", "Сейчас программа работает только с NVIDIA."],
+  ["Сервер и трафик.", "Обновления программы раздаются с нашего сервера."],
+  ["Домен ollivo.ru.", "Короткий адрес для сайта и обновлений."],
+  ["Время.", "Чем больше поддержки, тем быстрее выходят картинки, голос и видео."],
+];
+const helps = (link) => [
+  "Расскажите о программе знакомым, которым хотелось попробовать ИИ у себя на компьютере.",
+  `Нашли ошибку — нажмите в программе «Сообщить о проблеме» или ${link("напишите на GitHub", `${repo}/issues/new/choose`)}.`,
+  `Поставьте звезду ${link("репозиторию на GitHub", repo)} — так его чаще находят.`,
+];
+const mdLink = (t, u) => `[${t}](${u})`;
+const htmlLink = (t, u) => `<a href="${u}">${t}</a>`;
+
 const donate = `<!-- ${generated} -->
 
 <div align="center">
@@ -146,16 +161,11 @@ ${cryptoRows}
 
 ## На что пойдут деньги
 
-- **Видеокарты AMD и Intel для проверки.** Сейчас программа работает только с NVIDIA.
-- **Сервер и трафик.** Обновления программы раздаются с нашего сервера.
-- **Домен и сайт** ollivo.ru.
-- **Время.** Чем больше поддержки, тем быстрее выходят картинки, голос и видео — [план до 1.0](docs/plan.md).
+${goals.map(([t, d]) => `- **${t}** ${d}`).join("\n")}
 
 ## Помочь можно и без денег
 
-- Расскажите о программе знакомым, которым хотелось попробовать ИИ у себя на компьютере.
-- Нашли ошибку — нажмите в программе «Сообщить о проблеме» или [напишите здесь](${repo}/issues/new/choose).
-- Поставьте ⭐ репозиторию — так его чаще находят.
+${helps(mdLink).map((t) => `- ${t}`).join("\n")}
 
 <div align="center">
 
@@ -164,6 +174,14 @@ ${cryptoRows}
 </div>
 `;
 writeFileSync(join(root, "DONATE.md"), donate);
+
+// Блок между метками заменяется целиком; меток нет — падаем, а не дописываем куда попало.
+function replaceBlock(path, content, start, end) {
+  const text = readFileSync(path, "utf8");
+  const re = new RegExp(`${start}[\\s\\S]*?${end}`);
+  if (!re.test(text)) throw new Error(`В ${path} нет меток ${start} … ${end}`);
+  writeFileSync(path, text.replace(re, () => content));
+}
 
 const readmeBlock = `<!-- support:start — ${generated} -->
 ## Поддержать проект
@@ -174,12 +192,68 @@ ${buttons(56)}
 
 Криптовалюта (${coins}) — адреса и QR-коды на странице **[Поддержать](DONATE.md)**.
 <!-- support:end -->`;
+replaceBlock(join(root, "README.md"), readmeBlock, "<!-- support:start", "<!-- support:end -->");
 
-const readmePath = join(root, "README.md");
-const readme = readFileSync(readmePath, "utf8");
-const block = /<!-- support:start[\s\S]*?<!-- support:end -->/;
-if (!block.test(readme)) throw new Error("В README.md нет меток <!-- support:start --> … <!-- support:end -->");
-writeFileSync(readmePath, readme.replace(block, readmeBlock));
+// Раздел сайта — готовым HTML, а не скриптом из support.json: работает и без JS,
+// а адреса видны в том же диффе, что и в support.json.
+const coinCards = data.crypto
+  .map(
+    (c) => `        <article class="coin">
+          <img src="support/${c.id}.svg" alt="QR-код ${esc(c.coin)}" width="148" height="148" loading="lazy">
+          <h4>${esc(c.coin)} <span>${esc(c.network)}</span></h4>
+${[c.note, c.min && `Минимум — ${c.min}.`].filter(Boolean).map((t) => `          <p class="coin-note">${esc(t)}</p>`).join("\n")}
+          <code class="addr">${esc(c.address)}</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="${esc(c.address)}">Скопировать адрес</button>
+        </article>`,
+  )
+  .join("\n");
+
+const siteBlock = `<!-- support:start — ${generated} -->
+<section id="support" class="support">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Поддержать</span>
+      <h2>Ollivo делает один человек</h2>
+      <p>Программа бесплатная, без рекламы и слежки. Если она вам пригодилась — помогите ей расти.</p>
+    </div>
+    <div class="give">
+      <a class="give-card reveal" href="${data.boosty}" style="--brand:#F15F2C">
+        <span class="give-mark" aria-hidden="true">B</span>
+        <span><b>Boosty</b><span>Подписка на развитие проекта — каждый месяц</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+      <a class="give-card reveal" href="${data.yoomoney}" style="--brand:#8B3FFD">
+        <span class="give-mark" aria-hidden="true">Ю</span>
+        <span><b>ЮMoney</b><span>Разово, любой суммой, картой любого банка</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+    </div>
+    <div class="coins reveal">
+      <h3>Криптовалюта</h3>
+      <p class="coins-warn">Отправляйте <b>только указанную монету и только в указанной сети</b> — иначе перевод не дойдёт,
+        и вернуть его не получится. После вставки сверьте первые и последние 4 символа адреса.</p>
+      <div class="coin-grid">
+${coinCards}
+      </div>
+    </div>
+    <div class="give-more">
+      <article class="card reveal">
+        <h3>На что пойдут деньги</h3>
+        <ul>
+${goals.map(([t, d]) => `          <li><b>${t}</b> ${d}</li>`).join("\n")}
+        </ul>
+      </article>
+      <article class="card reveal">
+        <h3>Помочь можно и без денег</h3>
+        <ul>
+${helps(htmlLink).map((t) => `          <li>${t}</li>`).join("\n")}
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+<!-- support:end -->`;
+replaceBlock(join(root, "site", "index.html"), siteBlock, "<!-- support:start", "<!-- support:end -->");
 
 // В «Sponsor» у GitHub нет Boosty и ЮMoney среди своих площадок — только ссылки custom (до четырёх).
 const funding = `# ${generated}
@@ -190,4 +264,4 @@ custom:
 `;
 writeFileSync(join(root, ".github", "FUNDING.yml"), funding);
 
-console.log(`Готово: ${data.crypto.length} QR, DONATE.md, README.md, .github/FUNDING.yml`);
+console.log(`Готово: ${data.crypto.length} QR, DONATE.md, README.md, site/index.html, .github/FUNDING.yml`);

@@ -4,6 +4,7 @@ import ChatList from "./components/ChatList";
 import Icon, { Logo, type IconName } from "./components/Icon";
 import { ReportHost, openReport } from "./components/Report";
 import StatusBar from "./components/StatusBar";
+import { openSupport } from "./support";
 import Catalog from "./pages/Catalog";
 import Chat from "./pages/Chat";
 import Computer from "./pages/Computer";
@@ -80,7 +81,11 @@ export default function App() {
             {TABS[t]}
           </button>
         ))}
-        <button className="rail-tab bottom" title="Сообщить о проблеме" onClick={() => openReport()}>
+        <button className="rail-tab bottom" title="Поддержать проект — откроется сайт" onClick={openSupport}>
+          <Icon name="heart" size={20} />
+          Поддержать
+        </button>
+        <button className="rail-tab" title="Сообщить о проблеме" onClick={() => openReport()}>
           <Icon name="report" size={20} />
           Отчёт
         </button>
