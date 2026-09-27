@@ -14,6 +14,16 @@
 синее окно «Windows защитил ваш компьютер»: нажмите «Подробнее», затем «Выполнить в любом случае».
 Контрольная сумма SHA256 каждой версии — на странице выпуска. Дальше программа обновляется сама.
 
+<!-- support:start — Собрано scripts/make-support.mjs из site/support/support.json — правьте там. -->
+## Поддержать проект
+
+Ollivo делает один человек. Если программа пригодилась — поддержите её развитие:
+
+<a href="https://boosty.to/wufcorp/donate"><img src="site/support/boosty.svg" alt="Boosty — подписка на развитие" height="56"></a>&nbsp;&nbsp;<a href="https://yoomoney.ru/to/4100119273215272"><img src="site/support/yoomoney.svg" alt="ЮMoney — разово, картой любого банка" height="56"></a>
+
+Криптовалюта (USDT, TON, Bitcoin) — адреса и QR-коды на странице **[Поддержать](DONATE.md)**.
+<!-- support:end -->
+
 ## Что уже работает
 
 - Мастер первого запуска: проверка компьютера и драйвера, выбор диска, проверка
