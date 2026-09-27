@@ -4,7 +4,7 @@
 Установил, выбрал модель, начал разговор — без Python, Git и настройки CUDA.
 Текст, картинки, звук и видео в одном окне; переписка не уходит в интернет.
 
-Сайт — папка [site/](site/), скоро на [ollivo.ru](https://ollivo.ru). Windows + NVIDIA,
+Сайт — [wufcorp.github.io/Ollivo](https://wufcorp.github.io/Ollivo/) (исходник — [site/](site/)), позже — ollivo.ru. Windows + NVIDIA,
 ранняя версия, в разработке.
 
 ## Что уже работает
