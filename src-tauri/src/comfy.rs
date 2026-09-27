@@ -36,20 +36,30 @@ pub struct Comfy {
     client: reqwest::Client,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("движок картинок не запустился: {0}")]
     Start(String),
-    #[error("движок картинок не принял задачу: {0}")]
     Rejected(String),
     /// Ошибка при генерации: узел и текст исключения из ComfyUI.
-    #[error("{0}")]
     Failed(String),
-    #[error("генерация остановлена")]
     Cancelled,
-    #[error("связь с движком картинок: {0}")]
     Link(String),
 }
+
+// Вручную, а не `thiserror`: текст зависит от языка программы.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Error::Start(e) => tf!("движок картинок не запустился: {e}", "the image engine did not start: {e}"),
+            Error::Rejected(e) => tf!("движок картинок не принял задачу: {e}", "the image engine rejected the task: {e}"),
+            Error::Failed(e) => e.clone(),
+            Error::Cancelled => t!("генерация остановлена", "generation stopped").to_string(),
+            Error::Link(e) => tf!("связь с движком картинок: {e}", "link to the image engine: {e}"),
+        })
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Ход генерации для окна.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -204,7 +214,7 @@ impl Comfy {
                 // Двоичные сообщения — превью шагов, их не заказываем.
                 Some(Ok(_)) => continue,
                 Some(Err(e)) => return Err(link(&e)),
-                None => return Err(Error::Link("движок закрыл соединение".into())),
+                None => return Err(Error::Link(t!("движок закрыл соединение", "the engine closed the connection").into())),
             };
             let Ok(event) = serde_json::from_str::<Value>(&text) else { continue };
             let data = &event["data"];
@@ -246,7 +256,7 @@ impl Comfy {
                 break h;
             }
             if started.elapsed() > Duration::from_secs(30) {
-                return Err(Error::Link("движок не записал итог задачи".into()));
+                return Err(Error::Link(t!("движок не записал итог задачи", "the engine did not record the task result").into()));
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         };

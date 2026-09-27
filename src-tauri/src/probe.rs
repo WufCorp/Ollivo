@@ -4,6 +4,7 @@
 //! Перенесено из прототипа фазы 0 `spikes/model-probe`, веса не читаются.
 
 use crate::hardware::Hardware;
+use crate::i18n::{self, plural};
 use crate::{gguf, safetensors as st};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -30,19 +31,19 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub fn ru(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
-            Kind::Llm => "текстовая модель (чат)",
-            Kind::Projector => "дополнение «зрение» для текстовой модели (mmproj)",
-            Kind::Image => "генерация картинок",
-            Kind::Video => "генерация видео",
-            Kind::SpeechToText => "распознавание речи",
-            Kind::Vae => "VAE (часть модели картинок)",
-            Kind::Lora => "LoRA (дополнение к модели)",
-            Kind::ControlNet => "ControlNet (дополнение к модели картинок)",
-            Kind::TextEncoder => "текстовый энкодер (часть модели картинок/видео)",
-            Kind::Upscaler => "увеличение разрешения",
-            Kind::Unknown => "неизвестно",
+            Kind::Llm => t!("текстовая модель (чат)", "text model (chat)"),
+            Kind::Projector => t!("дополнение «зрение» для текстовой модели (mmproj)", "“vision” add-on for a text model (mmproj)"),
+            Kind::Image => t!("генерация картинок", "image generation"),
+            Kind::Video => t!("генерация видео", "video generation"),
+            Kind::SpeechToText => t!("распознавание речи", "speech recognition"),
+            Kind::Vae => t!("VAE (часть модели картинок)", "VAE (part of an image model)"),
+            Kind::Lora => t!("LoRA (дополнение к модели)", "LoRA (model add-on)"),
+            Kind::ControlNet => t!("ControlNet (дополнение к модели картинок)", "ControlNet (image model add-on)"),
+            Kind::TextEncoder => t!("текстовый энкодер (часть модели картинок/видео)", "text encoder (part of an image/video model)"),
+            Kind::Upscaler => t!("увеличение разрешения", "upscaling"),
+            Kind::Unknown => t!("неизвестно", "unknown"),
         }
     }
 }
@@ -137,16 +138,20 @@ pub fn probe(path: &Path) -> Result<ModelInfo> {
     if n >= 2 && &magic[..2] == b"PK" || matches!(ext.as_str(), "ckpt" | "pt" | "pth") {
         let mut m = ModelInfo::new("pickle (PyTorch)");
         m.notes.push(
-            "Формат pickle может содержать вредоносный код. Открывать не будем — \
-             поищите эту модель в формате safetensors или GGUF."
-                .into(),
+            t!(
+                "Формат pickle может содержать вредоносный код. Открывать не будем — \
+                 поищите эту модель в формате safetensors или GGUF.",
+                "The pickle format can contain malicious code. We won't open it — \
+                 look for this model in safetensors or GGUF format."
+            )
+            .into(),
         );
         return Ok(m);
     }
     if ext == "safetensors" || n == 8 {
         return Ok(from_safetensors(&st::read(path)?));
     }
-    bail!("формат файла не распознан")
+    bail!(t!("формат файла не распознан", "unrecognized file format"))
 }
 
 // ---------- GGUF ----------
@@ -179,7 +184,7 @@ fn from_gguf(g: &gguf::Gguf) -> ModelInfo {
     m.weights_bytes = g.tensors.iter().map(|t| t.bytes).sum();
     m.precision = dominant_ggml_type(g);
     if g.tensors.iter().any(|t| gguf::ggml_block(t.ggml_type).is_none()) {
-        m.notes.push("есть тензоры незнакомого типа — размер посчитан не полностью".into());
+        m.notes.push(t!("есть тензоры незнакомого типа — размер посчитан не полностью", "some tensors have an unknown type — the size is not fully counted").into());
     }
 
     if arch == "clip" || g.str("general.type") == Some("mmproj") {
@@ -187,10 +192,10 @@ fn from_gguf(g: &gguf::Gguf) -> ModelInfo {
         m.engine = Engine::LlamaCpp;
         let mut what = vec![];
         if g.get("clip.has_vision_encoder").is_some() {
-            what.push("зрение");
+            what.push(t!("зрение", "vision"));
         }
         if g.get("clip.has_audio_encoder").is_some() {
-            what.push("звук");
+            what.push(t!("звук", "audio"));
         }
         m.family = format!(
             "{} ({})",
@@ -199,7 +204,7 @@ fn from_gguf(g: &gguf::Gguf) -> ModelInfo {
                 .unwrap_or("clip"),
             what.join(", ")
         );
-        m.notes.push("подключается к своей текстовой модели, отдельно не запускается".into());
+        m.notes.push(t!("подключается к своей текстовой модели, отдельно не запускается", "attaches to its text model, doesn't run on its own").into());
         return m;
     }
 
@@ -207,11 +212,11 @@ fn from_gguf(g: &gguf::Gguf) -> ModelInfo {
         m.kind = kind;
         m.engine = Engine::ComfyUi;
         m.family = fam.to_string();
-        m.contains.push(if kind == Kind::Video { "видеомодель" } else { "UNet/DiT" }.into());
+        m.contains.push(if kind == Kind::Video { t!("видеомодель", "video model") } else { "UNet/DiT" }.into());
         m.needs = diffusion_needs(fam, false, false);
         m.core_params = m.params;
         m.core_bytes = m.weights_bytes;
-        m.notes.push("нужен узел ComfyUI-GGUF".into());
+        m.notes.push(t!("нужен узел ComfyUI-GGUF", "needs the ComfyUI-GGUF node").into());
         return m;
     }
 
@@ -247,7 +252,7 @@ fn from_gguf(g: &gguf::Gguf) -> ModelInfo {
             m.family = format!("{arch} {label}");
         }
         if g.int("split.count").unwrap_or(1) > 1 {
-            m.notes.push("модель разбита на несколько файлов — нужны все части".into());
+            m.notes.push(t!("модель разбита на несколько файлов — нужны все части", "the model is split into several files — all parts are needed").into());
         }
         return m;
     }
@@ -287,7 +292,7 @@ fn from_whisper_ggml(path: &Path) -> Result<ModelInfo> {
         32 => ("large", 3000 << 20),
         _ => ("?", 0),
     };
-    let en = if vocab == 51864 { ".en (только английский)" } else { "" };
+    let en = if vocab == 51864 { t!(".en (только английский)", ".en (English only)") } else { "" };
     m.family = format!("Whisper {size}{en}");
     m.precision = match ftype % 1000 {
         0 => "F32",
@@ -333,16 +338,16 @@ fn from_safetensors(s: &st::Safetensors) -> ModelInfo {
         let base = s.meta("ss_base_model_version").unwrap_or("").to_lowercase()
             + &s.meta("modelspec.architecture").unwrap_or("").to_lowercase();
         m.family = if base.contains("flux") || s.has("double_blocks") {
-            "LoRA для Flux".into()
+            t!("LoRA для Flux", "LoRA for Flux").into()
         } else if base.contains("xl") || s.has("lora_te2_") || s.has("lora_unet_input_blocks_4_1_transformer_blocks_1") {
-            "LoRA для SDXL".into()
+            t!("LoRA для SDXL", "LoRA for SDXL").into()
         } else if s.has("base_model.model.model.layers") || s.has("q_proj") && !s.has("lora_unet") {
             m.engine = Engine::NeedsConversion;
-            "LoRA для текстовой модели".into()
+            t!("LoRA для текстовой модели", "LoRA for a text model").into()
         } else if s.has("lora_unet_") {
-            "LoRA для SD 1.5".into()
+            t!("LoRA для SD 1.5", "LoRA for SD 1.5").into()
         } else {
-            "LoRA (база не определена)".into()
+            t!("LoRA (база не определена)", "LoRA (base unknown)").into()
         };
         return m;
     }
@@ -387,7 +392,7 @@ fn from_safetensors(s: &st::Safetensors) -> ModelInfo {
             5120 => "14B",
             _ => "?",
         };
-        let mode = if s.has("img_emb.") { "картинка→видео" } else { "текст→видео" };
+        let mode = if s.has("img_emb.") { t!("картинка→видео", "image→video") } else { t!("текст→видео", "text→video") };
         m.family = format!("Wan {size} ({mode})");
         finish_diffusion(&mut m, s, dm, has_te, has_vae);
         return m;
@@ -417,11 +422,11 @@ fn from_safetensors(s: &st::Safetensors) -> ModelInfo {
             1024 => "SD 2.x",
             2048 => "SDXL",
             1280 => "SDXL Refiner",
-            _ => "Stable Diffusion (версия не определена)",
+            _ => t!("Stable Diffusion (версия не определена)", "Stable Diffusion (version unknown)"),
         }
         .into();
         if s.has("down_blocks.0.attentions") {
-            m.notes.push("формат diffusers (папка из нескольких файлов) — это только UNet".into());
+            m.notes.push(t!("формат diffusers (папка из нескольких файлов) — это только UNet", "diffusers format (a folder of several files) — this is only the UNet").into());
         }
         finish_diffusion(&mut m, s, dm, has_te, has_vae);
         return m;
@@ -432,9 +437,9 @@ fn from_safetensors(s: &st::Safetensors) -> ModelInfo {
         m.engine = Engine::ComfyUi;
         let conv_in = s.find("decoder.conv_in.weight").or(s.find("decoder.conv1.weight"));
         m.family = match conv_in.map(|t| (t.shape.get(1).copied(), t.shape.len())) {
-            Some((_, 5)) => "VAE видео (Wan)".into(),
-            Some((Some(4), _)) => "VAE для SD 1.5 / SDXL".into(),
-            Some((Some(16), _)) => "VAE для Flux / SD 3".into(),
+            Some((_, 5)) => t!("VAE видео (Wan)", "video VAE (Wan)").into(),
+            Some((Some(4), _)) => t!("VAE для SD 1.5 / SDXL", "VAE for SD 1.5 / SDXL").into(),
+            Some((Some(16), _)) => t!("VAE для Flux / SD 3", "VAE for Flux / SD 3").into(),
             _ => "VAE".into(),
         };
         return m;
@@ -472,34 +477,38 @@ fn from_safetensors(s: &st::Safetensors) -> ModelInfo {
     if s.has("model.encoder.conv1") && s.has("model.decoder.") {
         m.kind = Kind::SpeechToText;
         m.engine = Engine::NeedsConversion;
-        m.family = "Whisper (формат HuggingFace)".into();
-        m.notes.push("для whisper.cpp нужна версия в формате ggml — найдём её в каталоге".into());
+        m.family = t!("Whisper (формат HuggingFace)", "Whisper (HuggingFace format)").into();
+        m.notes.push(t!("для whisper.cpp нужна версия в формате ggml — найдём её в каталоге", "whisper.cpp needs the ggml version — we'll find it in the catalog").into());
         return m;
     }
 
     if s.has("model.embed_tokens.weight") || s.has("model.layers.0.") || s.has("lm_head.weight") {
         m.kind = Kind::Llm;
         m.engine = Engine::NeedsConversion;
-        m.family = "текстовая модель (формат HuggingFace)".into();
+        m.family = t!("текстовая модель (формат HuggingFace)", "text model (HuggingFace format)").into();
         m.notes.push(
-            "llama.cpp работает с GGUF. Найдём готовую GGUF-версию или сконвертируем (нужен Python)".into(),
+            t!(
+                "llama.cpp работает с GGUF. Найдём готовую GGUF-версию или сконвертируем (нужен Python)",
+                "llama.cpp works with GGUF. We'll find a ready GGUF version or convert it (needs Python)"
+            )
+            .into(),
         );
         if s.has("model.layers.0.") && !s.has("lm_head.weight") && !s.has("model.norm.weight") {
-            m.notes.push("похоже на одну часть из нескольких (model-0000X-of-0000N)".into());
+            m.notes.push(t!("похоже на одну часть из нескольких (model-0000X-of-0000N)", "looks like one part of several (model-0000X-of-0000N)").into());
         }
         return m;
     }
 
     if let Some(a) = s.meta("modelspec.architecture") {
-        m.family = format!("по метаданным: {a}");
+        m.family = tf!("по метаданным: {a}", "from metadata: {a}");
     }
     m
 }
 
 fn finish_diffusion(m: &mut ModelInfo, s: &st::Safetensors, dm: &str, has_te: bool, has_vae: bool) {
-    m.contains.push(if m.kind == Kind::Video { "видеомодель" } else { "UNet/DiT" }.into());
+    m.contains.push(if m.kind == Kind::Video { t!("видеомодель", "video model") } else { "UNet/DiT" }.into());
     if has_te {
-        m.contains.push("текстовый энкодер".into());
+        m.contains.push(t!("текстовый энкодер", "text encoder").into());
     }
     if has_vae {
         m.contains.push("VAE".into());
@@ -522,7 +531,7 @@ fn finish_diffusion(m: &mut ModelInfo, s: &st::Safetensors, dm: &str, has_te: bo
         .map(|t| t.shape.iter().product::<u64>())
         .sum();
     if m.core_bytes < m.weights_bytes {
-        m.notes.push(format!("из них сама модель: {}", fmt_bytes(m.core_bytes)));
+        m.notes.push(tf!("из них сама модель: {}", "of which the model itself: {}", fmt_bytes(m.core_bytes)));
     }
     let fam = m.family.clone();
     m.needs = diffusion_needs(&fam, has_te, has_vae);
@@ -531,26 +540,28 @@ fn finish_diffusion(m: &mut ModelInfo, s: &st::Safetensors, dm: &str, has_te: bo
 /// Какие компоненты ещё нужны, если в файле только сама модель.
 fn diffusion_needs(family: &str, has_te: bool, has_vae: bool) -> Vec<String> {
     let mut v = vec![];
-    let (te, vae): (&[&str], &str) = if family.starts_with("Flux") {
-        (&["T5-XXL (fp8, ~4,9 ГБ)", "CLIP-L (~0,25 ГБ)"], "VAE Flux (~0,3 ГБ)")
+    // Размеры — числом с точкой, единицы и запятая — по языку: «~4,9 ГБ» / «~4.9 GB».
+    let gb = |s: &str| i18n::decimal(format!("~{s} {}", t!("ГБ", "GB")));
+    let (te, vae): (Vec<String>, String) = if family.starts_with("Flux") {
+        (vec![format!("T5-XXL (fp8, {})", gb("4.9")), format!("CLIP-L ({})", gb("0.25"))], format!("VAE Flux ({})", gb("0.3")))
     } else if family.starts_with("SD 3") {
-        (&["T5-XXL (fp8, ~4,9 ГБ)", "CLIP-L", "CLIP-G"], "VAE SD3")
+        (vec![format!("T5-XXL (fp8, {})", gb("4.9")), "CLIP-L".into(), "CLIP-G".into()], "VAE SD3".into())
     } else if family.starts_with("Wan") {
-        (&["UMT5-XXL (fp8, ~6,7 ГБ)"], "VAE Wan (~0,25 ГБ)")
+        (vec![format!("UMT5-XXL (fp8, {})", gb("6.7"))], format!("VAE Wan ({})", gb("0.25")))
     } else if family.starts_with("LTX") {
-        (&["T5-XXL (fp8, ~4,9 ГБ)"], "VAE LTX")
+        (vec![format!("T5-XXL (fp8, {})", gb("4.9"))], "VAE LTX".into())
     } else if family.starts_with("HunyuanVideo") {
-        (&["LLaVA-Llama3 (fp8, ~9 ГБ)", "CLIP-L"], "VAE HunyuanVideo")
+        (vec![format!("LLaVA-Llama3 (fp8, {})", gb("9")), "CLIP-L".into()], "VAE HunyuanVideo".into())
     } else if family.starts_with("SDXL") {
-        (&["CLIP-L", "CLIP-G"], "VAE SDXL")
+        (vec!["CLIP-L".into(), "CLIP-G".into()], "VAE SDXL".into())
     } else {
-        (&["CLIP-L"], "VAE SD 1.5")
+        (vec!["CLIP-L".into()], "VAE SD 1.5".into())
     };
     if !has_te {
-        v.extend(te.iter().map(|s| s.to_string()));
+        v.extend(te);
     }
     if !has_vae {
-        v.push(vae.to_string());
+        v.push(vae);
     }
     v
 }
@@ -575,68 +586,68 @@ const GIB: u64 = 1 << 30;
 pub fn fmt_bytes(b: u64) -> String {
     let gb = b as f64 / GIB as f64;
     if gb >= 1.0 {
-        format!("{gb:.1} ГБ").replace('.', ",")
+        i18n::decimal(format!("{gb:.1} {}", t!("ГБ", "GB")))
     } else {
-        format!("{} МБ", b >> 20)
+        format!("{} {}", b >> 20, t!("МБ", "MB"))
     }
 }
 
 // Токены — внутренняя единица модели, человеку она ничего не говорит; переводим в слова
 // и страницы. Замер 2026-09-26, токенизатор Qwen2.5 (llama-tokenize): русский текст
 // в 251 слово и 1656 знаков — 612 токенов, то есть 2,4 токена на слово и 2,7 знака на токен.
-// По-английски слов на токен вдвое больше (1,2 токена на слово), но окно русское,
-// и занижать скорость честнее, чем завышать. Те же числа — в `src/words.ts`.
-const TOKENS_PER_WORD: f64 = 2.4;
-/// Страница — ~1800 знаков: 1800 / 2,7 ≈ 650 токенов.
-const TOKENS_PER_PAGE: u64 = 650;
+// Английский текст (186 слов) — 226 токенов, 1,2 токена на слово. Считаем по языку окна:
+// на нём человек, скорее всего, и спрашивает. Те же числа — в `src/words.ts`.
+fn tokens_per_word() -> f64 {
+    if i18n::en() { 1.2 } else { 2.4 }
+}
 
-fn plural<'a>(n: u64, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
-    let (d, h) = (n % 10, n % 100);
-    if d == 1 && h != 11 {
-        one
-    } else if (2..=4).contains(&d) && !(12..=14).contains(&h) {
-        few
-    } else {
-        many
-    }
+/// Страница — ~1800 знаков. По-русски 1800 / 2,7 ≈ 650 токенов. По-английски знаков
+/// на токен не замеряли: 1800 знаков — ~300 слов (6 знаков с пробелом), × 1,2 ≈ 360 токенов.
+fn tokens_per_page() -> u64 {
+    if i18n::en() { 360 } else { 650 }
 }
 
 /// «пишет примерно 24 слова в секунду — быстрее, чем вы читаете». Про себя взрослый
 /// читает 200–250 слов в минуту, это 3–4 слова в секунду.
 pub fn speed_words(tokens_per_sec: f64) -> String {
-    let w = tokens_per_sec / TOKENS_PER_WORD;
+    let w = tokens_per_sec / tokens_per_word();
     if w < 1.0 {
         // Абзац — ~60 слов: так «медленно» превращается в ожидание, которое можно представить.
         let sec = (60.0 / w.max(0.01)).round() as u64;
         // Меньше слова в секунду — это всегда дольше минуты на абзац.
         let wait = if sec < 90 {
-            "около минуты".to_string()
+            t!("около минуты", "about a minute").to_string()
         } else {
             let min = (sec + 30) / 60;
-            format!("около {min} {}", plural(min, "минуты", "минут", "минут"))
+            let unit = plural(min, ["минуты", "минут", "минут"], ["minute", "minutes"]);
+            tf!("около {min} {unit}", "about {min} {unit}")
         };
-        return format!("пишет меньше слова в секунду — абзац ответа будет писаться {wait}");
+        return tf!(
+            "пишет меньше слова в секунду — абзац ответа будет писаться {wait}",
+            "writes less than a word per second — a paragraph of the answer will take {wait}"
+        );
     }
     let n = w.round() as u64;
-    let words = plural(n, "слово", "слова", "слов");
+    let words = plural(n, ["слово", "слова", "слов"], ["word", "words"]);
     let pace = if w < 3.0 {
-        "медленнее, чем вы читаете"
+        t!("медленнее, чем вы читаете", "slower than you read")
     } else if w < 6.0 {
-        "примерно как вы читаете"
+        t!("примерно как вы читаете", "about as fast as you read")
     } else {
-        "быстрее, чем вы читаете"
+        t!("быстрее, чем вы читаете", "faster than you read")
     };
-    format!("пишет примерно {n} {words} в секунду — {pace}")
+    tf!("пишет примерно {n} {words} в секунду — {pace}", "writes about {n} {words} per second — {pace}")
 }
 
 /// Сколько страниц разговора модель держит в памяти: «около 12 страниц».
 pub fn memory_pages(ctx: u64) -> String {
     let p = pages(ctx);
-    format!("около {p} {}", plural(p, "страницы", "страниц", "страниц"))
+    let unit = plural(p, ["страницы", "страниц", "страниц"], ["page", "pages"]);
+    tf!("около {p} {unit}", "about {p} {unit}")
 }
 
 fn pages(ctx: u64) -> u64 {
-    let p = (ctx / TOKENS_PER_PAGE).max(1);
+    let p = (ctx / tokens_per_page()).max(1);
     // Больше двадцати страниц точность до единицы ни к чему: границы всё равно примерные.
     if p > 20 { (p + 5) / 10 * 10 } else { p }
 }
@@ -683,24 +694,24 @@ pub fn assess(m: &ModelInfo, hw: &Hardware) -> Verdict {
     let gpu = hw.gpu.as_ref();
     let mut v = match m.kind {
         Kind::Llm if m.llm.is_some() => llm(m, hw),
-        Kind::Llm => verdict(Light::Yellow, "нужна версия в формате GGUF"),
+        Kind::Llm => verdict(Light::Yellow, t!("нужна версия в формате GGUF", "needs the GGUF version")),
         Kind::Image | Kind::Video => diffusion(m, hw),
         Kind::SpeechToText => {
             if budget(hw) > m.weights_bytes * 2 + 512 * MIB {
-                verdict(Light::Green, "пойдёт на видеокарте")
+                verdict(Light::Green, t!("пойдёт на видеокарте", "will run on the graphics card"))
             } else {
-                verdict(Light::Yellow, "пойдёт на процессоре, медленнее")
+                verdict(Light::Yellow, t!("пойдёт на процессоре, медленнее", "will run on the processor, slower"))
             }
         }
-        _ => verdict(Light::None, "дополнение — подключается к основной модели"),
+        _ => verdict(Light::None, t!("дополнение — подключается к основной модели", "add-on — attaches to the main model")),
     };
     if gpu.is_some_and(|g| g.cc < (5, 0)) {
         v.light = Light::Red;
-        v.details.push("видеокарта слишком старая для CUDA-сборок".into());
+        v.details.push(t!("видеокарта слишком старая для CUDA-сборок", "the graphics card is too old for CUDA builds").into());
     }
     if gpu.is_none() && v.light == Light::Green {
         v.light = Light::Yellow;
-        v.details.push("видеокарта NVIDIA не найдена — всё будет на процессоре".into());
+        v.details.push(t!("видеокарта NVIDIA не найдена — всё будет на процессоре", "no NVIDIA graphics card found — everything will run on the processor").into());
     }
     v
 }
@@ -726,19 +737,30 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     if hw.gpu.is_some() && full(want_ctx) <= budget {
         let max_ctx = ((budget - weights - overhead) / kv_per_tok.max(1)).min(d.ctx_train);
         let max_ctx = max_ctx / 1024 * 1024;
-        let mut v = verdict(Light::Green, "поместится в видеокарту целиком");
+        let mut v = verdict(Light::Green, t!("поместится в видеокарту целиком", "fits entirely in the graphics card"));
         v.gpu_layers = Some(d.layers + 1);
         v.ctx = Some(want_ctx);
         // Запускаем с `want_ctx`, а не с максимумом: так меньше памяти и быстрее ответ
         // на длинный вопрос. Пишем оба числа — иначе после запуска «до 8192» выглядит
         // как обман после обещанных «до 32768» (найдено в окне).
         let memory = if pages(max_ctx) > pages(want_ctx) {
-            format!("модель помнит {} разговора, можно до {}", memory_pages(want_ctx), pages(max_ctx))
+            tf!(
+                "модель помнит {} разговора, можно до {}",
+                "the model remembers {} of conversation, can go up to {}",
+                memory_pages(want_ctx),
+                pages(max_ctx)
+            )
         } else {
-            format!("модель помнит {} разговора", memory_pages(want_ctx))
+            tf!("модель помнит {} разговора", "the model remembers {} of conversation", memory_pages(want_ctx))
         };
         // Отдельными строками: первая — подпись под шкалой памяти, вторая — сама по себе.
-        v.details.push(format!("занято будет ~{} из {} свободных", fmt_bytes(full(want_ctx)), fmt_bytes(vram_free)));
+        // Начало подписи («занято будет ~» / «will use ~») окно узнаёт в `Fit.tsx`.
+        v.details.push(tf!(
+            "занято будет ~{} из {} свободных",
+            "will use ~{} of {} free",
+            fmt_bytes(full(want_ctx)),
+            fmt_bytes(vram_free)
+        ));
         v.details.push(memory);
         v.fill(full(want_ctx), vram_free, hw);
         if let Some(tps) = speed(weights, 0, hw) {
@@ -758,10 +780,11 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     };
     let total_need = weights + kv_per_tok * ctx + overhead;
     if total_need > hw.ram_avail + budget {
-        let mut v = verdict(Light::Red, "не хватит памяти");
+        let mut v = verdict(Light::Red, t!("не хватит памяти", "not enough memory"));
         v.fill(total_need, budget, hw);
-        v.details.push(format!(
+        v.details.push(tf!(
             "нужно ~{}, доступно {} ОЗУ + {} видеопамяти. Возьмите версию поменьше (Q4 или меньше параметров)",
+            "need ~{}, available {} RAM + {} video memory. Take a smaller version (Q4 or fewer parameters)",
             fmt_bytes(total_need),
             fmt_bytes(hw.ram_avail),
             fmt_bytes(budget)
@@ -770,11 +793,15 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     }
     let on_gpu = gpu_layers * d.layer_bytes;
     let mut v = if gpu_layers == 0 {
-        verdict(Light::Yellow, "только на процессоре — ответы будут медленными")
+        verdict(Light::Yellow, t!("только на процессоре — ответы будут медленными", "processor only — answers will be slow"))
     } else {
         verdict(
             Light::Yellow,
-            format!("частично на видеокарте ({gpu_layers} из {} слоёв) — медленнее", d.layers),
+            tf!(
+                "частично на видеокарте ({gpu_layers} из {} слоёв) — медленнее",
+                "partly on the graphics card ({gpu_layers} of {} layers) — slower",
+                d.layers
+            ),
         )
     };
     v.gpu_layers = Some(gpu_layers);
@@ -798,7 +825,7 @@ pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
     let overhead = 700 * MIB + weights / 8;
     let need = weights + overhead;
     let mut v = if hw.gpu.is_some() && need <= budget {
-        let mut v = verdict(Light::Green, "поместится в видеокарту целиком");
+        let mut v = verdict(Light::Green, t!("поместится в видеокарту целиком", "fits entirely in the graphics card"));
         if let Some(tps) = speed(active, 0, hw) {
             v.details.push(speed_words(tps));
         }
@@ -811,19 +838,20 @@ pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
         // Меньше трёх токенов в секунду — это слово в секунду: человек должен узнать
         // об этом до того, как скачает десяток гигабайт.
         let mut v = match tps {
-            Some(t) if t < 3.0 => verdict(Light::Yellow, "поместится, но отвечать будет очень медленно"),
-            _ if on_gpu == 0 => verdict(Light::Yellow, "только на процессоре — ответы будут медленными"),
-            _ => verdict(Light::Yellow, "поместится частично — будет медленнее"),
+            Some(t) if t < 3.0 => verdict(Light::Yellow, t!("поместится, но отвечать будет очень медленно", "fits, but will answer very slowly")),
+            _ if on_gpu == 0 => verdict(Light::Yellow, t!("только на процессоре — ответы будут медленными", "processor only — answers will be slow")),
+            _ => verdict(Light::Yellow, t!("поместится частично — будет медленнее", "fits partly — will be slower")),
         };
         if let Some(t) = tps {
             v.details.push(speed_words(t));
         }
         v
     } else {
-        verdict(Light::Red, "не хватит памяти — возьмите версию поменьше")
+        verdict(Light::Red, t!("не хватит памяти — возьмите версию поменьше", "not enough memory — take a smaller version"))
     };
-    v.details.push(format!(
+    v.details.push(tf!(
         "нужно ~{}, свободно {} видеопамяти и {} оперативной",
+        "need ~{}, free {} video memory and {} RAM",
         fmt_bytes(need),
         fmt_bytes(budget),
         fmt_bytes(hw.ram_avail)
@@ -868,7 +896,7 @@ fn diffusion(m: &ModelInfo, hw: &Hardware) -> Verdict {
     } else {
         if pascal {
             // GTX 10xx: fp16 медленный, bf16 нет — ComfyUI считает в fp32 послойно (замер фазы 0).
-            notes.push("на этой видеокарте картинки считаются медленнее (нет быстрого fp16)".to_string());
+            notes.push(t!("на этой видеокарте картинки считаются медленнее (нет быстрого fp16)", "images are slower on this graphics card (no fast fp16)").to_string());
         }
         m.core_params * 2
     };
@@ -876,16 +904,16 @@ fn diffusion(m: &ModelInfo, hw: &Hardware) -> Verdict {
     let budget = budget(hw);
     let need = model + activ;
     let mut v = if hw.gpu.is_some() && need <= budget {
-        verdict(Light::Green, "поместится в видеокарту")
+        verdict(Light::Green, t!("поместится в видеокарту", "fits in the graphics card"))
     } else if hw.gpu.is_some() && need <= budget + GIB {
         // ComfyUI (DynamicVRAM) сам подгружает недостающие веса по ходу — скорость почти не страдает.
-        verdict(Light::Green, "поместится впритык")
+        verdict(Light::Green, t!("поместится впритык", "fits, just barely"))
     } else if model + vram_total.min(activ) <= hw.ram_avail + budget {
-        verdict(Light::Yellow, "поместится частично — генерация будет заметно медленнее")
+        verdict(Light::Yellow, t!("поместится частично — генерация будет заметно медленнее", "fits partly — generation will be noticeably slower"))
     } else {
-        verdict(Light::Red, "не хватит памяти — возьмите версию поменьше (GGUF Q4 / fp8)")
+        verdict(Light::Red, t!("не хватит памяти — возьмите версию поменьше (GGUF Q4 / fp8)", "not enough memory — take a smaller version (GGUF Q4 / fp8)"))
     };
-    v.details.push(format!("нужно ~{}, свободно {}", fmt_bytes(need), fmt_bytes(budget)));
+    v.details.push(tf!("нужно ~{}, свободно {}", "need ~{}, free {}", fmt_bytes(need), fmt_bytes(budget)));
     v.fill(need, budget, hw);
     v.details.extend(notes);
     v
@@ -934,7 +962,7 @@ mod tests {
             let v = assess(&m, &hw);
             println!(
                 "{file}\n  {} · {} · {} · {}\n  {:?} {}\n  {}",
-                m.kind.ru(),
+                m.kind.name(),
                 m.family,
                 m.precision,
                 fmt_bytes(m.weights_bytes),
@@ -965,5 +993,16 @@ mod tests {
         assert_eq!(memory_pages(8192), "около 12 страниц");
         assert_eq!(memory_pages(32768), "около 50 страниц");
         assert_eq!(memory_pages(512), "около 1 страницы");
+    }
+
+    /// По-английски слово — 1,2 токена, страница — 360: те же токены дают вдвое больше слов.
+    #[test]
+    fn english_words_and_pages() {
+        crate::i18n::test_en();
+        assert_eq!(speed_words(28.8), "writes about 24 words per second — faster than you read");
+        assert_eq!(speed_words(1.2), "writes about 1 word per second — slower than you read");
+        assert_eq!(memory_pages(4096), "about 11 pages");
+        assert_eq!(memory_pages(300), "about 1 page");
+        assert_eq!(fmt_bytes(3 << 29), "1.5 GB");
     }
 }

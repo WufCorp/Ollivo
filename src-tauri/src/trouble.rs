@@ -55,6 +55,9 @@ fn problem(text: &str, hint: Option<&str>, actions: &[Action], raw: &str) -> Pro
     }
 }
 
+/// Движка чата нет — ядро само передаёт это вместо текста ошибки.
+pub const NO_ENGINE: &str = "no-engine";
+
 /// Windows не нашла DLL (`STATUS_DLL_NOT_FOUND`, 0xC0000135) или она не той
 /// разрядности (0xC000007B): у llama.cpp это почти всегда VC++ Runtime или vulkan-1.dll.
 const DLL_CODES: [&str; 2] = ["-1073741515", "-1073741701"];
@@ -71,75 +74,98 @@ fn out_of_memory(raw: &str) -> bool {
 /// Модель не запустилась. `can_lighter` — есть ли куда урезать (ступени не кончились).
 pub fn start(raw: &str, can_lighter: bool) -> Problem {
     use Action::*;
-    if raw.starts_with("файл модели не найден") {
+    // Сырые строки ядра смотрим на обоих языках: язык могли сменить, пока модель грузилась.
+    if raw.starts_with("файл модели не найден") || raw.starts_with("model file not found") {
         return problem(
-            "Файла модели нет на месте.",
-            Some("Его переместили или удалили, или отключён диск, на котором он лежит."),
+            t!("Файла модели нет на месте.", "The model file is missing."),
+            Some(t!(
+                "Его переместили или удалили, или отключён диск, на котором он лежит.",
+                "It was moved or deleted, or the disk it is on is disconnected."
+            )),
             &[Forget],
             raw,
         );
     }
-    if raw == "движок чата не установлен" {
+    if raw == NO_ENGINE {
         return problem(
-            "Движок чата не установлен.",
-            Some("Он скачивается один раз, это около 30 МБ."),
+            t!("Движок чата не установлен.", "The chat engine is not installed."),
+            Some(t!("Он скачивается один раз, это около 30 МБ.", "It downloads once, about 30 MB.")),
             &[Engine],
             raw,
         );
     }
     if DLL_CODES.iter().any(|c| raw.contains(c)) {
         return problem(
-            "Движку чата не хватает файлов.",
+            t!("Движку чата не хватает файлов.", "The chat engine is missing files."),
             // Библиотеки VC++ программа кладёт рядом с движком сама (`vcrt.rs`), так что
             // скорее побит сам движок: сначала «Починить», установщик Microsoft — запасной путь.
-            Some("Обычно помогает «Починить» движок на странице «Компьютер». Не помогло — поставьте компоненты Microsoft, Windows спросит разрешение."),
+            Some(t!(
+                "Обычно помогает «Починить» движок на странице «Компьютер». Не помогло — поставьте компоненты Microsoft, Windows спросит разрешение.",
+                "Usually “Repair” for the engine on the “Computer” page helps. If not, install the Microsoft components — Windows will ask for permission."
+            )),
             &[Engine, Vcredist],
             raw,
         );
     }
     if out_of_memory(raw) {
         let hint = if can_lighter {
-            "Запустите её экономнее — будет отвечать медленнее и помнить меньше, зато заработает. \
-             Или возьмите версию поменьше."
+            t!(
+                "Запустите её экономнее — будет отвечать медленнее и помнить меньше, зато заработает. \
+                 Или возьмите версию поменьше.",
+                "Run it in a lighter mode — it will answer slower and remember less, but it will work. \
+                 Or take a smaller version."
+            )
         } else {
-            "Экономнее уже некуда. Закройте игры и другие тяжёлые программы или возьмите версию поменьше."
+            t!(
+                "Экономнее уже некуда. Закройте игры и другие тяжёлые программы или возьмите версию поменьше.",
+                "It can't get any lighter. Close games and other heavy programs or take a smaller version."
+            )
         };
         let actions: &[Action] = if can_lighter { &[Lighter, Catalog] } else { &[Retry, Catalog] };
-        return problem("Модели не хватило видеопамяти.", Some(hint), actions, raw);
+        return problem(t!("Модели не хватило видеопамяти.", "The model ran out of video memory."), Some(hint), actions, raw);
     }
     if has(raw, &["not within the file bounds", "corrupted or incomplete"]) {
         return problem(
-            "Файл модели повреждён или скачан не до конца.",
-            Some("Скачайте её заново из каталога."),
+            t!("Файл модели повреждён или скачан не до конца.", "The model file is damaged or not fully downloaded."),
+            Some(t!("Скачайте её заново из каталога.", "Download it again from the catalog.")),
             &[Catalog, Forget],
             raw,
         );
     }
     if has(raw, &["unknown model architecture"]) {
         return problem(
-            "Движок чата пока не умеет запускать это семейство моделей.",
-            Some("Поддержка появится с обновлением движка. Пока возьмите другую модель из каталога."),
+            t!(
+                "Движок чата пока не умеет запускать это семейство моделей.",
+                "The chat engine can't run this model family yet."
+            ),
+            Some(t!(
+                "Поддержка появится с обновлением движка. Пока возьмите другую модель из каталога.",
+                "Support will come with an engine update. For now, take another model from the catalog."
+            )),
             &[Catalog],
             raw,
         );
     }
     if has(raw, &["invalid magic", "failed to load model"]) {
         return problem(
-            "Этот файл не получается прочитать как модель.",
-            Some("Похоже, он испорчен или это вовсе не модель."),
+            t!("Этот файл не получается прочитать как модель.", "This file can't be read as a model."),
+            Some(t!("Похоже, он испорчен или это вовсе не модель.", "It looks damaged, or it isn't a model at all.")),
             &[Forget, Catalog],
             raw,
         );
     }
-    if has(raw, &["не ответил за"]) {
+    if has(raw, &["не ответил за", "did not respond within"]) {
         return problem(
-            "Модель грузится слишком долго.",
-            Some("Так бывает с большими моделями на медленном диске. Попробуйте ещё раз или возьмите версию поменьше."),
+            t!("Модель грузится слишком долго.", "The model takes too long to load."),
+            Some(t!(
+                "Так бывает с большими моделями на медленном диске. Попробуйте ещё раз или возьмите версию поменьше.",
+                "This happens with big models on a slow disk. Try again or take a smaller version."
+            )),
             &[Retry, Catalog],
             raw,
         );
     }
-    problem("Модель не запустилась.", Some("Попробуйте ещё раз."), &[Retry], raw)
+    problem(t!("Модель не запустилась.", "The model did not start."), Some(t!("Попробуйте ещё раз.", "Try again.")), &[Retry], raw)
 }
 
 /// Движок упал сам, когда модель уже работала.
@@ -148,8 +174,11 @@ pub fn crashed(raw: &str, can_lighter: bool) -> Problem {
         return start(raw, can_lighter);
     }
     problem(
-        "Движок чата неожиданно закрылся.",
-        Some("Переписка сохранена — запустите модель заново и продолжайте."),
+        t!("Движок чата неожиданно закрылся.", "The chat engine closed unexpectedly."),
+        Some(t!(
+            "Переписка сохранена — запустите модель заново и продолжайте.",
+            "The conversation is saved — start the model again and carry on."
+        )),
         &[Action::Restart],
         raw,
     )
@@ -160,27 +189,43 @@ pub fn chat(raw: &str) -> Problem {
     use Action::*;
     if has(raw, &["exceed_context_size", "exceeds the available context size"]) {
         return problem(
-            "Разговор стал длиннее, чем модель может удержать в памяти.",
-            Some("Начните новый разговор — старый останется в списке."),
+            t!(
+                "Разговор стал длиннее, чем модель может удержать в памяти.",
+                "The conversation got longer than the model can keep in memory."
+            ),
+            Some(t!("Начните новый разговор — старый останется в списке.", "Start a new conversation — the old one stays in the list.")),
             &[NewChat],
             raw,
         );
     }
-    if raw == "модель не запущена" {
-        return problem("Модель не запущена.", Some("Запустите её в списке моделей."), &[Models], raw);
-    }
-    if raw == "модель ещё загружается" {
-        return problem("Модель ещё загружается.", Some("Подождите немного и спросите снова."), &[Retry], raw);
-    }
-    if has(raw, &["не отвечает", "оборвалась"]) {
+    if raw == "модель не запущена" || raw == "the model is not running" {
         return problem(
-            "Движок чата перестал отвечать.",
-            Some("Переписка сохранена — запустите модель заново и повторите вопрос."),
+            t!("Модель не запущена.", "The model is not running."),
+            Some(t!("Запустите её в списке моделей.", "Start it in the model list.")),
+            &[Models],
+            raw,
+        );
+    }
+    if raw == "модель ещё загружается" || raw == "the model is still loading" {
+        return problem(
+            t!("Модель ещё загружается.", "The model is still loading."),
+            Some(t!("Подождите немного и спросите снова.", "Wait a little and ask again.")),
+            &[Retry],
+            raw,
+        );
+    }
+    if has(raw, &["не отвечает", "оборвалась", "not responding", "connection to the engine was lost"]) {
+        return problem(
+            t!("Движок чата перестал отвечать.", "The chat engine stopped responding."),
+            Some(t!(
+                "Переписка сохранена — запустите модель заново и повторите вопрос.",
+                "The conversation is saved — start the model again and repeat the question."
+            )),
             &[Restart],
             raw,
         );
     }
-    problem("Не получилось получить ответ.", None, &[Retry], raw)
+    problem(t!("Не получилось получить ответ.", "Couldn't get an answer."), None, &[Retry], raw)
 }
 
 #[cfg(test)]
@@ -219,7 +264,7 @@ mod tests {
     #[test]
     fn own_errors_are_recognized() {
         assert_eq!(start(r"файл модели не найден: D:\m.gguf", true).actions, [Forget]);
-        assert_eq!(start("движок чата не установлен", true).actions, [Engine]);
+        assert_eq!(start(NO_ENGINE, true).actions, [Engine]);
         assert_eq!(start("движок завершился при запуске (код Some(-1073741515))\n", true).actions, [Engine, Vcredist]);
         assert_eq!(start("что-то совсем новое", true).actions, [Retry]);
     }
@@ -239,5 +284,17 @@ mod tests {
     #[test]
     fn details_keep_raw_text() {
         assert!(start(OOM, true).details.contains("ErrorOutOfDeviceMemory"));
+    }
+
+    /// По-английски — те же кнопки, а свои сырые строки узнаются на обоих языках.
+    #[test]
+    fn english() {
+        crate::i18n::test_en();
+        assert!(start(OOM, true).text.contains("video memory"));
+        assert_eq!(start(r"model file not found: D:\m.gguf", true).actions, [Forget]);
+        assert_eq!(start(r"файл модели не найден: D:\m.gguf", true).actions, [Forget]);
+        assert_eq!(start("the engine did not respond within 300 s", true).actions, [Retry, Catalog]);
+        assert_eq!(chat("the model is not running").actions, [Models]);
+        assert_eq!(chat("connection to the engine was lost: reset").actions, [Restart]);
     }
 }

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="64" viewBox="0 0 280 64" role="img" aria-label="YooMoney: one-time, by card (Russia)">
+  <rect width="280" height="64" rx="14" fill="#8B3FFD"/>
+  <text x="140" y="30" text-anchor="middle" font-family="Segoe UI Variable, Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#fff">YooMoney</text>
+  <text x="140" y="49" text-anchor="middle" font-family="Segoe UI Variable, Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="13" fill="#fff" fill-opacity=".88">one-time, by card (Russia)</text>
+</svg>

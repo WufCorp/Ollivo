@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ollivo — AI models on your own computer</title>
+<meta name="description" content="A Windows app: download it, add a model and start talking. Documents, photos, voice and project files. Everything runs on your computer — your conversations never leave it.">
+<meta name="theme-color" content="#f5f3ea" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11140c" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="Ollivo — AI models on your own computer">
+<meta property="og:description" content="Download it, add a model and start talking. No Python, no setup, no cloud.">
+<meta property="og:type" content="website">
+<link rel="icon" href="../logo.svg" type="image/svg+xml">
+<link rel="alternate" hreflang="ru" href="https://wufcorp.github.io/Ollivo/">
+<link rel="alternate" hreflang="en" href="https://wufcorp.github.io/Ollivo/en/">
+<link rel="alternate" hreflang="x-default" href="https://wufcorp.github.io/Ollivo/">
+<!-- Английская страница; русская — ../index.html. Стили и скрипт общие: ../style.css, ../site.js.
+     Сайт без внешних запросов, кроме API GitHub для кнопки «Скачать». -->
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<script>document.documentElement.classList.add("js")</script>
+
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="#"><img src="../logo.svg" alt="" width="30" height="30">Ollivo</a>
+    <nav aria-label="Sections">
+      <a href="#how">Get started</a>
+      <a href="#features">Features</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#road">What's next</a>
+      <a href="#faq">FAQ</a>
+      <a href="#support">Support</a>
+    </nav>
+    <a class="lang" href="../" hreflang="ru" lang="ru" data-lang="ru" title="Русская версия">RU</a>
+    <a class="btn btn-primary" href="#download">Download</a>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <div class="badge"><b>early version</b> Windows · NVIDIA graphics card</div>
+      <h1>AI models <em>at&nbsp;home.</em><br>No cloud, no setup.</h1>
+      <p class="lead">Ollivo is a Windows app that lets anyone run open AI models — no technical skills needed.
+        Install it, add a model, start talking. Everything runs on your computer.</p>
+      <div class="cta">
+        <a class="btn btn-primary js-download" href="https://github.com/WufCorp/Ollivo/releases">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/></svg>
+          <span class="js-download-text">Download for Windows</span>
+        </a>
+        <a class="btn btn-ghost" href="#features">What it can do</a>
+      </div>
+      <div class="fine">
+        <span>No Python, Git or CUDA</span>
+        <span>Conversations stay offline</span>
+        <span>Updates itself</span>
+      </div>
+    </div>
+
+    <div class="window" role="img" aria-label="The Ollivo window: a conversation about an attached lease agreement">
+      <div class="titlebar">Ollivo<div class="ctl" aria-hidden="true"><i>—</i><i>▢</i><i>✕</i></div></div>
+      <div class="win-body">
+        <div class="win-side" aria-hidden="true">
+          <h4>Ollivo</h4>
+          <div class="tab on">Chat</div>
+          <div class="tab">Catalog</div>
+          <div class="tab">Models</div>
+          <div class="tab">Computer</div>
+          <div class="tab">Settings</div>
+          <div class="chats">
+            <div class="chat on">Lease agreement</div>
+            <div class="chat">Letter to the landlord…</div>
+            <div class="chat">Meeting transcript</div>
+            <div class="chat">Meal plan for the week</div>
+          </div>
+        </div>
+        <div class="win-main" aria-hidden="true">
+          <div class="model-line"><span class="dot"></span>Qwen3.5 4B · fits entirely in the graphics card</div>
+          <div class="msg-user">
+            <div class="chip">📄 lease-agreement.pdf · 9 pages</div>
+            <div>What should I watch out for before signing?</div>
+          </div>
+          <div class="msg-bot">
+            The main things to check:
+            <ul>
+              <li><b>Deposit</b> — returned only for “perfect condition”: ask for an inventory and photos at move-in.</li>
+              <li><b>Rent increases</b> — clause 4.3 allows one every six months with no cap.</li>
+              <li><b>Termination</b> — you must give 2 months' notice, <span class="typing">the landlord</span></li>
+            </ul>
+            <div class="speed">52 words per second</div>
+          </div>
+          <div class="composer"><span>Your question. Enter — send</span><span class="ic">📎</span><span class="ic">📁</span><span class="ic">🎤</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="strip">
+  <div class="wrap">
+    <span>Works with models from <b>HuggingFace</b></span>
+    <span><b>LM Studio</b></span>
+    <span><b>Ollama</b></span>
+    <span><b>ComfyUI</b></span>
+    <span>Powered by <b>llama.cpp</b> and <b>whisper.cpp</b></span>
+  </div>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Get started</span>
+      <h2>Three steps to the first answer</h2>
+      <p>Everything the model needs, the app downloads and sets up by itself.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <h3>Install</h3>
+        <p>The wizard checks your computer and graphics driver and suggests a disk with enough space.
+          The app installs everything else itself — no command line, no administrator rights.</p>
+      </div>
+      <div class="step reveal">
+        <h3>Add a model</h3>
+        <p>Any model you like: drag the file into the window — the app figures out what it is and whether it will run.
+          Models you already downloaded are picked up without copying. Or take a tested one from the picks.</p>
+        <div class="sources"><span>GGUF file</span><span>HuggingFace</span><span>LM Studio</span><span>Ollama</span><span>ComfyUI</span></div>
+      </div>
+      <div class="step reveal">
+        <h3>Talk</h3>
+        <p>GPU layers, conversation memory and the other settings are tuned to your hardware.
+          You just type — or speak into the microphone.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features" style="padding-top: 0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Features</span>
+      <h2>Everything that already works</h2>
+      <p>Only what the app has today. Images, video and voice-over are planned — see “What's next” below.</p>
+    </div>
+    <div class="features">
+      <article class="card wide reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg></div>
+        <h3>Chat the way you're used to</h3>
+        <p>The answer appears as it's written; tables and code are formatted, with a “Copy” button. Conversations are saved
+          and searchable. Roles and answer style — “Precise · Balanced · Creative” — instead of cryptic numbers.</p>
+      </article>
+      <article class="card wide reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></div>
+        <h3>Documents</h3>
+        <p>Attach a contract, a report or a book — the model reads it and answers from the text. If a document is longer
+          than the model can hold, the app warns you before sending instead of silently cutting it.</p>
+        <div class="tags"><span>PDF</span><span>DOCX</span><span>ODT</span><span>TXT</span><span>code</span></div>
+      </article>
+      <article class="card reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></div>
+        <h3>Photos</h3>
+        <p>Show the model a picture and ask what's in it. Phone photos are rotated the right way.
+          If the model can't see images, Ollivo suggests a suitable one that can.</p>
+        <div class="tags"><span>JPG</span><span>PNG</span><span>WebP</span><span>HEIC</span></div>
+      </article>
+      <article class="card reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <h3>Voice</h3>
+        <p>Dictate your question instead of typing it. Attach a meeting recording or a Telegram voice message —
+          you get the text, and you can ask questions about it.</p>
+        <div class="tags"><span>MP3</span><span>M4A</span><span>OGG</span><span>video</span></div>
+      </article>
+      <article class="card reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2M17 3h4v4"/></svg></div>
+        <h3>Sets itself up</h3>
+        <p>How many layers to give the graphics card and how much conversation to keep in memory — the app decides.
+          Not in use for 10 minutes — the model frees the graphics card and wakes up on the next question.</p>
+      </article>
+      <article class="card wide reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></div>
+        <h3>Project folder</h3>
+        <p>Open a folder — the model sees its files, finds what it needs, edits them piece by piece and creates new ones.
+          Any change by the model can be undone with one “Restore” button: copies are kept for 30 days. The model can't run programs.</p>
+        <div class="modes">
+          <div><b>Manual</b>every change — with your permission</div>
+          <div><b>Auto</b>the model changes files by itself</div>
+          <div><b>Plan</b>only a plan, touches nothing</div>
+        </div>
+      </article>
+      <article class="card wide reveal">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
+        <h3>Errors you can understand</h3>
+        <p>Instead of “CUDA error 700” — what happened in plain words and a button that fixes it:
+          “Run lighter”, “Try again”, “Install components”. Didn't help — “Report a problem”: you see the whole report before sending,
+          and your conversations are not in it.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="honest">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Honestly</span>
+      <h2>Know how it will run before you download</h2>
+      <p>A model that answers one word a minute isn't a “powerful model” — it's a wasted evening and ten gigabytes on your disk.
+        So every variant in the catalog shows right away whether it will run on your computer.</p>
+      <ul class="points">
+        <li><div><b>A traffic light for every model</b><span>Calculated for your graphics card and memory, not for an average computer.</span></div></li>
+        <li><div><b>Speed in words, not “tokens”</b><span>With a comparison: faster than you read, or slower.</span></div></li>
+        <li><div><b>Compression in one phrase</b><span>“Almost like the original, at half the size” instead of “Q4_K_M”.</span></div></li>
+      </ul>
+    </div>
+    <div class="variants reveal" aria-label="Example: model variants in the catalog">
+      <div class="variant">
+        <h4>Qwen3.5 4B</h4><span class="size">2.6 GB</span>
+        <span class="what">the usual choice: almost like the original, at half the size</span>
+        <span class="light g"><i></i>fits entirely in the graphics card</span>
+        <span class="fast">writes about 52 words per second — faster than you read</span>
+      </div>
+      <div class="variant">
+        <h4>Qwen3.5 9B</h4><span class="size">6.1 GB</span>
+        <span class="what">a bit better than usual and a bit bigger</span>
+        <span class="light y"><i></i>fits partly — will be slower</span>
+        <span class="fast">writes about 10 words per second — faster than you read</span>
+      </div>
+      <div class="variant">
+        <h4>Qwen3.5 27B</h4><span class="size">20.9 GB</span>
+        <span class="what">almost indistinguishable from the original</span>
+        <span class="light y"><i></i>fits, but will answer very slowly</span>
+        <span class="fast">writes about 1 word per second — slower than you read</span>
+      </div>
+      <p class="note">The app's real calculation for a computer with a GTX 1080 (8 GB), for English text. Your numbers will differ,
+        and if a model won't fit at all, the light turns red with advice to take a smaller version.</p>
+    </div>
+  </div>
+</section>
+
+<section class="privacy" id="privacy">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Privacy</span>
+      <h2>Your conversations stay with you</h2>
+      <p>The model runs on your computer. Conversations, documents, photos and recordings aren't sent anywhere —
+        they're processed right here. Ollivo collects no statistics about you. Once the model is downloaded,
+        you can turn the internet off — the chat keeps working.</p>
+      <p>This site has no trackers or cookies either.</p>
+    </div>
+    <div class="net reveal">
+      <span class="head">Ollivo goes online only to</span>
+      <div><span class="yes">↓</span><div><h4>Download a model</h4><p>From HuggingFace or the mirror you chose.</p></div></div>
+      <div><span class="yes">↓</span><div><h4>Download engines</h4><p>From GitHub and the Microsoft site; every file is checked against its checksum.</p></div></div>
+      <div><span class="yes">↻</span><div><h4>Check for updates</h4><p>If checking is on. Updates are signed: the app won't install a tampered one.</p></div></div>
+      <div><span class="yes">↑</span><div><h4>Send a problem report</h4><p>Only when you click “Send” yourself, having seen what's in it.</p></div></div>
+      <span class="head">Never leaves your computer</span>
+      <div><span class="no">✕</span><div><h4>Conversations, files, photos and recordings</h4><p>Not in reports, not “to improve the service”.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="road" style="padding-top: 0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">What's next</span>
+      <h2>The road to version 1.0</h2>
+      <p>One window for every kind of model: text, images, video and sound. The first part is ready — conversation, voice and files.</p>
+    </div>
+    <div class="road reveal">
+      <div class="stop now"><span class="v">0.1</span><div><span class="when">now</span><h4>Conversation</h4><p>Chat, documents, photos, voice, project folder, one-click report. English and Russian.</p></div></div>
+      <div class="stop"><span class="v">0.5</span><div><span class="when">next</span><h4>Images</h4><p>Drawing from a description without words like “sampler” and “CFG”. Refine, extend, variations.</p></div></div>
+      <div class="stop"><span class="v">0.6</span><div><span class="when">next</span><h4>Tasks</h4><p>One click: remove a background, enhance a photo, translate a document. Images right from the chat.</p></div></div>
+      <div class="stop"><span class="v">0.8</span><div><span class="when">next</span><h4>Sound and video</h4><p>Reading answers aloud, talking by voice “like a call”, short videos from photos.</p></div></div>
+      <div class="stop"><span class="v">0.9</span><div><span class="when">next</span><h4>“Pro”</h4><p>All parameters, logs, the ComfyUI graph, your own API — for those who need more than simple mode.</p></div></div>
+      <div class="stop"><span class="v">1.0</span><div><span class="when">goal</span><h4>For everyone</h4><p>Tested on dozens of computers, installation without internet.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="download" class="honest">
+  <div class="wrap" style="display:block">
+    <div class="section-head reveal">
+      <span class="eyebrow">Download</span>
+      <h2>Installs in a couple of minutes</h2>
+      <p class="js-release-line">Builds are published on GitHub. You need Windows and an NVIDIA graphics card; the more memory it has,
+        the smarter the models it can run — the app shows exactly which ones.</p>
+    </div>
+    <div class="install">
+      <article class="card reveal">
+        <h3>1. Download the installer</h3>
+        <p>Just a few megabytes. The app downloads the engine and the model itself on first launch.</p>
+        <div class="cta" style="margin-top:8px">
+          <a class="btn btn-primary js-download" href="https://github.com/WufCorp/Ollivo/releases">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/></svg>
+            <span class="js-download-text">Download for Windows</span>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/WufCorp/Ollivo/releases">All versions</a>
+        </div>
+        <div class="js-hash" hidden>
+          <p class="note">SHA256 checksum — to make sure the file hasn't been tampered with:</p>
+          <div class="hash js-hash-value"></div>
+        </div>
+      </article>
+      <article class="card reveal">
+        <h3>2. If Windows warns you</h3>
+        <p>Ollivo doesn't have a paid Microsoft signature yet, so a blue window may appear on first install.
+          It's not a virus: every build has a published checksum — you can use it to make sure
+          the file is the right one, and check it on <a href="https://www.virustotal.com/">VirusTotal</a>.</p>
+        <div class="smart" aria-hidden="true">
+          <div class="bar"><b>Windows protected your PC</b>
+            <p>Microsoft Defender SmartScreen prevented an unrecognized app from starting… <u class="mark">More info</u></p></div>
+          <div class="btns"><span class="mark">Run anyway</span><span>Don't run</span></div>
+        </div>
+        <ol class="how">
+          <li>Click <b>“More info”</b>.</li>
+          <li>A <b>“Run anyway”</b> button appears — click it.</li>
+        </ol>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">FAQ</span>
+      <h2>The short version</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>What computer do I need?</summary>
+        <p>Windows and an NVIDIA graphics card. Small models run even on an old card with 4 GB of memory, or on the
+          processor alone — slower. With 8 GB of video memory, capable everyday models already work.
+          The app checks your computer and shows in the catalog what will run on it.</p>
+      </details>
+      <details>
+        <summary>What about AMD, Intel graphics and Mac?</summary>
+        <p>Not yet. First we're polishing one combination — Windows and NVIDIA — so that everything works on it without help.
+          AMD, Intel and macOS come after version 1.0.</p>
+      </details>
+      <details>
+        <summary>Where do I get models?</summary>
+        <p>Anywhere you like. Ollivo works with models in the GGUF format: download any from HuggingFace or elsewhere and
+          drag the file into the window. If you already have LM Studio, Ollama or ComfyUI, the app finds their models itself
+          and uses them without copying — no doubled disk space.</p>
+        <p>Don't know where to start? The catalog has a small selection of tested models and a HuggingFace search.</p>
+      </details>
+      <details>
+        <summary>Do I need the internet?</summary>
+        <p>Only to download the app, the engine and a model. After that, chat, documents, photos and voice work offline.</p>
+      </details>
+      <details>
+        <summary>How much space does it take?</summary>
+        <p>The app and the engine take tens of megabytes. Models take most of the space: from 1.3 GB for small ones to 15–20 GB
+          for big ones. Speech recognition (~470 MB) downloads only when you first click the microphone.
+          The program folder can be moved to another disk in the settings.</p>
+      </details>
+      <details>
+        <summary>How is this different from LM Studio or Ollama?</summary>
+        <p>They're great, but made for people who know what “quantization” and “context” mean. Ollivo is for everyone else:
+          plain words instead of jargon, a traffic light before you download, errors with a “fix it” button. Plus documents, photos,
+          voice and a project folder in one window — with images, video and voice-over to follow.</p>
+      </details>
+      <details>
+        <summary>Is there a Russian version?</summary>
+        <p>Yes — the app and this site work in English and Russian. The app picks the language of your Windows on first launch;
+          you can change it at any time in the settings.</p>
+      </details>
+      <details>
+        <summary>How much does it cost?</summary>
+        <p>Nothing for now: it's an early version, and your feedback matters more to us. If something doesn't work, click
+          “Report a problem” in the app.</p>
+        <p>Want to support the project with money — <a href="#support">here's how</a>.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- support:start — Собрано scripts/make-support.mjs из site/support/support.json — правьте там. -->
+<section id="support" class="support">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Support</span>
+      <h2>Ollivo is made by one person</h2>
+      <p>The app is free, with no ads and no tracking. If it has been useful to you, help it grow.</p>
+    </div>
+    <div class="give">
+      <a class="give-card reveal" href="https://boosty.to/wufcorp/donate" style="--brand:#F15F2C">
+        <span class="give-mark" aria-hidden="true">B</span>
+        <span><b>Boosty</b><span>A monthly subscription for the project</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+      <a class="give-card reveal" href="https://yoomoney.ru/to/4100119273215272" style="--brand:#8B3FFD">
+        <span class="give-mark" aria-hidden="true">Y</span>
+        <span><b>YooMoney</b><span>One-time, any amount, by card — convenient in Russia</span></span>
+        <span class="give-go" aria-hidden="true">→</span>
+      </a>
+    </div>
+    <div class="coins reveal">
+      <h3>Crypto</h3>
+      <p class="coins-warn">Send <b>only the listed coin and only on the listed network</b> — otherwise the transfer won't arrive
+        and can't be returned. After pasting, check the first and last 4 characters of the address.</p>
+      <div class="coin-grid">
+        <article class="coin">
+          <img src="../support/usdt-trc20.svg" alt="QR code USDT" width="148" height="148" loading="lazy">
+          <h4>USDT <span>TRON network (TRC20)</span></h4>
+          <p class="coin-note">Minimum — 0.005 USDT.</p>
+          <code class="addr">TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7">Copy address</button>
+        </article>
+        <article class="coin">
+          <img src="../support/ton.svg" alt="QR code TON" width="148" height="148" loading="lazy">
+          <h4>TON <span>TON network</span></h4>
+          <p class="coin-note">Some exchanges call the coin GRAM.</p>
+          <p class="coin-note">Minimum — 0.005 TON.</p>
+          <code class="addr">UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls">Copy address</button>
+        </article>
+        <article class="coin">
+          <img src="../support/btc.svg" alt="QR code Bitcoin" width="148" height="148" loading="lazy">
+          <h4>Bitcoin <span>Bitcoin network</span></h4>
+          <p class="coin-note">Minimum — 0.00001 BTC.</p>
+          <code class="addr">1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq</code>
+          <button class="btn btn-ghost copy" type="button" data-copy="1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq">Copy address</button>
+        </article>
+      </div>
+    </div>
+    <div class="give-more">
+      <article class="card reveal">
+        <h3>Where the money goes</h3>
+        <ul>
+          <li><b>AMD and Intel graphics cards for testing.</b> Right now the app works only with NVIDIA.</li>
+          <li><b>Server and traffic.</b> App updates are served from our own server.</li>
+          <li><b>The ollivo.ru domain.</b> A short address for the site and updates.</li>
+          <li><b>Time.</b> The more support, the sooner images, voice and video arrive.</li>
+        </ul>
+      </article>
+      <article class="card reveal">
+        <h3>Helping without money</h3>
+        <ul>
+          <li>Tell friends who wanted to try AI on their own computer about the app.</li>
+          <li>Found a bug — click “Report a problem” in the app or <a href="https://github.com/WufCorp/Ollivo/issues/new/choose">write on GitHub</a>.</li>
+          <li>Star the <a href="https://github.com/WufCorp/Ollivo">repository on GitHub</a> — it helps others find it.</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+<!-- support:end -->
+
+<section class="final">
+  <div class="wrap">
+    <h2 class="reveal">Your own AI on your own computer — in a couple of minutes</h2>
+    <p class="reveal">Download Ollivo and ask your first question. And if something goes wrong — tell us, we'll fix it.</p>
+    <div class="cta reveal">
+      <a class="btn btn-primary js-download" href="https://github.com/WufCorp/Ollivo/releases">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/></svg>
+        <span class="js-download-text">Download for Windows</span>
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/WufCorp/Ollivo/issues">Report a problem</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="../logo.svg" alt="" width="24" height="24">Ollivo</a>
+    <span>© 2026</span>
+    <nav aria-label="Links">
+      <a href="https://github.com/WufCorp/Ollivo">GitHub</a>
+      <a href="https://github.com/WufCorp/Ollivo/releases">All versions</a>
+      <a href="https://github.com/WufCorp/Ollivo/issues">Report a problem</a>
+      <a href="#support">Support the project</a>
+      <a href="../" hreflang="ru" lang="ru" data-lang="ru">Русский</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="../site.js"></script>
+</body>
+</html>

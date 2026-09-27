@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { reportMake, reportSend, type Report, type ReportKind } from "../api";
+import { t } from "../i18n";
 
-const KINDS: { id: ReportKind; label: string }[] = [
-  { id: "install", label: "Не ставится" },
-  { id: "model", label: "Модель не запускается" },
-  { id: "other", label: "Другое" },
+const kinds = (): { id: ReportKind; label: string }[] => [
+  { id: "install", label: t("Не ставится", "Won't install") },
+  { id: "model", label: t("Модель не запускается", "Model won't start") },
+  { id: "other", label: t("Другое", "Other") },
 ];
 
 interface Opts {
@@ -45,7 +46,7 @@ export function ReportHost() {
  */
 function ReportDialog({ kind: startKind = "other", error, onClose }: Opts & { onClose: () => void }) {
   const [kind, setKind] = useState<ReportKind>(startKind);
-  const [what, setWhat] = useState(error ? `На экране было: «${error}»\n\n` : "");
+  const [what, setWhat] = useState(error ? t(`На экране было: «${error}»\n\n`, `The screen said: “${error}”\n\n`) : "");
   const [report, setReport] = useState<Report | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,25 +71,32 @@ function ReportDialog({ kind: startKind = "other", error, onClose }: Opts & { on
 
   if (saved) {
     return (
-      <div className="dialog card" role="dialog" aria-label="Сообщить о проблеме">
-        <h2>Почти готово</h2>
+      <div className="dialog card" role="dialog" aria-label={t("Сообщить о проблеме", "Report a problem")}>
+        <h2>{t("Почти готово", "Almost done")}</h2>
         <p>
-          В браузере открылась форма на GitHub — там уже всё заполнено. Перетащите в поле «Отчёт» файл{" "}
-          <b>{saved.split(/[\\/]/).pop()}</b> из папки «Загрузки» (она открыта в Проводнике) и отправьте форму.
+          {t(
+            "В браузере открылась форма на GitHub — там уже всё заполнено. Перетащите в поле «Отчёт» файл",
+            "A GitHub form has opened in your browser — everything is already filled in. Drag the file",
+          )}{" "}
+          <b>{saved.split(/[\\/]/).pop()}</b>{" "}
+          {t(
+            "из папки «Загрузки» (она открыта в Проводнике) и отправьте форму.",
+            "from the Downloads folder (it is open in Explorer) into the “Report” field and submit the form.",
+          )}
         </p>
-        <p className="muted small">Нужен аккаунт на GitHub — он бесплатный.</p>
+        <p className="muted small">{t("Нужен аккаунт на GitHub — он бесплатный.", "You need a GitHub account — it's free.")}</p>
         <div className="actions">
-          <button onClick={onClose}>Закрыть</button>
+          <button onClick={onClose}>{t("Закрыть", "Close")}</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="dialog card" role="dialog" aria-label="Сообщить о проблеме">
-      <h2>Сообщить о проблеме</h2>
-      <div className="seg" role="radiogroup" aria-label="Что случилось">
-        {KINDS.map((k) => (
+    <div className="dialog card" role="dialog" aria-label={t("Сообщить о проблеме", "Report a problem")}>
+      <h2>{t("Сообщить о проблеме", "Report a problem")}</h2>
+      <div className="seg" role="radiogroup" aria-label={t("Что случилось", "What happened")}>
+        {kinds().map((k) => (
           <button
             key={k.id}
             role="radio"
@@ -103,25 +111,30 @@ function ReportDialog({ kind: startKind = "other", error, onClose }: Opts & { on
       <textarea
         rows={4}
         value={what}
-        placeholder="Что вы делали и что пошло не так — своими словами"
+        placeholder={t("Что вы делали и что пошло не так — своими словами", "What you were doing and what went wrong — in your own words")}
         onChange={(e) => setWhat(e.target.value)}
         autoFocus
       />
       <p className="muted small">
-        Вместе с описанием уйдёт отчёт — вот он целиком. Ваших разговоров, файлов и паролей в нём нет, имя
-        пользователя в путях заменено.
+        {t(
+          "Вместе с описанием уйдёт отчёт — вот он целиком. Ваших разговоров, файлов и паролей в нём нет, имя пользователя в путях заменено.",
+          "A report goes along with the description — here it is in full. Your conversations, files and passwords are not in it, and the user name in paths is replaced.",
+        )}
       </p>
-      <pre className="log report">{report ? report.full : failed ? "" : "Собираю отчёт…"}</pre>
+      <pre className="log report">{report ? report.full : failed ? "" : t("Собираю отчёт…", "Putting the report together…")}</pre>
       {failed && <p className="error small">{failed}</p>}
       <p className="muted small">
-        «Отправить» откроет форму на GitHub, а файл отчёта сохранит в «Загрузки» — его нужно будет перетащить в форму.
+        {t(
+          "«Отправить» откроет форму на GitHub, а файл отчёта сохранит в «Загрузки» — его нужно будет перетащить в форму.",
+          "“Send” opens a form on GitHub and saves the report file to Downloads — you'll need to drag it into the form.",
+        )}
       </p>
       <div className="actions">
         <button onClick={send} disabled={!report || busy || !what.trim()}>
-          Отправить
+          {t("Отправить", "Send")}
         </button>
         <button className="secondary" onClick={onClose}>
-          Отмена
+          {t("Отмена", "Cancel")}
         </button>
       </div>
     </div>

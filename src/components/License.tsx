@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { t } from "../i18n";
 
 /**
  * Лицензия модели одной фразой: главное, что человеку надо знать, — можно ли
@@ -19,15 +20,18 @@ const NAMES: Record<string, string> = {
   "apache-2.0": "Apache 2.0",
   mit: "MIT",
   gemma: "Gemma",
-  other: "особая",
 };
 
-const SAYS: Record<Kind, string> = {
-  free: "свободная: можно и дома, и для работы.",
-  terms: "можно и для работы, но у автора есть условия.",
-  personal: "только для себя: зарабатывать с её помощью нельзя.",
-  unknown: "у автора свои условия — прочитайте их, если модель нужна для работы.",
-};
+const says = (kind: Kind) =>
+  ({
+    free: t("свободная: можно и дома, и для работы.", "free: fine both at home and for work."),
+    terms: t("можно и для работы, но у автора есть условия.", "fine for work too, but the author sets conditions."),
+    personal: t("только для себя: зарабатывать с её помощью нельзя.", "personal use only: you can't make money with it."),
+    unknown: t(
+      "у автора свои условия — прочитайте их, если модель нужна для работы.",
+      "the author has their own terms — read them if you need the model for work.",
+    ),
+  })[kind];
 
 export function licenseKind(code: string): Kind {
   const c = code.trim().toLowerCase().replace(/[\s_]+/g, "-");
@@ -40,21 +44,23 @@ export function licenseKind(code: string): Kind {
 export default function License({ code, repo }: { code: string | null; repo: string | null }) {
   const link = repo && (
     <button className="link" onClick={() => openUrl(`https://huggingface.co/${repo}`).catch(() => {})}>
-      Условия на странице модели
+      {t("Условия на странице модели", "Terms on the model page")}
     </button>
   );
   if (!code) {
     // Без лицензии молчать нельзя, если знаем, где посмотреть; не знаем — не выдумываем.
     return repo ? (
       <p className="muted small">
-        Лицензия не указана. {link}
+        {t("Лицензия не указана.", "No license given.")} {link}
       </p>
     ) : null;
   }
   const kind = licenseKind(code);
   return (
     <p className="muted small">
-      Лицензия {NAMES[code.toLowerCase()] ?? code} — {SAYS[kind]} {kind !== "free" && link}
+      {t("Лицензия", "License")}{" "}
+      {code.toLowerCase() === "other" ? t("особая", "custom") : (NAMES[code.toLowerCase()] ?? code)} — {says(kind)}{" "}
+      {kind !== "free" && link}
     </p>
   );
 }

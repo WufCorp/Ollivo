@@ -771,6 +771,16 @@ pre.log {
   opacity: 1;
 }
 
+/* Язык в мастере — в углу, но первым: угадан по Windows, а угадать могли неверно. */
+.wizard-lang {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wizard-lang select {
+  width: auto;
+}
+
 .wizard .actions {
   margin-top: 24px;
 }

@@ -6,6 +6,7 @@
 //! «Светофор» в кеш не попадает — он зависит от свободной памяти и считается каждый раз.
 
 use crate::hardware::Hardware;
+use crate::i18n::{self, Lang};
 use crate::probe::{self, Kind, ModelInfo, Verdict};
 use crate::scan::Found;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,9 @@ pub struct Entry {
     #[serde(default)]
     pub license: Option<String>,
     pub info: ModelInfo,
+    /// На каком языке записаны пояснения в `info`. У записей до 0.3 его нет — русский.
+    #[serde(default)]
+    pub lang: Lang,
 }
 
 /// Что известно о файле кроме него самого: имя из поиска, страница на HF, лицензия.
@@ -50,7 +54,7 @@ pub struct Model {
     pub entry: Entry,
     /// Имя файла — его и показываем в списке.
     pub file: String,
-    pub kind_ru: &'static str,
+    pub kind_name: &'static str,
     /// Файла нет на месте (диск отключили, файл удалили).
     pub missing: bool,
     /// `None`, если файла нет — оценивать нечего.
@@ -131,7 +135,7 @@ impl Library {
     /// Добавляет файл: читает заголовок и запоминает. Уже добавленный — обновляет.
     /// Ошибка — только если файл не открылся или формат не наш.
     pub fn add(&self, path: &Path, src: Source) -> Result<Entry, String> {
-        let (size, mtime) = stat(path).ok_or_else(|| format!("файл не найден: {}", path.display()))?;
+        let (size, mtime) = stat(path).ok_or_else(|| tf!("файл не найден: {}", "file not found: {}", path.display()))?;
         let info = probe::probe(path).map_err(|e| format!("{e:#}"))?;
         let mut entries = self.entries.lock().unwrap();
         let old = entries.iter().find(|e| same_file(&e.path, path));
@@ -141,12 +145,13 @@ impl Library {
         let title = src.title.or_else(|| old.and_then(|e| e.title.clone()));
         let repo = src.repo.or_else(|| old.and_then(|e| e.repo.clone()));
         let license = src.license.or_else(|| old.and_then(|e| e.license.clone()));
-        let entry = Entry { path: path.to_path_buf(), size, mtime, added, title, repo, license, info };
+        let lang = i18n::current();
+        let entry = Entry { path: path.to_path_buf(), size, mtime, added, title, repo, license, info, lang };
         entries.retain(|e| !same_file(&e.path, path));
         entries.push(entry.clone());
         let list = entries.clone();
         drop(entries);
-        self.save(&list).map_err(|e| format!("не записать список моделей: {e}"))?;
+        self.save(&list).map_err(|e| tf!("не записать список моделей: {e}", "could not save the model list: {e}"))?;
         Ok(entry)
     }
 
@@ -185,7 +190,7 @@ impl Library {
         }
         let list = entries.clone();
         drop(entries);
-        self.save(&list).map_err(|e| format!("не записать список моделей: {e}"))?;
+        self.save(&list).map_err(|e| tf!("не записать список моделей: {e}", "could not save the model list: {e}"))?;
         Ok(moved)
     }
 
@@ -194,7 +199,7 @@ impl Library {
         entries.retain(|e| !same_file(&e.path, path));
         let list = entries.clone();
         drop(entries);
-        self.save(&list).map_err(|e| format!("не записать список моделей: {e}"))
+        self.save(&list).map_err(|e| tf!("не записать список моделей: {e}", "could not save the model list: {e}"))
     }
 
     /// Список для окна: пропавшие файлы помечены, изменённые — перечитаны.
@@ -206,10 +211,11 @@ impl Library {
             let missing = match stat(&e.path) {
                 None => true,
                 Some((size, mtime)) => {
-                    if (size, mtime) != (e.size, e.mtime) {
-                        // Файл подменили или дозакачали: перечитываем заголовок.
+                    // Файл подменили или дозакачали — перечитываем заголовок. Сменили язык —
+                    // тоже: пояснения к модели написаны при чтении файла.
+                    if (size, mtime) != (e.size, e.mtime) || e.lang != i18n::current() {
                         if let Ok(info) = probe::probe(&e.path) {
-                            e = Entry { size, mtime, info, ..e };
+                            e = Entry { size, mtime, info, lang: i18n::current(), ..e };
                             changed = true;
                         }
                     }
@@ -218,7 +224,7 @@ impl Library {
             };
             fresh.push(Model {
                 file: e.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                kind_ru: e.info.kind.ru(),
+                kind_name: e.info.kind.name(),
                 verdict: (!missing).then(|| probe::assess(&e.info, hw)),
                 missing,
                 entry: e,

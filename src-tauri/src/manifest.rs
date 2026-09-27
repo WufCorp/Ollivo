@@ -76,7 +76,7 @@ impl Manifest {
     pub fn parse(json: &str) -> Result<Self, String> {
         let m: Manifest = serde_json::from_str(json).map_err(|e| e.to_string())?;
         if m.schema != SCHEMA {
-            return Err(format!("манифест схемы {}, программа понимает {SCHEMA}", m.schema));
+            return Err(tf!("манифест схемы {}, программа понимает {SCHEMA}", "manifest schema {}, the program understands {SCHEMA}", m.schema));
         }
         Ok(m)
     }

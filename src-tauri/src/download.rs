@@ -63,20 +63,53 @@ pub struct Progress {
     pub speed: f64,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("загрузка остановлена")]
     Cancelled,
-    #[error("файл повреждён: SHA256 {actual}, ожидался {expected}")]
     Hash { expected: String, actual: String },
-    #[error("сервер ответил {0}")]
     Status(u16),
-    #[error("сеть: {0}")]
-    Net(#[from] reqwest::Error),
-    #[error("диск: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("{0}")]
+    Net(reqwest::Error),
+    Io(std::io::Error),
     Other(String),
+}
+
+// Вручную, а не `thiserror`: текст зависит от языка программы.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Error::Cancelled => t!("загрузка остановлена", "download stopped").to_string(),
+            Error::Hash { expected, actual } => tf!(
+                "файл повреждён: SHA256 {actual}, ожидался {expected}",
+                "the file is damaged: SHA256 {actual}, expected {expected}"
+            ),
+            Error::Status(s) => tf!("сервер ответил {s}", "the server returned {s}"),
+            Error::Net(e) => tf!("сеть: {e}", "network: {e}"),
+            Error::Io(e) => tf!("диск: {e}", "disk: {e}"),
+            Error::Other(s) => s.clone(),
+        })
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Net(e) => Some(e),
+            Error::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::Net(e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
 }
 
 /// Что сервер сообщил о файле до загрузки.
@@ -170,7 +203,7 @@ impl Downloader {
             return Ok(());
         }
         if req.urls.is_empty() {
-            return Err(Error::Other("нет адреса для загрузки".into()));
+            return Err(Error::Other(t!("нет адреса для загрузки", "no download address").into()));
         }
         let mut last = None;
         for url in &req.urls {
@@ -259,7 +292,7 @@ impl Downloader {
                 s => Err(Error::Status(s)),
             };
         }
-        Err(Error::Other("слишком много перенаправлений".into()))
+        Err(Error::Other(t!("слишком много перенаправлений", "too many redirects").into()))
     }
 
     async fn fetch_parallel(
@@ -390,14 +423,14 @@ impl Downloader {
             let Some(bytes) = next else { break };
             let bytes = bytes?;
             if start + *written + bytes.len() as u64 > end + 1 {
-                return Err(Error::Other("сервер прислал лишние байты".into()));
+                return Err(Error::Other(t!("сервер прислал лишние байты", "the server sent extra bytes").into()));
             }
             file.write_all(&bytes).await?;
             *written += bytes.len() as u64;
             counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
         }
         if *written != end - start + 1 {
-            return Err(Error::Other("кусок оборвался".into()));
+            return Err(Error::Other(t!("кусок оборвался", "a chunk was cut off").into()));
         }
         file.flush().await?;
         Ok(())

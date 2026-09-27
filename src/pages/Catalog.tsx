@@ -18,6 +18,7 @@ import {
   type CatalogVariant,
   type DownloadProgress,
 } from "../api";
+import { decimal, locale, t } from "../i18n";
 
 /** Что сейчас с загрузкой одного файла. */
 interface Task {
@@ -36,7 +37,8 @@ const taskId = (repo: string, name: string) => `model:${repo}/${name}`;
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function params(n: number): string {
-  return `${(n / 1e9).toFixed(1).replace(".", ",").replace(",0", "")} млрд параметров`;
+  const b = decimal(n / 1e9).replace(/[.,]0$/, "");
+  return t(`${b} млрд параметров`, `${b}B parameters`);
 }
 
 /** Строка варианта: сжатие, размер, «светофор» и кнопка. */
@@ -65,7 +67,10 @@ function Variant({
         {/* Крупно — смысл сжатия словами; код («Q4_K_M») — мелко, для тех, кто его знает,
             и чтобы различить варианты с одинаковым описанием. */}
         <p className="variant-title">
-          <b>{capitalize(v.quality)}</b> <span className="muted">· {formatBytes(v.size)} · вариант {v.quant}</span>
+          <b>{capitalize(v.quality)}</b>{" "}
+          <span className="muted">
+            · {formatBytes(v.size)} · {t("вариант", "variant")} {v.quant}
+          </span>
         </p>
         <p className="variant-headline">{v.verdict.headline}</p>
         <Fit verdict={v.verdict} />
@@ -74,13 +79,13 @@ function Variant({
             <progress value={p!.done} max={p!.total ?? undefined} />
             <p className="muted small">
               {p!.phase === "verifying"
-                ? "Проверяю, всё ли скачалось целым…"
-                : `${formatBytes(p!.done)} из ${formatBytes(p!.total ?? v.size)} · ${formatBytes(p!.speed)}/с`}
+                ? t("Проверяю, всё ли скачалось целым…", "Checking everything downloaded intact…")
+                : `${formatBytes(p!.done)} ${t("из", "of")} ${formatBytes(p!.total ?? v.size)} · ${formatBytes(p!.speed)}/${t("с", "s")}`}
             </p>
           </>
         )}
         {task?.error && task.error !== "paused" && <p className="error">{task.error}</p>}
-        {task?.error === "paused" && <p className="muted small">Загрузка на паузе — можно продолжить.</p>}
+        {task?.error === "paused" && <p className="muted small">{t("Загрузка на паузе — можно продолжить.", "The download is paused — you can resume it.")}</p>}
       </div>
 
       {path ? (
@@ -91,16 +96,16 @@ function Variant({
               onGoToChat();
             }}
           >
-            Запустить
+            {t("Запустить", "Start")}
           </button>
         </div>
       ) : going ? (
         <button className="secondary" onClick={() => taskPause(id)}>
-          Пауза
+          {t("Пауза", "Pause")}
         </button>
       ) : (
         <button onClick={() => onStart(v)}>
-          {task?.error === "paused" ? "Продолжить" : task?.error ? "Ещё раз" : "Скачать"}
+          {task?.error === "paused" ? t("Продолжить", "Resume") : task?.error ? t("Ещё раз", "Try again") : t("Скачать", "Download")}
         </button>
       )}
     </div>
@@ -122,8 +127,8 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
   const [files, setFiles] = useState<CatalogFiles | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
 
-  const patch = (id: string, t: Partial<Task>) =>
-    setTasks((all) => ({ ...all, [id]: { ...(all[id] ?? NOTHING), ...t } }));
+  const patch = (id: string, upd: Partial<Task>) =>
+    setTasks((all) => ({ ...all, [id]: { ...(all[id] ?? NOTHING), ...upd } }));
 
   useEffect(() => {
     catalogPicks().then(setPicks);
@@ -191,28 +196,29 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
   return (
     <>
       <div className="page-head">
-        <h2>Каталог</h2>
-        <div className="seg" role="radiogroup" aria-label="Что показать">
+        <h2>{t("Каталог", "Catalog")}</h2>
+        <div className="seg" role="radiogroup" aria-label={t("Что показать", "What to show")}>
           <button role="radio" aria-checked={mode === "picks"} className={mode === "picks" ? "active" : ""} onClick={() => setMode("picks")}>
-            Подборка
+            {t("Подборка", "Picks")}
           </button>
           <button role="radio" aria-checked={mode === "search"} className={mode === "search" ? "active" : ""} onClick={() => setMode("search")}>
-            Поиск по HuggingFace
+            {t("Поиск по HuggingFace", "Search HuggingFace")}
           </button>
         </div>
       </div>
 
       <label className="check filter switch">
         <input type="checkbox" checked={onlyFits} onChange={(e) => setOnlyFits(e.target.checked)} />
-        Показывать только то, что пойдёт на моём компьютере
+        {t("Показывать только то, что пойдёт на моём компьютере", "Show only what will run on my computer")}
       </label>
 
       {mode === "picks" ? (
         <>
           <p className="muted small">
-            Проверенные модели для переписки. Размер выбирайте по «светофору»: зелёный — поместится в
-            видеокарту целиком, жёлтый — будет работать, но медленнее. Полоса — сколько видеопамяти
-            модель займёт из свободной.
+            {t(
+              "Проверенные модели для переписки. Размер выбирайте по «светофору»: зелёный — поместится в видеокарту целиком, жёлтый — будет работать, но медленнее. Полоса — сколько видеопамяти модель займёт из свободной.",
+              "Tested models for chatting. Choose the size by the “traffic light”: green — fits entirely in the graphics card, yellow — will work, but slower. The bar shows how much of the free video memory the model will take.",
+            )}
           </p>
           {picks?.map((m) => {
             const variants = m.variants.filter(fits);
@@ -247,45 +253,50 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
           <div className="row">
             <input
               className="grow-input"
-              placeholder="Название модели, например Qwen3.5 или Gemma"
+              placeholder={t("Название модели, например Qwen3.5 или Gemma", "Model name, e.g. Qwen3.5 or Gemma")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && search()}
             />
             <button onClick={search} disabled={searching || !query.trim()}>
-              {searching ? "Ищу…" : "Найти"}
+              {searching ? t("Ищу…", "Searching…") : t("Найти", "Search")}
             </button>
           </div>
           <p className="muted small">
-            Ищем среди моделей в формате GGUF — такие запускает движок чата. Ollivo не проверяла их: что
-            внутри чужой модели, знает только тот, кто её выложил.
+            {t(
+              "Ищем среди моделей в формате GGUF — такие запускает движок чата. Ollivo не проверяла их: что внутри чужой модели, знает только тот, кто её выложил.",
+              "We search among models in GGUF format — the chat engine runs these. Ollivo hasn't tested them: only whoever uploaded a model knows what is inside it.",
+            )}
           </p>
 
           {searchError && <p className="error">{searchError}</p>}
-          {found?.length === 0 && <p className="muted">Ничего не нашлось. Попробуйте другое название.</p>}
+          {found?.length === 0 && <p className="muted">{t("Ничего не нашлось. Попробуйте другое название.", "Nothing found. Try another name.")}</p>}
 
           {found?.map((r) => (
             <div className="card model" key={r.repo}>
               <p className="model-title">{r.name}</p>
               <p className="muted small">
-                {[r.author, `скачали ${r.downloads.toLocaleString("ru")} раз`].join(" · ")}
+                {[r.author, t(`скачали ${r.downloads.toLocaleString(locale())} раз`, `${r.downloads.toLocaleString(locale())} downloads`)].join(" · ")}
               </p>
               <License code={r.license} repo={r.repo} />
               {r.gated && (
                 <p className="muted small">
-                  Закрытая модель: нужен токен HuggingFace в настройках и согласие на её странице.
+                  {t(
+                    "Закрытая модель: нужен токен HuggingFace в настройках и согласие на её странице.",
+                    "Gated model: you need a HuggingFace token in the settings and to accept the terms on its page.",
+                  )}
                 </p>
               )}
               <div className="actions">
                 <button className="secondary" onClick={() => openRepo(r.repo)}>
-                  {open === r.repo ? "Свернуть" : "Что скачать"}
+                  {open === r.repo ? t("Свернуть", "Collapse") : t("Что скачать", "What to download")}
                 </button>
               </div>
 
               {open === r.repo && (
                 <>
                   {filesError && <p className="error">{filesError}</p>}
-                  {!files && !filesError && <p className="muted small">Смотрю, что там есть…</p>}
+                  {!files && !filesError && <p className="muted small">{t("Смотрю, что там есть…", "Looking at what's there…")}</p>}
                   {files?.variants.filter(fits).map((v) => (
                     <Variant
                       key={v.name}
@@ -297,11 +308,14 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
                     />
                   ))}
                   {files?.variants.length === 0 && (
-                    <p className="muted small">Готовых файлов для чата тут нет.</p>
+                    <p className="muted small">{t("Готовых файлов для чата тут нет.", "No ready files for chat here.")}</p>
                   )}
                   {!!files?.split && (
                     <p className="muted small">
-                      Ещё {files.split} файлов разрезаны на части — такие Ollivo пока не качает.
+                      {t(
+                        `Ещё ${files.split} файлов разрезаны на части — такие Ollivo пока не качает.`,
+                        `${files.split} more files are split into parts — Ollivo doesn't download those yet.`,
+                      )}
                     </p>
                   )}
                 </>

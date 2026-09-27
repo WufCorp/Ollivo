@@ -11,13 +11,14 @@ import {
   PART_SPEECH_MODEL,
   type PartsStatus,
 } from "../api";
+import { t } from "../i18n";
 
 /** Как назвать докачку человеку: распознавание — это движок и модель вместе. */
 const whatToGet = (parts: string[]) => {
   const names = [];
-  if (parts.some((p) => p !== "ffmpeg")) names.push("распознавание речи");
-  if (parts.includes("ffmpeg")) names.push("чтение таких файлов");
-  return names.join(" и ");
+  if (parts.some((p) => p !== "ffmpeg")) names.push(t("распознавание речи", "speech recognition"));
+  if (parts.includes("ffmpeg")) names.push(t("чтение таких файлов", "a reader for such files"));
+  return names.join(t(" и ", " and "));
 };
 
 /**
@@ -30,7 +31,7 @@ export default function PartsSetup({
   onReady,
   onCancel,
 }: {
-  /** Зачем понадобилось: «надиктовать вопрос», «расшифровать запись». */
+  /** Зачем понадобилось: «надиктовать вопрос», «расшифровать запись» — на языке окна. */
   why: string;
   /** Что нужно: `ffmpeg`, `whisper.cpp`, `speech:model`; уже стоящее пропускается. */
   parts: string[];
@@ -64,7 +65,7 @@ export default function PartsSetup({
       onEngineFinished((f) => {
         if (!mine(f.id)) return;
         setUnpacking(false);
-        if (f.error) fail(f.error === "paused" ? "Загрузка прервалась." : f.error);
+        if (f.error) fail(f.error === "paused" ? t("Загрузка прервалась.", "The download was interrupted.") : f.error);
         else next();
       }),
       onDownloadProgress((p) => {
@@ -72,7 +73,7 @@ export default function PartsSetup({
       }),
       onDownloadFinished((f) => {
         if (f.id !== PART_SPEECH_MODEL) return;
-        if (f.error) fail(f.error === "paused" ? "Загрузка прервалась." : f.error);
+        if (f.error) fail(f.error === "paused" ? t("Загрузка прервалась.", "The download was interrupted.") : f.error);
         else next();
       }),
     ];
@@ -116,23 +117,25 @@ export default function PartsSetup({
   return (
     <div className="card notice">
       <p>
-        Чтобы {why}, нужно один раз докачать {whatToGet(status.missing)} — {formatBytes(status.download)}. Всё
-        работает прямо на компьютере: файлы никуда не отправляются.
+        {t(
+          `Чтобы ${why}, нужно один раз докачать ${whatToGet(status.missing)} — ${formatBytes(status.download)}. Всё работает прямо на компьютере: файлы никуда не отправляются.`,
+          `To ${why}, you need to download ${whatToGet(status.missing)} once — ${formatBytes(status.download)}. Everything runs right on your computer: files aren't sent anywhere.`,
+        )}
       </p>
       {busy && (
         <>
           <progress value={done} max={status.download} />
           <p className="muted small">
-            {unpacking ? "Распаковываю…" : `${formatBytes(done)} из ${formatBytes(status.download)}`}
+            {unpacking ? t("Распаковываю…", "Unpacking…") : `${formatBytes(done)} ${t("из", "of")} ${formatBytes(status.download)}`}
           </p>
         </>
       )}
       {error && <p className="error small">{error}</p>}
       {!busy && (
         <div className="actions">
-          <button onClick={start}>{error ? "Ещё раз" : "Докачать"}</button>
+          <button onClick={start}>{error ? t("Ещё раз", "Try again") : t("Докачать", "Download")}</button>
           <button className="secondary" onClick={onCancel}>
-            Не надо
+            {t("Не надо", "No, thanks")}
           </button>
         </div>
       )}

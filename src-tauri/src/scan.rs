@@ -47,7 +47,7 @@ pub fn sources(data_dir: &Path) -> Vec<Source> {
         }
     };
 
-    add("Папка Ollivo", data_dir.join("models"));
+    add(t!("Папка Ollivo", "Ollivo folder"), data_dir.join("models"));
     if let Some(home) = home() {
         add("LM Studio", home.join(".lmstudio").join("models"));
         // Раскладка старых версий LM Studio.

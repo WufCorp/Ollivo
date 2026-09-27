@@ -39,9 +39,9 @@ impl HfSettings {
             HfSource::Mirror => return Ok(MIRROR.into()),
             HfSource::Custom => self.custom_url.trim().trim_end_matches('/'),
         };
-        let parsed = reqwest::Url::parse(url).map_err(|_| "адрес зеркала записан с ошибкой".to_string())?;
+        let parsed = reqwest::Url::parse(url).map_err(|_| t!("адрес зеркала записан с ошибкой", "the mirror address is malformed").to_string())?;
         if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
-            return Err("адрес зеркала должен начинаться с https://".into());
+            return Err(t!("адрес зеркала должен начинаться с https://", "the mirror address must start with https://").into());
         }
         Ok(url.to_string())
     }
@@ -78,10 +78,10 @@ pub struct TokenCheck {
 /// Проверка токена: `/api/whoami-v2` возвращает имя владельца.
 pub async fn check_token(client: &reqwest::Client, base: &str, token: &str) -> TokenCheck {
     if token.is_empty() {
-        return TokenCheck { ok: false, message: "токен не указан".into() };
+        return TokenCheck { ok: false, message: t!("токен не указан", "no token given").into() };
     }
     if !token.starts_with("hf_") {
-        return TokenCheck { ok: false, message: "токен HuggingFace начинается с hf_".into() };
+        return TokenCheck { ok: false, message: t!("токен HuggingFace начинается с hf_", "a HuggingFace token starts with hf_").into() };
     }
     let mut resp = client.get(format!("{base}/api/whoami-v2")).bearer_auth(token).send().await;
     // Зеркало перенаправило на сам HF — токен при переходе отброшен, спрашиваем HF напрямую.
@@ -99,18 +99,20 @@ pub async fn check_token(client: &reqwest::Client, base: &str, token: &str) -> T
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
                 .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
                 .unwrap_or_default();
-            TokenCheck { ok: true, message: format!("токен работает, аккаунт {name}") }
+            TokenCheck { ok: true, message: tf!("токен работает, аккаунт {name}", "the token works, account {name}") }
         }
         Ok(r) if r.status().as_u16() == 401 => {
-            TokenCheck { ok: false, message: "токен неверный или отозван".into() }
+            TokenCheck { ok: false, message: t!("токен неверный или отозван", "the token is wrong or revoked").into() }
         }
         Ok(r) if r.status().as_u16() == 404 => TokenCheck {
             ok: false,
-            message: "зеркало не проверяет токены — проверьте на основном сайте".into(),
+            message: t!("зеркало не проверяет токены — проверьте на основном сайте", "the mirror doesn't check tokens — check on the main site").into(),
         },
-        Ok(r) => TokenCheck { ok: false, message: format!("сайт ответил ошибкой {}", r.status().as_u16()) },
-        Err(e) if e.is_timeout() => TokenCheck { ok: false, message: "сайт не ответил — нужен прокси или зеркало?".into() },
-        Err(_) => TokenCheck { ok: false, message: "сайт не открывается — нужен прокси или зеркало?".into() },
+        Ok(r) => TokenCheck { ok: false, message: tf!("сайт ответил ошибкой {}", "the site returned error {}", r.status().as_u16()) },
+        Err(e) if e.is_timeout() => {
+            TokenCheck { ok: false, message: t!("сайт не ответил — нужен прокси или зеркало?", "the site did not respond — do you need a proxy or a mirror?").into() }
+        }
+        Err(_) => TokenCheck { ok: false, message: t!("сайт не открывается — нужен прокси или зеркало?", "the site won't open — do you need a proxy or a mirror?").into() },
     }
 }
 

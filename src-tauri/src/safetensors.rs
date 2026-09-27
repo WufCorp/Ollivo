@@ -46,17 +46,17 @@ pub fn dtype_size(dtype: &str) -> u64 {
 }
 
 pub fn read(path: &Path) -> Result<Safetensors> {
-    let mut f = File::open(path).with_context(|| format!("не открыть {}", path.display()))?;
+    let mut f = File::open(path).with_context(|| tf!("не открыть {}", "can't open {}", path.display()))?;
     let mut len = [0u8; 8];
-    f.read_exact(&mut len).context("файл слишком короткий")?;
+    f.read_exact(&mut len).context(t!("файл слишком короткий", "the file is too short"))?;
     let len = u64::from_le_bytes(len);
     if len < 2 || len > 100 << 20 {
-        bail!("это не safetensors (длина заголовка {len})");
+        bail!(tf!("это не safetensors (длина заголовка {len})", "this is not safetensors (header length {len})"));
     }
     let mut buf = vec![0u8; len as usize];
-    f.read_exact(&mut buf).context("файл обрезан: заголовок safetensors не дочитан")?;
+    f.read_exact(&mut buf).context(t!("файл обрезан: заголовок safetensors не дочитан", "the file is cut off: the safetensors header is incomplete"))?;
     let json: Map<String, Value> =
-        serde_json::from_slice(&buf).context("заголовок safetensors — не JSON")?;
+        serde_json::from_slice(&buf).context(t!("заголовок safetensors — не JSON", "the safetensors header is not JSON"))?;
 
     let mut metadata = Map::new();
     let mut tensors = Vec::new();

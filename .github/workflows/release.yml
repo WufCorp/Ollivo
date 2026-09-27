@@ -1,7 +1,8 @@
 # Выпуск на GitHub по тегу v<версия>. Установщик не собирается здесь заново, а берётся
 # из S3 — тот самый, подписанный ключом обновлений на машине владельца и уже выложенный
 # `publish-update`: на странице выпусков и в автообновлении должен быть один и тот же файл.
-# Текст — release-notes/<версия>.md, ниже дописываются SHA256 и как пройти SmartScreen.
+# Текст — release-notes/<версия>.md и английский release-notes/<версия>.en.md,
+# ниже дописываются SHA256 и как пройти SmartScreen — на обоих языках.
 # Рядом кладётся latest.json — запасной адрес автообновления (update.rs): та же подпись,
 # но ссылка на установщик здесь, на GitHub, чтобы обновление пришло и без S3.
 name: release
@@ -32,14 +33,22 @@ jobs:
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$exe"
           jq --arg url "$url" '.platforms["windows-x86_64"].url = $url' s3-latest.json > latest.json
           test -s "release-notes/$ver.md" || { echo "нет release-notes/$ver.md"; exit 1; }
+          test -s "release-notes/$ver.en.md" || { echo "нет release-notes/$ver.en.md"; exit 1; }
           sha=$(sha256sum "$exe" | cut -d' ' -f1)
           {
             cat "release-notes/$ver.md"
             echo
             echo "---"
             echo
+            cat "release-notes/$ver.en.md"
+            echo
+            echo "---"
+            echo
             echo "**Если Windows предупредит.** Подписи Microsoft у программы пока нет, поэтому при первой установке"
             echo "может появиться синее окно «Windows защитил ваш компьютер». Нажмите «Подробнее», затем «Выполнить в любом случае»."
+            echo
+            echo "**If Windows warns you.** The app doesn't have a Microsoft signature yet, so on first install"
+            echo "a blue “Windows protected your PC” window may appear. Click “More info”, then “Run anyway”."
             echo
             echo "SHA256 \`$exe\`:"
             echo

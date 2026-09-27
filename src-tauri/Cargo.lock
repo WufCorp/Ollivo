@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "ollivo"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3025,7 +3025,6 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
- "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",

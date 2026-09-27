@@ -35,17 +35,28 @@ pub struct Available {
     pub date: Option<String>,
 }
 
+/// Описание версии одно на все программы, поэтому в нём оба языка: русский, строка `---`,
+/// английский (`publish-update.ps1 -Notes … -NotesEn …`). Показываем часть на языке окна;
+/// разделителя нет — описание как есть.
+pub fn notes_for_lang(notes: &str) -> String {
+    let notes = notes.replace("\r\n", "\n");
+    match notes.split_once("\n---\n") {
+        Some((ru, en)) => if crate::i18n::en() { en } else { ru }.trim().to_string(),
+        None => notes.trim().to_string(),
+    }
+}
+
 /// Ищет обновление в выбранном канале. `Ok(None)` — установлена свежая версия.
 pub async fn check(app: &AppHandle, channel: &str, proxy: Option<url::Url>) -> Result<Option<Update>, String> {
     let urls = endpoints(channel)
         .iter()
         .map(|u| u.parse())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("неверный адрес обновлений: {e}"))?;
+        .map_err(|e| tf!("неверный адрес обновлений: {e}", "bad update address: {e}"))?;
     let mut builder = app
         .updater_builder()
         .endpoints(urls)
-        .map_err(|e| format!("неверный адрес обновлений: {e}"))?;
+        .map_err(|e| tf!("неверный адрес обновлений: {e}", "bad update address: {e}"))?;
     if let Some(p) = proxy {
         builder = builder.proxy(p);
     }
@@ -76,24 +87,35 @@ fn human(e: tauri_plugin_updater::Error) -> String {
     use tauri_plugin_updater::Error;
     match &e {
         // Файла с описанием версии нет: в этот канал ещё ничего не выпускали.
-        Error::ReleaseNotFound => NO_RELEASES.into(),
-        Error::Reqwest(r) if r.status().map(|s| s.as_u16()) == Some(404) => NO_RELEASES.into(),
+        Error::ReleaseNotFound => no_releases().into(),
+        Error::Reqwest(r) if r.status().map(|s| s.as_u16()) == Some(404) => no_releases().into(),
         Error::Reqwest(r) if r.is_connect() || r.is_timeout() || r.is_request() => {
-            "не получилось связаться с сервером обновлений — проверьте интернет".into()
+            t!("не получилось связаться с сервером обновлений — проверьте интернет", "couldn't reach the update server — check the internet").into()
         }
         Error::Reqwest(r) => match r.status() {
-            Some(s) => format!("сервер обновлений ответил ошибкой {}", s.as_u16()),
-            None => format!("сервер обновлений недоступен: {r}"),
+            Some(s) => tf!("сервер обновлений ответил ошибкой {}", "the update server returned error {}", s.as_u16()),
+            None => tf!("сервер обновлений недоступен: {r}", "the update server is unavailable: {r}"),
         },
         _ => e.to_string(),
     }
 }
 
-const NO_RELEASES: &str = "в этом канале пока нет выпущенных версий";
+fn no_releases() -> &'static str {
+    t!("в этом канале пока нет выпущенных версий", "no versions have been released in this channel yet")
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_in_window_language() {
+        let both = "Кнопка «Поддержать».\r\n---\r\nA “Support” button.";
+        assert_eq!(notes_for_lang(both), "Кнопка «Поддержать».");
+        assert_eq!(notes_for_lang("Только по-русски"), "Только по-русски");
+        crate::i18n::test_en();
+        assert_eq!(notes_for_lang(both), "A “Support” button.");
+    }
 
     /// Настоящая проверка выпущенного обновления по каждому адресу — S3 (оба канала) и
     /// запасному GitHub: скачиваем описание и установщик и сверяем подпись тем же ключом,

@@ -1,22 +1,35 @@
 import { useState } from "react";
 import { type FileMode, type Step, type WriteAsk } from "../api";
-import { plural } from "../words";
+import { pl, t } from "../i18n";
 import Icon, { type IconName } from "./Icon";
 
-const lines = (n: number) => `${n} ${plural(n, "строка", "строки", "строк")}`;
+const lines = (n: number) => `${n} ${pl(n, ["строка", "строки", "строк"], ["line", "lines"])}`;
 
-export const FILE_MODES: { id: FileMode; name: string; hint: string }[] = [
+export const fileModes = (): { id: FileMode; name: string; hint: string }[] => [
   {
     id: "ask",
-    name: "Вручную",
-    hint: "Перед каждым созданием, изменением или удалением файла модель спрашивает разрешения",
+    name: t("Вручную", "Manual"),
+    hint: t(
+      "Перед каждым созданием, изменением или удалением файла модель спрашивает разрешения",
+      "Before creating, changing or deleting any file, the model asks for permission",
+    ),
   },
   {
     id: "auto",
-    name: "Авто",
-    hint: "Модель сама создаёт, меняет и удаляет файлы в папке. Старые версии сохраняются — их можно вернуть",
+    name: t("Авто", "Auto"),
+    hint: t(
+      "Модель сама создаёт, меняет и удаляет файлы в папке. Старые версии сохраняются — их можно вернуть",
+      "The model creates, changes and deletes files in the folder by itself. Old versions are kept — you can restore them",
+    ),
   },
-  { id: "plan", name: "План", hint: "Модель ничего не меняет: изучает файлы и пишет план. Выполнить его — одной кнопкой" },
+  {
+    id: "plan",
+    name: t("План", "Plan"),
+    hint: t(
+      "Модель ничего не меняет: изучает файлы и пишет план. Выполнить его — одной кнопкой",
+      "The model changes nothing: it studies the files and writes a plan. Carry it out with one button",
+    ),
+  },
 ];
 
 /** Переключатель режима работы с файлами. */
@@ -30,8 +43,8 @@ export function ModeSwitch({
   onChange: (m: FileMode) => void;
 }) {
   return (
-    <div className="seg" role="radiogroup" aria-label="Как менять файлы">
-      {FILE_MODES.map((m) => (
+    <div className="seg" role="radiogroup" aria-label={t("Как менять файлы", "How to change files")}>
+      {fileModes().map((m) => (
         <button
           key={m.id}
           role="radio"
@@ -76,7 +89,7 @@ export function Mentions({
   active: number;
   onPick: (path: string) => void;
 }) {
-  if (!files.length) return <div className="mentions muted small">Такого файла в папке нет.</div>;
+  if (!files.length) return <div className="mentions muted small">{t("Такого файла в папке нет.", "No such file in the folder.")}</div>;
   return (
     <div className="mentions" role="listbox">
       {files.map((f, i) => (
@@ -111,24 +124,24 @@ const STEP_ICONS: Record<Step["kind"], IconName> = {
 };
 
 function stepText(s: Step): string {
-  const where = s.path || "папку проекта";
+  const p = s.path;
   switch (s.kind) {
     case "read":
-      return s.ok ? `Прочитала ${s.path}` : `Не прочитала ${s.path}`;
+      return s.ok ? t(`Прочитала ${p}`, `Read ${p}`) : t(`Не прочитала ${p}`, `Couldn't read ${p}`);
     case "list":
-      return `Посмотрела ${s.path ? `папку ${s.path}` : where}`;
+      return p ? t(`Посмотрела папку ${p}`, `Looked at folder ${p}`) : t("Посмотрела папку проекта", "Looked at the project folder");
     case "search":
-      return `Искала «${s.path}»`;
+      return t(`Искала «${p}»`, `Searched for “${p}”`);
     case "write":
-      return s.ok ? `Сохранила ${s.path}` : `Не сохранила ${s.path}`;
+      return s.ok ? t(`Сохранила ${p}`, `Saved ${p}`) : t(`Не сохранила ${p}`, `Couldn't save ${p}`);
     case "edit":
-      return s.ok ? `Поправила ${s.path}` : `Не поправила ${s.path}`;
+      return s.ok ? t(`Поправила ${p}`, `Edited ${p}`) : t(`Не поправила ${p}`, `Couldn't edit ${p}`);
     case "delete":
-      return s.ok ? `Удалила ${s.path}` : `Не удалила ${s.path}`;
+      return s.ok ? t(`Удалила ${p}`, `Deleted ${p}`) : t(`Не удалила ${p}`, `Couldn't delete ${p}`);
     case "plan":
-      return `Хотела изменить ${s.path}`;
+      return t(`Хотела изменить ${p}`, `Wanted to change ${p}`);
     default:
-      return `Не поняла, что сделать: ${s.path}`;
+      return t(`Не поняла, что сделать: ${p}`, `Didn't understand what to do: ${p}`);
   }
 }
 
@@ -185,11 +198,11 @@ export function Steps({ steps, onUndo }: { steps: Step[]; onUndo?: (i: number) =
           {s.note && <span className="muted"> — {s.note}</span>}
           {(s.kind === "write" || s.kind === "edit" || s.kind === "delete") && s.ok && (
             s.undone ? (
-              <span className="muted"> — возвращено как было</span>
+              <span className="muted"> — {t("возвращено как было", "restored")}</span>
             ) : (
               onUndo && (
                 <button className="link" disabled={busy !== null} onClick={() => undo(i)}>
-                  {busy === i ? "Возвращаю…" : "Вернуть как было"}
+                  {busy === i ? t("Возвращаю…", "Restoring…") : t("Вернуть как было", "Restore")}
                 </button>
               )
             )
@@ -203,42 +216,53 @@ export function Steps({ steps, onUndo }: { steps: Step[]; onUndo?: (i: number) =
 
 /** Модель просит записать файл: что именно, и решение за человеком. */
 export function WriteCard({ ask, onAnswer }: { ask: WriteAsk; onAnswer: (ok: boolean) => void }) {
-  const [yes, no] = ask.kind === "delete" ? ["Удалить", "Не удалять"] : ["Сохранить", "Не сохранять"];
+  const [yes, no] =
+    ask.kind === "delete" ? [t("Удалить", "Delete"), t("Не удалять", "Don't delete")] : [t("Сохранить", "Save"), t("Не сохранять", "Don't save")];
   return (
     <div className="card notice write-ask">
       <p>
         {ask.kind === "delete" ? (
           <>
-            Модель хочет удалить файл <b>{ask.path}</b> — {lines(ask.old_lines)}. Копию сохраню — файл можно
-            будет вернуть.
+            {t("Модель хочет удалить файл", "The model wants to delete the file")} <b>{ask.path}</b> — {lines(ask.old_lines)}.{" "}
+            {t("Копию сохраню — файл можно будет вернуть.", "I'll keep a copy — you'll be able to restore the file.")}
           </>
         ) : ask.kind === "edit" ? (
           <>
-            Модель хочет поправить файл <b>{ask.path}</b>: было {lines(ask.old_lines)}, станет {lines(ask.new_lines)}.
-            Старую версию сохраню — её можно будет вернуть.
+            {t("Модель хочет поправить файл", "The model wants to edit the file")} <b>{ask.path}</b>:{" "}
+            {t(
+              `было ${lines(ask.old_lines)}, станет ${lines(ask.new_lines)}.`,
+              `it was ${lines(ask.old_lines)}, it will be ${lines(ask.new_lines)}.`,
+            )}{" "}
+            {t("Старую версию сохраню — её можно будет вернуть.", "I'll keep the old version — you'll be able to restore it.")}
           </>
         ) : ask.exists ? (
           <>
-            Модель хочет заменить файл <b>{ask.path}</b> целиком: было {lines(ask.old_lines)}, станет{" "}
-            {lines(ask.new_lines)}. Старую версию сохраню — её можно будет вернуть.
+            {t("Модель хочет заменить файл", "The model wants to replace the file")} <b>{ask.path}</b>{" "}
+            {t(
+              `целиком: было ${lines(ask.old_lines)}, станет ${lines(ask.new_lines)}.`,
+              `entirely: it was ${lines(ask.old_lines)}, it will be ${lines(ask.new_lines)}.`,
+            )}{" "}
+            {t("Старую версию сохраню — её можно будет вернуть.", "I'll keep the old version — you'll be able to restore it.")}
           </>
         ) : (
           <>
-            Модель хочет создать файл <b>{ask.path}</b> — {lines(ask.new_lines)}.
+            {t("Модель хочет создать файл", "The model wants to create the file")} <b>{ask.path}</b> — {lines(ask.new_lines)}.
           </>
         )}
       </p>
       {ask.kind === "edit" ? (
         <details open>
-          <summary>Что поменяется</summary>
-          <p className="muted small">Было:</p>
+          <summary>{t("Что поменяется", "What will change")}</summary>
+          <p className="muted small">{t("Было:", "Before:")}</p>
           <pre className="before">{ask.before}</pre>
-          <p className="muted small">Станет:</p>
+          <p className="muted small">{t("Станет:", "After:")}</p>
           <pre className="after">{ask.after}</pre>
         </details>
       ) : (
         <details>
-          <summary>{ask.kind === "delete" ? "Показать, что в файле" : "Показать, что будет в файле"}</summary>
+          <summary>
+            {ask.kind === "delete" ? t("Показать, что в файле", "Show what's in the file") : t("Показать, что будет в файле", "Show what the file will contain")}
+          </summary>
           <pre>{ask.content}</pre>
         </details>
       )}

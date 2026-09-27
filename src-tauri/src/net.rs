@@ -33,13 +33,17 @@ impl ProxySettings {
         }
         let host = self.host.trim();
         if host.is_empty() {
-            return Err("не указан адрес прокси".into());
+            return Err(t!("не указан адрес прокси", "proxy address is missing").into());
         }
         if host.contains("://") || host.contains('/') || host.contains('@') {
-            return Err("в поле «Адрес» нужен только адрес, например 127.0.0.1 или proxy.example.com".into());
+            return Err(t!(
+                "в поле «Адрес» нужен только адрес, например 127.0.0.1 или proxy.example.com",
+                "the “Address” field needs just the address, e.g. 127.0.0.1 or proxy.example.com"
+            )
+            .into());
         }
         if self.port == 0 {
-            return Err("не указан порт прокси".into());
+            return Err(t!("не указан порт прокси", "proxy port is missing").into());
         }
         // socks5h: имена сайтов тоже разрешает прокси — провайдер не видит, куда идём.
         let scheme = match self.kind {
@@ -47,13 +51,13 @@ impl ProxySettings {
             ProxyKind::Socks5 => "socks5h",
         };
         let mut url = reqwest::Url::parse(&format!("{scheme}://{host}:{}", self.port))
-            .map_err(|_| "адрес прокси записан с ошибкой".to_string())?;
+            .map_err(|_| t!("адрес прокси записан с ошибкой", "the proxy address is malformed").to_string())?;
         if self.auth {
             if self.username.is_empty() {
-                return Err("не указан логин для прокси".into());
+                return Err(t!("не указан логин для прокси", "proxy login is missing").into());
             }
-            url.set_username(&self.username).map_err(|_| "логин не подходит".to_string())?;
-            url.set_password(Some(password)).map_err(|_| "пароль не подходит".to_string())?;
+            url.set_username(&self.username).map_err(|_| t!("логин не подходит", "the login is not valid").to_string())?;
+            url.set_password(Some(password)).map_err(|_| t!("пароль не подходит", "the password is not valid").to_string())?;
         }
         Ok(Some(url.into()))
     }
@@ -119,7 +123,7 @@ pub async fn test(settings: &ProxySettings, password: &str) -> TestReport {
 
     let proxy = match settings.reqwest(password) {
         Ok(p) => p,
-        Err(e) => return fail(vec![Check { name: "Настройки".into(), ok: false, message: e }]),
+        Err(e) => return fail(vec![Check { name: t!("Настройки", "Settings").into(), ok: false, message: e }]),
     };
 
     if proxy.is_some() {
@@ -128,11 +132,11 @@ pub async fn test(settings: &ProxySettings, password: &str) -> TestReport {
         let started = Instant::now();
         let conn = tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(&addr)).await;
         let (ok, message) = match conn {
-            Ok(Ok(_)) => (true, format!("отвечает, {} мс", started.elapsed().as_millis())),
-            Ok(Err(e)) => (false, format!("не подключается к {addr}: {}", friendly_io(&e))),
-            Err(_) => (false, format!("{addr} не ответил за 5 секунд")),
+            Ok(Ok(_)) => (true, tf!("отвечает, {} мс", "responds, {} ms", started.elapsed().as_millis())),
+            Ok(Err(e)) => (false, tf!("не подключается к {addr}: {}", "can't connect to {addr}: {}", friendly_io(&e))),
+            Err(_) => (false, tf!("{addr} не ответил за 5 секунд", "{addr} did not respond within 5 seconds")),
         };
-        checks.push(Check { name: "Прокси".into(), ok, message });
+        checks.push(Check { name: t!("Прокси", "Proxy").into(), ok, message });
         if !ok {
             return fail(checks);
         }
@@ -148,7 +152,7 @@ pub async fn test(settings: &ProxySettings, password: &str) -> TestReport {
     };
     let client = match b.build() {
         Ok(c) => c,
-        Err(e) => return fail(vec![Check { name: "Настройки".into(), ok: false, message: e.to_string() }]),
+        Err(e) => return fail(vec![Check { name: t!("Настройки", "Settings").into(), ok: false, message: e.to_string() }]),
     };
 
     // Шаг 2: открываются ли через него нужные сайты.
@@ -156,9 +160,11 @@ pub async fn test(settings: &ProxySettings, password: &str) -> TestReport {
     for (name, url) in TARGETS {
         let started = Instant::now();
         let (ok, message) = match client.get(*url).send().await {
-            Ok(r) if r.status().is_success() => (true, format!("открывается, {} мс", started.elapsed().as_millis())),
-            Ok(r) if r.status().as_u16() == 407 => (false, "прокси просит логин и пароль или они неверные".into()),
-            Ok(r) => (false, format!("сайт ответил ошибкой {}", r.status().as_u16())),
+            Ok(r) if r.status().is_success() => (true, tf!("открывается, {} мс", "opens, {} ms", started.elapsed().as_millis())),
+            Ok(r) if r.status().as_u16() == 407 => {
+                (false, t!("прокси просит логин и пароль или они неверные", "the proxy asks for a login and password, or they are wrong").into())
+            }
+            Ok(r) => (false, tf!("сайт ответил ошибкой {}", "the site returned error {}", r.status().as_u16())),
             Err(e) => (false, friendly_reqwest(&e)),
         };
         all_ok &= ok;
@@ -170,9 +176,9 @@ pub async fn test(settings: &ProxySettings, password: &str) -> TestReport {
 fn friendly_io(e: &std::io::Error) -> String {
     use std::io::ErrorKind::*;
     match e.kind() {
-        ConnectionRefused => "порт закрыт — прокси не запущен или порт другой".into(),
-        TimedOut => "нет ответа".into(),
-        _ if e.to_string().contains("11001") => "такого адреса нет".into(),
+        ConnectionRefused => t!("порт закрыт — прокси не запущен или порт другой", "the port is closed — the proxy isn't running or the port is different").into(),
+        TimedOut => t!("нет ответа", "no response").into(),
+        _ if e.to_string().contains("11001") => t!("такого адреса нет", "no such address").into(),
         _ => e.to_string(),
     }
 }
@@ -180,11 +186,11 @@ fn friendly_io(e: &std::io::Error) -> String {
 fn friendly_reqwest(e: &reqwest::Error) -> String {
     let text = format!("{e:?}");
     if e.is_timeout() {
-        "нет ответа за 20 секунд".into()
+        t!("нет ответа за 20 секунд", "no response within 20 seconds").into()
     } else if text.contains("407") || text.to_lowercase().contains("auth") {
-        "прокси не принял логин или пароль".into()
+        t!("прокси не принял логин или пароль", "the proxy did not accept the login or password").into()
     } else if e.is_connect() {
-        "не удалось подключиться — сайт недоступен через этот прокси".into()
+        t!("не удалось подключиться — сайт недоступен через этот прокси", "couldn't connect — the site is unreachable through this proxy").into()
     } else {
         e.to_string()
     }

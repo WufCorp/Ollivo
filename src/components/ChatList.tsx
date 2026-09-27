@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { chatsList, chatsRemove, chatsSearch, type ChatHit } from "../api";
 import Icon from "./Icon";
+import { t } from "../i18n";
 
 /** Пауза после последней буквы: поиск читает все разговоры, не надо на каждую букву. */
 const SEARCH_DELAY_MS = 250;
@@ -53,8 +54,8 @@ export default function ChatList({
   return (
     <div className="chats">
       <div className="chats-head">
-        <h2>Разговоры</h2>
-        <button className="icon-button accent" title="Новый разговор" onClick={onNew}>
+        <h2>{t("Разговоры", "Conversations")}</h2>
+        <button className="icon-button accent" title={t("Новый разговор", "New conversation")} onClick={onNew}>
           <Icon name="plus" />
         </button>
       </div>
@@ -62,14 +63,14 @@ export default function ChatList({
         <Icon name="search" size={15} />
         <input
           type="search"
-          placeholder="Найти в разговорах"
-          aria-label="Найти в разговорах"
+          placeholder={t("Найти в разговорах", "Search conversations")}
+          aria-label={t("Найти в разговорах", "Search conversations")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && setQuery("")}
         />
       </label>
-      {q && items.length === 0 && <p className="muted chat-none">Ничего не нашлось</p>}
+      {q && items.length === 0 && <p className="muted chat-none">{t("Ничего не нашлось", "Nothing found")}</p>}
       {items.map((c, i) => (
         <Fragment key={c.id}>
           {day(c) && day(c) !== (i > 0 ? day(items[i - 1]) : null) && <p className="chat-day">{day(c)}</p>}
@@ -85,7 +86,7 @@ export default function ChatList({
                 </span>
               )}
             </button>
-            <button className="forget" title="Удалить разговор" onClick={() => remove(c.id)}>
+            <button className="forget" title={t("Удалить разговор", "Delete conversation")} onClick={() => remove(c.id)}>
               <Icon name="close" size={14} />
             </button>
           </div>
@@ -100,10 +101,10 @@ function dayOf(updated: number): string {
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
   const days = Math.floor((midnight.getTime() / 1000 - updated) / 86400) + 1;
-  if (updated * 1000 >= midnight.getTime()) return "Сегодня";
-  if (days <= 1) return "Вчера";
-  if (days < 7) return "На этой неделе";
-  return "Раньше";
+  if (updated * 1000 >= midnight.getTime()) return t("Сегодня", "Today");
+  if (days <= 1) return t("Вчера", "Yesterday");
+  if (days < 7) return t("На этой неделе", "This week");
+  return t("Раньше", "Earlier");
 }
 
 /** Строчные и «е» вместо «ё», символ в символ — чтобы места совпадений годились для исходного текста. */

@@ -103,7 +103,7 @@ pub async fn transcribe(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("движок распознавания не запустился: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| tf!("движок распознавания не запустился: {e}", "the speech engine did not start: {e}"))?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
     let out = tokio::spawn(async move {
@@ -138,9 +138,9 @@ pub async fn transcribe(
     if !status.success() {
         let log = tail.join("\n");
         return Err(if log.contains("failed to read audio") || log.contains("failed to decode") {
-            "запись не читается — возможно, файл повреждён".into()
+            t!("запись не читается — возможно, файл повреждён", "the recording can't be read — the file may be damaged").into()
         } else {
-            format!("распознавание не удалось:\n{log}")
+            tf!("распознавание не удалось:\n{log}", "recognition failed:\n{log}")
         });
     }
     Ok(tidy(&text))

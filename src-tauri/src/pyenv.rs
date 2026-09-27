@@ -56,17 +56,33 @@ struct Marker {
     comfy: String,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("картинкам нужна видеокарта NVIDIA")]
     NoGpu,
-    #[error("в манифесте нет окружения для картинок")]
     NoSpec,
-    #[error(transparent)]
-    Engine(#[from] engines::Error),
+    Engine(engines::Error),
     /// Шаг установки не удался; `log` — хвост его вывода.
-    #[error("{step}: {log}")]
     Step { step: &'static str, log: String },
+}
+
+// Вручную, а не `thiserror`: текст зависит от языка программы.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::NoGpu => f.write_str(t!("картинкам нужна видеокарта NVIDIA", "images need an NVIDIA graphics card")),
+            Error::NoSpec => f.write_str(t!("в манифесте нет окружения для картинок", "the manifest has no environment for images")),
+            Error::Engine(e) => e.fmt(f),
+            Error::Step { step, log } => write!(f, "{step}: {log}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<engines::Error> for Error {
+    fn from(e: engines::Error) -> Self {
+        Error::Engine(e)
+    }
 }
 
 impl Error {
@@ -79,6 +95,10 @@ impl Error {
             .iter()
             .any(|s| log.contains(s))
     }
+}
+
+fn step_python() -> &'static str {
+    t!("установка Python", "installing Python")
 }
 
 fn failed(step: &'static str) -> impl Fn(std::io::Error) -> Error {
@@ -210,19 +230,19 @@ pub async fn install(
 
         on_progress(InstallProgress { stage: Stage::Python, done: total, total, speed: 0.0 });
         if dir.exists() {
-            std::fs::remove_dir_all(&dir).map_err(failed("установка Python"))?;
+            std::fs::remove_dir_all(&dir).map_err(failed(step_python()))?;
         }
         let pythons = downloads.join("python");
         let _ = std::fs::remove_dir_all(&pythons);
         run.uv(
-            "установка Python",
+            step_python(),
             &["python", "install", &spec.version, "--install-dir", &path_arg(&pythons), "--no-bin", "--no-registry"],
         )
         .await?;
         let got = find_python(&pythons, &spec.version)
-            .ok_or_else(|| Error::Step { step: "установка Python", log: "uv не положил Python".into() })?;
-        std::fs::create_dir_all(dir.parent().unwrap()).map_err(failed("установка Python"))?;
-        engines::rename_dir(&got, &dir).await.map_err(failed("установка Python"))?;
+            .ok_or_else(|| Error::Step { step: step_python(), log: t!("uv не положил Python", "uv did not put Python in place").into() })?;
+        std::fs::create_dir_all(dir.parent().unwrap()).map_err(failed(step_python()))?;
+        engines::rename_dir(&got, &dir).await.map_err(failed(step_python()))?;
         let _ = std::fs::remove_dir_all(&pythons);
         // Пометка «ставить пакеты только через менеджер системы». Этот Python — только наш.
         let _ = std::fs::remove_file(dir.join("Lib").join("EXTERNALLY-MANAGED"));
@@ -230,9 +250,9 @@ pub async fn install(
     let python = dir.join("python.exe");
 
     on_progress(InstallProgress { stage: Stage::Packages, done: total, total, speed: 0.0 });
-    let reqs = std::fs::read_to_string(comfy.join("requirements.txt")).map_err(failed("список пакетов ComfyUI"))?;
+    let reqs = std::fs::read_to_string(comfy.join("requirements.txt")).map_err(failed(t!("список пакетов ComfyUI", "ComfyUI package list")))?;
     let reqs_file = downloads.join("comfy-requirements.txt");
-    std::fs::write(&reqs_file, filter_requirements(&reqs, &spec.skip)).map_err(failed("список пакетов ComfyUI"))?;
+    std::fs::write(&reqs_file, filter_requirements(&reqs, &spec.skip)).map_err(failed(t!("список пакетов ComfyUI", "ComfyUI package list")))?;
     let mut args = vec![
         "pip".to_string(),
         "install".into(),
@@ -248,18 +268,18 @@ pub async fn install(
     ];
     args.extend(wheels.iter().map(|w| path_arg(w)));
     args.extend(["-r".into(), path_arg(&reqs_file)]);
-    run.uv("установка пакетов", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+    run.uv(t!("установка пакетов", "installing packages"), &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
 
     on_progress(InstallProgress { stage: Stage::Warmup, done: total, total, speed: 0.0 });
-    run.cmd(&python, "подготовка ComfyUI", &["-E", "-s", "-m", "compileall", "-q", "-j", "0", &path_arg(&comfy)]).await?;
+    run.cmd(&python, t!("подготовка ComfyUI", "preparing ComfyUI"), &["-E", "-s", "-m", "compileall", "-q", "-j", "0", &path_arg(&comfy)]).await?;
     let out = run
-        .cmd(&python, "проверка", &["-E", "-s", "-c", "import torch; print('cuda', torch.cuda.is_available())"])
+        .cmd(&python, t!("проверка", "check"), &["-E", "-s", "-c", "import torch; print('cuda', torch.cuda.is_available())"])
         .await?;
     if !out.contains("cuda True") {
-        return Err(Error::Step { step: "проверка", log: format!("torch не видит видеокарту: {}", out.trim()) });
+        return Err(Error::Step { step: t!("проверка", "check"), log: tf!("torch не видит видеокарту: {}", "torch doesn't see the graphics card: {}", out.trim()) });
     }
 
-    std::fs::write(dir.join(MARKER), serde_json::to_vec_pretty(&want).unwrap()).map_err(failed("метка"))?;
+    std::fs::write(dir.join(MARKER), serde_json::to_vec_pretty(&want).unwrap()).map_err(failed(t!("метка", "marker")))?;
     // Колёса — все из манифеста, а не только скачанные сейчас: после оборванной установки
     // окружение могло доставиться без них, а 2,6 ГБ лежали бы в `downloads` до «Очистить».
     for f in spec.torch.iter().flat_map(|b| &b.files) {

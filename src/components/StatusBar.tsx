@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { formatBytes, hardwareInfo, llmStatus, onLlmState, type Hardware, type LlmState } from "../api";
+import { t } from "../i18n";
 import { memoryPages } from "../words";
 
 /** Память меняют и другие программы; чаще опрашивать незачем, NVML каждый раз открывается заново. */
 const POLL_MS = 10_000;
 
-const STATE: Record<LlmState["state"], string> = {
-  ready: "готова",
-  starting: "загружается",
-  sleeping: "выгружена, пока вы не пишете",
-  stopped: "не запущена",
-  crashed: "остановилась с ошибкой",
-};
+const stateName = (s: LlmState["state"]) =>
+  ({
+    ready: t("готова", "ready"),
+    starting: t("загружается", "loading"),
+    sleeping: t("выгружена, пока вы не пишете", "unloaded until you write"),
+    stopped: t("не запущена", "not running"),
+    crashed: t("остановилась с ошибкой", "stopped with an error"),
+  })[s];
 
 const modelName = (p: string) => (p.split(/[\\/]/).pop() ?? p).replace(/\.gguf$/i, "");
 
@@ -50,20 +52,22 @@ export default function StatusBar() {
         <i className={`light ${llm?.state === "ready" ? "green" : llm?.state === "crashed" ? "red" : llm?.state === "starting" ? "yellow" : "none"}`} />
         {on ? (
           <>
-            <b className="status-model">{modelName(llm.model!)}</b> {STATE[llm.state]}
+            <b className="status-model">{modelName(llm.model!)}</b> {stateName(llm.state)}
           </>
         ) : (
-          "Модель не запущена"
+          t("Модель не запущена", "Model not running")
         )}
       </span>
 
-      {hw && (gpu ? <Vram total={gpu.vram_total} free={gpu.vram_free} /> : <span>Видеокарта NVIDIA не найдена</span>)}
+      {hw && (gpu ? <Vram total={gpu.vram_total} free={gpu.vram_free} /> : <span>{t("Видеокарта NVIDIA не найдена", "No NVIDIA graphics card found")}</span>)}
 
-      {llm?.state === "ready" && llm.ctx !== null && <span className="memory">помнит {memoryPages(llm.ctx)} разговора</span>}
+      {llm?.state === "ready" && llm.ctx !== null && <span className="memory">
+          {t(`помнит ${memoryPages(llm.ctx)} разговора`, `remembers ${memoryPages(llm.ctx)} of conversation`)}
+        </span>}
 
       {hw && (
         <span className="right">
-          Оперативная память: свободно <b>{formatBytes(hw.ram_avail)}</b>
+          {t("Оперативная память: свободно", "Memory: free")} <b>{formatBytes(hw.ram_avail)}</b>
         </span>
       )}
     </footer>
@@ -78,14 +82,14 @@ function Vram({ total, free }: { total: number; free: number }) {
   const filled = Math.round((used / total) * n);
   const tight = used / total > 0.9;
   return (
-    <span title="Сколько видеопамяти занято сейчас: моделью и другими программами">
-      Видеокарта
+    <span title={t("Сколько видеопамяти занято сейчас: моделью и другими программами", "How much video memory is used now: by the model and other programs")}>
+      {t("Видеокарта", "GPU")}
       <span className={tight ? "blocks tight" : "blocks"}>
         {Array.from({ length: n }, (_, i) => (
           <s key={i} className={i < filled ? "on" : ""} />
         ))}
       </span>
-      занято <b>{formatBytes(used).replace(" ГБ", "")}</b> из {formatBytes(total)}
+      {t("занято", "used")} <b>{formatBytes(used).replace(/ (ГБ|GB)$/, "")}</b> {t("из", "of")} {formatBytes(total)}
     </span>
   );
 }

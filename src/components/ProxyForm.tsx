@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { proxyTest, type ProxyKind, type ProxyReport, type ProxySettings } from "../api";
+import { t } from "../i18n";
 
 interface Props {
   proxy: ProxySettings;
@@ -37,21 +38,21 @@ export default function ProxyForm({ proxy, onChange, password, onPassword, hasPa
     <>
       <label className="check">
         <input type="checkbox" checked={proxy.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
-        Подключаться через прокси
+        {t("Подключаться через прокси", "Connect through a proxy")}
       </label>
 
       {proxy.enabled && (
         <>
           <div className="row">
             <label>
-              Протокол
+              {t("Протокол", "Protocol")}
               <select value={proxy.kind} onChange={(e) => set({ kind: e.target.value as ProxyKind })}>
                 <option value="http">HTTP</option>
                 <option value="socks5">SOCKS5</option>
               </select>
             </label>
             <label className="grow">
-              Адрес
+              {t("Адрес", "Address")}
               <input
                 value={proxy.host}
                 placeholder="127.0.0.1"
@@ -60,7 +61,7 @@ export default function ProxyForm({ proxy, onChange, password, onPassword, hasPa
               />
             </label>
             <label className="port">
-              Порт
+              {t("Порт", "Port")}
               <input
                 inputMode="numeric"
                 value={proxy.port || ""}
@@ -72,13 +73,13 @@ export default function ProxyForm({ proxy, onChange, password, onPassword, hasPa
 
           <label className="check">
             <input type="checkbox" checked={proxy.auth} onChange={(e) => set({ auth: e.target.checked })} />
-            Нужен логин и пароль
+            {t("Нужен логин и пароль", "Login and password required")}
           </label>
 
           {proxy.auth && (
             <div className="row">
               <label className="grow">
-                Логин
+                {t("Логин", "Login")}
                 <input
                   value={proxy.username}
                   spellCheck={false}
@@ -87,11 +88,11 @@ export default function ProxyForm({ proxy, onChange, password, onPassword, hasPa
                 />
               </label>
               <label className="grow">
-                Пароль
+                {t("Пароль", "Password")}
                 <input
                   type="password"
                   value={password ?? ""}
-                  placeholder={hasPassword ? "сохранён" : ""}
+                  placeholder={hasPassword ? t("сохранён", "saved") : ""}
                   autoComplete="off"
                   onChange={(e) => {
                     onPassword(e.target.value);
@@ -104,7 +105,7 @@ export default function ProxyForm({ proxy, onChange, password, onPassword, hasPa
 
           <div className="actions">
             <button className="secondary" onClick={test} disabled={testing}>
-              {testing ? "Проверяю…" : "Проверить"}
+              {testing ? t("Проверяю…", "Checking…") : t("Проверить", "Check")}
             </button>
           </div>
 

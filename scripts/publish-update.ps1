@@ -10,12 +10,15 @@
     Доступ к S3: профиль AWS CLI, по умолчанию timeweb.
 
 .EXAMPLE
-    ./scripts/publish-update.ps1 -Notes "Чат со стримингом" -Channel beta
+    ./scripts/publish-update.ps1 -Notes "Чат со стримингом" -NotesEn "Streaming chat" -Channel beta
 #>
 param(
   [ValidateSet('stable', 'beta')][string]$Channel = 'stable',
   [string]$KeyCredential = 'ollivo-updater-key',
   [string]$Notes = '',
+  # Английский текст для программ на английском. Уходит в latest.json вторым после строки
+  # «---»: программа сама показывает часть на своём языке (update::notes_for_lang).
+  [string]$NotesEn = '',
   [string]$Profile = 'timeweb',
   [string]$Bucket = 'prisma-prava',
   [string]$Prefix = 'ollivo/updates',
@@ -113,7 +116,7 @@ $file = if ($Channel -eq 'beta') { 'latest-beta.json' } else { 'latest.json' }
 $exeName = Split-Path $setup -Leaf
 $manifest = [ordered]@{
   version   = $version
-  notes     = $Notes
+  notes     = if ($NotesEn) { "$Notes`n---`n$NotesEn" } else { $Notes }
   pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   platforms = [ordered]@{
     'windows-x86_64' = [ordered]@{

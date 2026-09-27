@@ -12,6 +12,7 @@ import {
   tasksRunning,
   type StorageUsage,
 } from "../api";
+import { t } from "../i18n";
 
 /** Ошибка ядра — строчными («идут загрузки…»); в окне — как предложение. */
 const sentence = (e: unknown) => {
@@ -44,16 +45,20 @@ export default function StorageCard() {
           setNote({
             ok: true,
             text:
-              `Готово: теперь всё лежит в ${m.dir}.` +
-              (m.stopped ? " Модель остановлена на время переноса — запустите её снова." : ""),
+              t(`Готово: теперь всё лежит в ${m.dir}.`, `Done: everything is now in ${m.dir}.`) +
+              (m.stopped
+                ? t(" Модель остановлена на время переноса — запустите её снова.", " The model was stopped for the move — start it again.")
+                : ""),
           });
         } else {
           setNote({
             ok: false,
             text:
+              // «отменено» — служебное слово ядра (`llm::CANCELLED`), не текст для человека.
               m.error === "отменено"
-                ? "Перенос отменён, всё осталось на старом месте."
-                : `Не перенесли: ${m.error}.` + (m.stopped ? " Модель остановлена — запустите её снова." : ""),
+                ? t("Перенос отменён, всё осталось на старом месте.", "The move was cancelled, everything stayed in place.")
+                : t(`Не перенесли: ${m.error}.`, `Not moved: ${m.error}.`) +
+                  (m.stopped ? t(" Модель остановлена — запустите её снова.", " The model was stopped — start it again.") : ""),
           });
         }
         load();
@@ -67,7 +72,10 @@ export default function StorageCard() {
     setNote(null);
     try {
       const freed = await storageClean();
-      setNote({ ok: true, text: freed ? `Освободили ${formatBytes(freed)}.` : "Убирать было нечего." });
+      setNote({
+        ok: true,
+        text: freed ? t(`Освободили ${formatBytes(freed)}.`, `Freed ${formatBytes(freed)}.`) : t("Убирать было нечего.", "Nothing to clean up."),
+      });
       load();
     } catch (e) {
       setNote({ ok: false, text: sentence(e) });
@@ -77,7 +85,7 @@ export default function StorageCard() {
   };
 
   const move = async () => {
-    const picked = await open({ directory: true, title: "Куда перенести папку программы" });
+    const picked = await open({ directory: true, title: t("Куда перенести папку программы", "Where to move the program folder") });
     if (typeof picked !== "string") return;
     setNote(null);
     try {
@@ -90,16 +98,18 @@ export default function StorageCard() {
 
   const rows: [string, number][] = usage
     ? [
-        ["Модели", usage.models],
-        ["Движки", usage.engines],
-        ["Недокачанное и временное", usage.cache],
-        ["Журналы работы", usage.logs],
+        [t("Модели", "Models"), usage.models],
+        [t("Движки", "Engines"), usage.engines],
+        [t("Недокачанное и временное", "Unfinished and temporary"), usage.cache],
+        [t("Журналы работы", "Logs"), usage.logs],
       ]
     : [];
 
   return (
     <div className="card">
-      <p>Здесь движки и скачанные модели: {usage?.dir ?? "…"}</p>
+      <p>
+        {t("Здесь движки и скачанные модели:", "Engines and downloaded models are here:")} {usage?.dir ?? "…"}
+      </p>
       {usage && (
         <table className="usage">
           <tbody>
@@ -110,40 +120,46 @@ export default function StorageCard() {
               </tr>
             ))}
             <tr className="muted">
-              <td>Свободно на диске</td>
+              <td>{t("Свободно на диске", "Free on disk")}</td>
               <td>{formatBytes(usage.free)}</td>
             </tr>
           </tbody>
         </table>
       )}
       <p className="muted small">
-        Модели из LM Studio, Ollama и других папок остаются на своих местах и здесь не считаются.
+        {t(
+          "Модели из LM Studio, Ollama и других папок остаются на своих местах и здесь не считаются.",
+          "Models from LM Studio, Ollama and other folders stay where they are and aren't counted here.",
+        )}
       </p>
 
       {moving ? (
         <>
           <p>
-            Переношу{moving.to ? ` в ${moving.to}` : ""}
-            {moving.total ? `: ${formatBytes(moving.done)} из ${formatBytes(moving.total)}` : "…"}
+            {t("Переношу", "Moving")}
+            {moving.to ? ` ${t("в", "to")} ${moving.to}` : ""}
+            {moving.total ? `: ${formatBytes(moving.done)} ${t("из", "of")} ${formatBytes(moving.total)}` : "…"}
           </p>
           {moving.total ? <progress value={moving.done} max={moving.total} /> : <progress />}
           <p className="muted small">
-            Пока идёт перенос, модели не запускаются и ничего не скачивается. Старая папка удалится, только когда
-            всё скопируется, — если отменить, всё останется как было.
+            {t(
+              "Пока идёт перенос, модели не запускаются и ничего не скачивается. Старая папка удалится, только когда всё скопируется, — если отменить, всё останется как было.",
+              "While moving, models don't start and nothing downloads. The old folder is deleted only after everything is copied — if you cancel, everything stays as it was.",
+            )}
           </p>
           <div className="actions">
             <button className="secondary" onClick={() => taskPause(MOVE_TASK)}>
-              Отменить
+              {t("Отменить", "Cancel")}
             </button>
           </div>
         </>
       ) : (
         <div className="actions">
           <button className="secondary" onClick={clean} disabled={cleaning || !usage?.cache}>
-            {cleaning ? "Убираю…" : "Очистить недокачанное и временное"}
+            {cleaning ? t("Убираю…", "Cleaning…") : t("Очистить недокачанное и временное", "Clean up unfinished and temporary")}
           </button>
           <button className="secondary" onClick={move}>
-            Перенести на другой диск…
+            {t("Перенести на другой диск…", "Move to another disk…")}
           </button>
         </div>
       )}

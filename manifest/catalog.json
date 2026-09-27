@@ -7,9 +7,14 @@
       "title": "Qwen3.5 2B",
       "vendor": "Alibaba",
       "about": "Самая маленькая в подборке: пойдёт почти на любом компьютере, даже без видеокарты. Для коротких вопросов, переводов и черновиков.",
+      "about_en": "The smallest in the picks: runs on almost any computer, even without a graphics card. For short questions, translations and drafts.",
       "tags": [
         "маленькая",
         "для слабых ПК"
+      ],
+      "tags_en": [
+        "small",
+        "for weak PCs"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -41,9 +46,14 @@
       "title": "LFM2.5 2.6B",
       "vendor": "Liquid AI",
       "about": "Сделана для слабого железа — отвечает очень быстро. Русского в списке языков нет: спрашивайте по-английски.",
+      "about_en": "Made for weak hardware — answers very fast. Russian isn't on its list of languages, so it's best in English.",
       "tags": [
         "маленькая",
         "быстрая"
+      ],
+      "tags_en": [
+        "small",
+        "fast"
       ],
       "vision": false,
       "license": "other",
@@ -75,8 +85,12 @@
       "title": "Qwen3.5 4B",
       "vendor": "Alibaba",
       "about": "Небольшая, но уже толковая: переписка, пересказ, простой код. Обычный выбор для видеокарты на 4–6 ГБ.",
+      "about_en": "Small but already capable: chatting, summaries, simple code. The usual choice for a 4–6 GB graphics card.",
       "tags": [
         "небольшая"
+      ],
+      "tags_en": [
+        "compact"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -108,8 +122,12 @@
       "title": "Gemma 4 E4B",
       "vendor": "Google",
       "about": "Модель Google, знает много языков и понимает картинки: можно показать фото и спросить, что на нём.",
+      "about_en": "A Google model that knows many languages and understands images: you can show it a photo and ask what's in it.",
       "tags": [
         "многоязычная"
+      ],
+      "tags_en": [
+        "multilingual"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -135,9 +153,14 @@
       "title": "Qwen3.5 9B",
       "vendor": "Alibaba",
       "about": "Универсал на каждый день: переписка, тексты, код. Целиком помещается в видеокарту на 8 ГБ.",
+      "about_en": "An everyday all-rounder: chatting, writing, code. Fits entirely in an 8 GB graphics card.",
       "tags": [
         "универсальная",
         "на каждый день"
+      ],
+      "tags_en": [
+        "all-rounder",
+        "everyday"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -169,9 +192,14 @@
       "title": "Qwen3.5 27B",
       "vendor": "Alibaba",
       "about": "Отвечает заметно умнее, но и весит много: нужна видеокарта на 16 ГБ и больше, иначе будет медленно.",
+      "about_en": "Answers noticeably smarter, but it's heavy too: it needs a graphics card with 16 GB or more, otherwise it will be slow.",
       "tags": [
         "большая",
         "умнее"
+      ],
+      "tags_en": [
+        "big",
+        "smarter"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -203,9 +231,14 @@
       "title": "Qwen3.5 35B A3B",
       "vendor": "Alibaba",
       "about": "Большая, но на каждый ответ работает только часть — 3 миллиарда параметров из 35. Поэтому остаётся быстрой, даже когда в видеокарту влезла не целиком. Нужно много оперативной памяти.",
+      "about_en": "Big, but only part of it works on each answer — 3 billion parameters out of 35. So it stays fast even when it doesn't fit entirely in the graphics card. Needs a lot of RAM.",
       "tags": [
         "большая",
         "быстрая на процессоре"
+      ],
+      "tags_en": [
+        "big",
+        "fast on the processor"
       ],
       "vision": true,
       "license": "apache-2.0",
@@ -232,8 +265,12 @@
       "title": "Qwen3 Coder 30B A3B",
       "vendor": "Alibaba",
       "about": "Для программирования: пишет и объясняет код. Работает частями (3 миллиарда из 30), поэтому не так медленна, как размер.",
+      "about_en": "For programming: writes and explains code. Works in parts (3 billion out of 30), so it isn't as slow as its size suggests.",
       "tags": [
         "код"
+      ],
+      "tags_en": [
+        "code"
       ],
       "vision": false,
       "license": "apache-2.0",

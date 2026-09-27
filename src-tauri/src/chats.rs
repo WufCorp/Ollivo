@@ -77,7 +77,7 @@ pub fn title_from(messages: &[Msg]) -> String {
         .unwrap_or_default();
     let line = first.lines().next().unwrap_or_default().trim();
     if line.is_empty() {
-        return "Без названия".into();
+        return t!("Без названия", "Untitled").into();
     }
     let short: String = line.chars().take(TITLE_LEN).collect();
     if line.chars().count() > TITLE_LEN {
@@ -162,7 +162,7 @@ impl Store {
 
     /// Сохраняет разговор: без id — заводит новый. Возвращает сохранённое.
     pub fn save(&self, mut chat: Chat) -> Result<Chat, String> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| format!("не создать папку разговоров: {e}"))?;
+        std::fs::create_dir_all(&self.dir).map_err(|e| tf!("не создать папку разговоров: {e}", "could not create the conversations folder: {e}"))?;
         if !safe_id(&chat.id) {
             chat.id = self.new_id();
             chat.created = now();
@@ -171,22 +171,22 @@ impl Store {
         if chat.title.trim().is_empty() {
             chat.title = title_from(&chat.messages);
         }
-        let path = self.file(&chat.id).ok_or("плохой номер разговора")?;
+        let path = self.file(&chat.id).ok_or(t!("плохой номер разговора", "bad conversation number"))?;
         // Через временный файл: сбой посреди записи не съест прошлый разговор.
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(&chat).unwrap())
             .and_then(|()| std::fs::rename(&tmp, &path))
-            .map_err(|e| format!("не записать разговор: {e}"))?;
+            .map_err(|e| tf!("не записать разговор: {e}", "could not save the conversation: {e}"))?;
         Ok(chat)
     }
 
     pub fn remove(&self, id: &str) -> Result<(), String> {
-        let path = self.file(id).ok_or("плохой номер разговора")?;
+        let path = self.file(id).ok_or(t!("плохой номер разговора", "bad conversation number"))?;
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             // Уже удалён — значит, всё как просили.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("не удалить разговор: {e}")),
+            Err(e) => Err(tf!("не удалить разговор: {e}", "could not delete the conversation: {e}")),
         }
     }
 

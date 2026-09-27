@@ -33,7 +33,10 @@ pub fn prepare(exe: &Path) -> Result<(), String> {
     let Some(dir) = exe.parent() else { return Ok(()) };
     match ensure_in(dir, &crate::setup::system32()) {
         Err(e) if !crate::setup::has_vc_runtime() => {
-            Err(format!("не удалось положить библиотеки Microsoft VC++ рядом с движком: {e}"))
+            Err(tf!(
+                "не удалось положить библиотеки Microsoft VC++ рядом с движком: {e}",
+                "could not put the Microsoft VC++ libraries next to the engine: {e}"
+            ))
         }
         _ => Ok(()),
     }

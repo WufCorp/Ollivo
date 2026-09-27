@@ -139,13 +139,28 @@ pub fn log_tail(path: &Path, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ReadyError {
-    #[error("движок завершился при запуске (код {code:?})\n{tail}")]
     Crashed { code: Option<i32>, tail: String },
-    #[error("движок не ответил за {0} с")]
     Timeout(u64),
 }
+
+// Вручную, а не `thiserror`: текст зависит от языка программы.
+impl std::fmt::Display for ReadyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadyError::Crashed { code, tail } => f.write_str(&tf!(
+                "движок завершился при запуске (код {code:?})\n{tail}",
+                "the engine exited on startup (code {code:?})\n{tail}"
+            )),
+            ReadyError::Timeout(s) => {
+                f.write_str(&tf!("движок не ответил за {s} с", "the engine did not respond within {s} s"))
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReadyError {}
 
 /// Ждёт, пока `url` ответит 200. Пока процесс грузит модель, llama-server отвечает 503.
 pub async fn wait_ready(handle: &Handle, url: &str, timeout: Duration) -> Result<(), ReadyError> {

@@ -82,7 +82,7 @@ impl<R: Read> Reader<R> {
     fn string(&mut self) -> Result<String> {
         let len = self.u64()?;
         if len > 64 << 20 {
-            bail!("слишком длинная строка ({len} байт) — файл повреждён");
+            bail!(tf!("слишком длинная строка ({len} байт) — файл повреждён", "string too long ({len} bytes) — the file is damaged"));
         }
         let mut buf = vec![0u8; len as usize];
         self.r.read_exact(&mut buf).map_err(truncated)?;
@@ -91,7 +91,7 @@ impl<R: Read> Reader<R> {
     fn skip(&mut self, n: u64) -> Result<()> {
         let copied = std::io::copy(&mut (&mut self.r).take(n), &mut std::io::sink())?;
         if copied < n {
-            bail!("файл обрезан: заголовок GGUF не дочитан");
+            bail!(cut_off());
         }
         Ok(())
     }
@@ -110,7 +110,7 @@ impl<R: Read> Reader<R> {
             10 => Value::Int(self.u64()? as i128),
             11 => Value::Int(i64::from_le_bytes(self.bytes()?) as i128),
             12 => Value::Float(f64::from_le_bytes(self.bytes()?)),
-            _ => bail!("неизвестный тип значения GGUF: {ty}"),
+            _ => bail!(tf!("неизвестный тип значения GGUF: {ty}", "unknown GGUF value type: {ty}")),
         })
     }
 
@@ -129,7 +129,7 @@ impl<R: Read> Reader<R> {
                     self.skip(n)?;
                 }
             }
-            9 => bail!("вложенные массивы в GGUF не поддерживаются"),
+            9 => bail!(t!("вложенные массивы в GGUF не поддерживаются", "nested arrays in GGUF are not supported")),
             _ => {
                 let size = scalar_size(elem)?;
                 if len <= 4096 {
@@ -153,13 +153,17 @@ fn scalar_size(ty: u32) -> Result<u64> {
         2 | 3 => 2,
         4 | 5 | 6 => 4,
         10 | 11 | 12 => 8,
-        _ => bail!("неизвестный тип элемента массива GGUF: {ty}"),
+        _ => bail!(tf!("неизвестный тип элемента массива GGUF: {ty}", "unknown GGUF array element type: {ty}")),
     })
+}
+
+fn cut_off() -> &'static str {
+    t!("файл обрезан: заголовок GGUF не дочитан", "the file is cut off: the GGUF header is incomplete")
 }
 
 fn truncated(e: std::io::Error) -> anyhow::Error {
     if e.kind() == ErrorKind::UnexpectedEof {
-        anyhow::anyhow!("файл обрезан: заголовок GGUF не дочитан")
+        anyhow::anyhow!(cut_off())
     } else {
         e.into()
     }
@@ -236,26 +240,26 @@ pub fn ggml_type_name(ty: u32) -> &'static str {
 }
 
 pub fn read(path: &Path) -> Result<Gguf> {
-    let f = File::open(path).with_context(|| format!("не открыть {}", path.display()))?;
+    let f = File::open(path).with_context(|| tf!("не открыть {}", "can't open {}", path.display()))?;
     let mut r = Reader { r: BufReader::with_capacity(1 << 20, f) };
     if &r.bytes::<4>()? != b"GGUF" {
-        bail!("это не GGUF");
+        bail!(t!("это не GGUF", "this is not GGUF"));
     }
     let version = r.u32()?;
     if !(2..=3).contains(&version) {
-        bail!("версия GGUF {version} не поддерживается");
+        bail!(tf!("версия GGUF {version} не поддерживается", "GGUF version {version} is not supported"));
     }
     let n_tensors = r.u64()?;
     let n_kv = r.u64()?;
     if n_tensors > 1_000_000 || n_kv > 1_000_000 {
-        bail!("заголовок GGUF повреждён");
+        bail!(t!("заголовок GGUF повреждён", "the GGUF header is damaged"));
     }
 
     let mut kv = HashMap::new();
     for _ in 0..n_kv {
         let key = r.string()?;
         let ty = r.u32()?;
-        let v = r.value(ty).with_context(|| format!("ключ {key}"))?;
+        let v = r.value(ty).with_context(|| tf!("ключ {key}", "key {key}"))?;
         kv.insert(key, v);
     }
 

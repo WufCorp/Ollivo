@@ -43,7 +43,7 @@ pub struct Listing {
 /// Обходит папку с учётом `.gitignore`; скрытые файлы и `SKIP_DIRS` пропускает.
 pub fn list(root: &Path) -> Result<Listing, String> {
     if !root.is_dir() {
-        return Err("папка не найдена — возможно, её переместили или удалили".into());
+        return Err(t!("папка не найдена — возможно, её переместили или удалили", "folder not found — it may have been moved or deleted").into());
     }
     let walker = ignore::WalkBuilder::new(root)
         // .gitignore работает и без репозитория: проект могли скачать архивом.
@@ -100,29 +100,35 @@ pub fn resolve(root: &Path, rel: &str, write: bool) -> Result<PathBuf, String> {
     for part in rel.split('/') {
         match part {
             "" | "." => continue,
-            ".." => return Err("путь выходит за папку проекта".into()),
-            _ if part.contains(':') => return Err("путь выходит за папку проекта".into()),
-            _ if reserved(part) => return Err(format!("имя «{part}» Windows не разрешает")),
-            _ if write && part.eq_ignore_ascii_case(".git") => return Err("служебную папку .git менять нельзя".into()),
+            ".." => return Err(outside().into()),
+            _ if part.contains(':') => return Err(outside().into()),
+            _ if reserved(part) => return Err(tf!("имя «{part}» Windows не разрешает", "Windows doesn't allow the name “{part}”")),
+            _ if write && part.eq_ignore_ascii_case(".git") => {
+                return Err(t!("служебную папку .git менять нельзя", "the service folder .git can't be changed").into())
+            }
             _ => {}
         }
         path.push(part);
         any = true;
     }
     if !any && write {
-        return Err("не указано имя файла".into());
+        return Err(t!("не указано имя файла", "no file name given").into());
     }
     // Проверяем ближайшую существующую часть пути: у нового файла это его папка.
-    let real_root = root.canonicalize().map_err(|_| "папка проекта не найдена".to_string())?;
+    let real_root = root.canonicalize().map_err(|_| t!("папка проекта не найдена", "project folder not found").to_string())?;
     let mut probe = path.as_path();
     while !probe.exists() {
-        probe = probe.parent().ok_or("путь выходит за папку проекта")?;
+        probe = probe.parent().ok_or(outside())?;
     }
-    let real = probe.canonicalize().map_err(|e| format!("путь не открывается: {e}"))?;
+    let real = probe.canonicalize().map_err(|e| tf!("путь не открывается: {e}", "the path won't open: {e}"))?;
     if !real.starts_with(&real_root) {
-        return Err("путь выходит за папку проекта".into());
+        return Err(outside().into());
     }
     Ok(path)
+}
+
+fn outside() -> &'static str {
+    t!("путь выходит за папку проекта", "the path goes outside the project folder")
 }
 
 fn ext_of(path: &Path) -> String {
@@ -149,7 +155,7 @@ pub fn tree(files: &[String], budget: usize) -> String {
     let lines: Vec<&str> = top.lines().collect();
     for (i, line) in lines.iter().enumerate() {
         if out.len() + line.len() + 40 > budget {
-            out.push_str(&format!("… (не поместилось строк: {})", lines.len() - i));
+            out.push_str(&tf!("… (не поместилось строк: {})", "… ({} more lines didn't fit)", lines.len() - i));
             break;
         }
         out.push_str(line);
@@ -175,18 +181,13 @@ fn collapsed(files: &[String], depth: usize) -> String {
         }
     }
     out.into_iter()
-        .map(|(p, n)| if n > 0 { format!("{p} — {} (посмотреть: list_files)", files_word(n)) } else { p })
+        .map(|(p, n)| if n > 0 { tf!("{p} — {} (посмотреть: list_files)", "{p} — {} (to see them: list_files)", files_word(n)) } else { p })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn files_word(n: usize) -> String {
-    let w = match (n % 10, n % 100) {
-        (1, x) if x != 11 => "файл",
-        (2..=4, x) if !(12..=14).contains(&x) => "файла",
-        _ => "файлов",
-    };
-    format!("{n} {w}")
+    format!("{n} {}", crate::i18n::plural(n as u64, ["файл", "файла", "файлов"], ["file", "files"]))
 }
 
 /// Что лежит прямо в папке `dir` (пусто — корень): подпапки с числом файлов и файлы.
@@ -206,7 +207,7 @@ pub fn children(files: &[String], dir: &str) -> Result<String, String> {
         }
     }
     if dirs.is_empty() && plain.is_empty() {
-        return Err(format!("папки «{dir}» нет или в ней нет файлов"));
+        return Err(tf!("папки «{dir}» нет или в ней нет файлов", "folder “{dir}” doesn't exist or has no files"));
     }
     let mut out: Vec<String> = dirs.into_iter().map(|(d, n)| format!("{prefix}{d}/ — {}", files_word(n))).collect();
     out.extend(plain.into_iter().map(|f| format!("{prefix}{f}")));
@@ -219,21 +220,21 @@ pub fn children(files: &[String], dir: &str) -> Result<String, String> {
 pub fn read(root: &Path, rel: &str, from: usize, max_chars: usize) -> Result<String, String> {
     let path = resolve(root, rel, false)?;
     if path.is_dir() {
-        return Err("это папка, а не файл — посмотрите её через list_files".into());
+        return Err(t!("это папка, а не файл — посмотрите её через list_files", "this is a folder, not a file — look at it with list_files").into());
     }
     if !path.is_file() {
-        return Err(format!("файла «{rel}» нет"));
+        return Err(no_file(rel));
     }
     let ext = ext_of(&path);
     if IMAGES.contains(&ext.as_str()) {
-        return Err("это картинка — как текст её не прочесть".into());
+        return Err(t!("это картинка — как текст её не прочесть", "this is an image — it can't be read as text").into());
     }
     let text = if DOCS.contains(&ext.as_str()) {
         crate::attach::read(&path, Path::new(""), None)?.text
     } else {
-        let bytes = std::fs::read(&path).map_err(|e| format!("файл не читается: {e}"))?;
+        let bytes = std::fs::read(&path).map_err(|e| unreadable(&e))?;
         if crate::attach::looks_binary(&bytes) {
-            return Err("это не текст — такой файл модель прочесть не может".into());
+            return Err(t!("это не текст — такой файл модель прочесть не может", "this isn't text — the model can't read such a file").into());
         }
         crate::attach::decode(&bytes).replace("\r\n", "\n")
     };
@@ -247,7 +248,7 @@ fn window(text: &str, from: usize, max_chars: usize) -> String {
         return text.to_string();
     }
     if from > lines.len() {
-        return format!("[в файле всего {} строк]", lines.len());
+        return tf!("[в файле всего {} строк]", "[the file has only {} lines]", lines.len());
     }
     let mut out = String::new();
     let mut last = from - 1;
@@ -260,8 +261,9 @@ fn window(text: &str, from: usize, max_chars: usize) -> String {
         last += 1;
     }
     if last < lines.len() {
-        out.push_str(&format!(
+        out.push_str(&tf!(
             "[показаны строки {from}–{last} из {}. Продолжение — read_file с from_line = {}]",
+            "[showing lines {from}–{last} of {}. To continue — read_file with from_line = {}]",
             lines.len(),
             last + 1
         ));
@@ -274,7 +276,7 @@ fn window(text: &str, from: usize, max_chars: usize) -> String {
 pub fn search(root: &Path, files: &[String], query: &str) -> Result<String, String> {
     let q = crate::chats::fold(query.trim());
     if q.is_empty() {
-        return Err("пустой запрос".into());
+        return Err(t!("пустой запрос", "empty query").into());
     }
     let mut hits = Vec::new();
     let mut more = 0;
@@ -303,10 +305,10 @@ pub fn search(root: &Path, files: &[String], query: &str) -> Result<String, Stri
         }
     }
     if hits.is_empty() {
-        return Ok(format!("«{query}» не нашлось ни в одном файле"));
+        return Ok(tf!("«{query}» не нашлось ни в одном файле", "“{query}” was not found in any file"));
     }
     if more > 0 {
-        hits.push(format!("[и ещё {more} совпадений — уточните запрос]"));
+        hits.push(tf!("[и ещё {more} совпадений — уточните запрос]", "[and {more} more matches — narrow the query]"));
     }
     Ok(hits.join("\n"))
 }
@@ -357,7 +359,7 @@ pub struct WriteAsk {
 pub fn apply_edit(text: &str, old: &str, new: &str) -> Result<String, String> {
     let (text, old, new) = (text.replace("\r\n", "\n"), old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
     if old.trim().is_empty() {
-        return Err("old_text пустой — новый файл создавай через write_file".into());
+        return Err(t!("old_text пустой — новый файл создавай через write_file", "old_text is empty — create a new file with write_file").into());
     }
     match text.matches(old.as_str()).count() {
         1 => {
@@ -378,7 +380,12 @@ pub fn apply_edit(text: &str, old: &str, new: &str) -> Result<String, String> {
             return Ok(text.replacen(old.as_str(), &new, 1));
         }
         0 => {}
-        n => return Err(format!("этот кусок встречается в файле {n} раз — возьми кусок побольше, чтобы он был один")),
+        n => {
+            return Err(tf!(
+                "этот кусок встречается в файле {n} раз — возьми кусок побольше, чтобы он был один",
+                "this piece occurs {n} times in the file — take a bigger piece so it is unique"
+            ))
+        }
     }
     let lines: Vec<&str> = text.split('\n').collect();
     let want: Vec<&str> = old.trim_matches('\n').split('\n').collect();
@@ -386,8 +393,20 @@ pub fn apply_edit(text: &str, old: &str, new: &str) -> Result<String, String> {
     let found: Vec<usize> = (0..=lines.len().saturating_sub(want.len())).filter(|&at| same(at)).collect();
     let at = match found[..] {
         [at] => at,
-        [] => return Err("такого куска в файле нет — прочитай файл заново и скопируй кусок точно".into()),
-        _ => return Err(format!("этот кусок встречается в файле {} раз — возьми кусок побольше", found.len())),
+        [] => {
+            return Err(t!(
+                "такого куска в файле нет — прочитай файл заново и скопируй кусок точно",
+                "there is no such piece in the file — read the file again and copy the piece exactly"
+            )
+            .into())
+        }
+        _ => {
+            return Err(tf!(
+                "этот кусок встречается в файле {} раз — возьми кусок побольше",
+                "this piece occurs {} times in the file — take a bigger piece",
+                found.len()
+            ))
+        }
     };
     // Отступ, который модель потеряла: разница между файлом и её куском в первой строке.
     let indent = |s: &str| s.len() - s.trim_start().len();
@@ -431,21 +450,21 @@ fn encode_like(old: Option<&[u8]>, text: &str) -> Vec<u8> {
 pub fn write(root: &Path, rel: &str, content: &str, backups: &Path) -> Result<Step, String> {
     let path = resolve(root, rel, true)?;
     if path.is_dir() {
-        return Err("по этому пути лежит папка".into());
+        return Err(t!("по этому пути лежит папка", "there is a folder at this path").into());
     }
-    let old = if path.is_file() { Some(std::fs::read(&path).map_err(|e| format!("файл не читается: {e}"))?) } else { None };
+    let old = if path.is_file() { Some(std::fs::read(&path).map_err(|e| unreadable(&e))?) } else { None };
     let bytes = encode_like(old.as_deref(), content);
     let backup = match &old {
         Some(old) => {
-            std::fs::create_dir_all(backups).map_err(|e| format!("не сохранить копию старого файла: {e}"))?;
+            std::fs::create_dir_all(backups).map_err(|e| no_backup(&e))?;
             let id = backup_id(backups);
-            std::fs::write(backups.join(&id), old).map_err(|e| format!("не сохранить копию старого файла: {e}"))?;
+            std::fs::write(backups.join(&id), old).map_err(|e| no_backup(&e))?;
             Some(id)
         }
         None => None,
     };
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("не создать папку: {e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| tf!("не создать папку: {e}", "could not create the folder: {e}"))?;
     }
     // Через временный файл: сбой посреди записи не оставит полфайла.
     let tmp = path.with_file_name(format!(".{}.ollivo-tmp", path.file_name().unwrap_or_default().to_string_lossy()));
@@ -453,7 +472,7 @@ pub fn write(root: &Path, rel: &str, content: &str, backups: &Path) -> Result<St
         .and_then(|()| std::fs::rename(&tmp, &path))
         .map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
-            format!("не записать файл: {e}")
+            no_write(&e)
         })?;
     Ok(Step {
         kind: "write".into(),
@@ -487,13 +506,13 @@ fn backup_id(backups: &Path) -> String {
 pub fn remove(root: &Path, rel: &str, backups: &Path) -> Result<Step, String> {
     let path = resolve(root, rel, true)?;
     if path.is_dir() {
-        return Err("это папка — удалять можно только файлы".into());
+        return Err(t!("это папка — удалять можно только файлы", "this is a folder — only files can be deleted").into());
     }
-    let old = std::fs::read(&path).map_err(|_| format!("файла «{rel}» нет"))?;
-    std::fs::create_dir_all(backups).map_err(|e| format!("не сохранить копию файла: {e}"))?;
+    let old = std::fs::read(&path).map_err(|_| no_file(rel))?;
+    std::fs::create_dir_all(backups).map_err(|e| no_backup(&e))?;
     let id = backup_id(backups);
-    std::fs::write(backups.join(&id), &old).map_err(|e| format!("не сохранить копию файла: {e}"))?;
-    std::fs::remove_file(&path).map_err(|e| format!("не удалить файл: {e}"))?;
+    std::fs::write(backups.join(&id), &old).map_err(|e| no_backup(&e))?;
+    std::fs::remove_file(&path).map_err(|e| tf!("не удалить файл: {e}", "could not delete the file: {e}"))?;
     Ok(Step {
         kind: "delete".into(),
         path: rel_clean(rel),
@@ -507,41 +526,71 @@ pub fn remove(root: &Path, rel: &str, backups: &Path) -> Result<Step, String> {
 /// Сколько хранятся копии заменённых файлов. Вернуть правку модели через месяц — редкость,
 /// а копии большого проекта занимают место.
 pub const BACKUP_DAYS: u64 = 30;
-const GONE: &str = "копии старого файла уже нет — они хранятся 30 дней";
+fn gone() -> &'static str {
+    t!("копии старого файла уже нет — они хранятся 30 дней", "the copy of the old file is gone — copies are kept for 30 days")
+}
+
+fn path_hint() -> &'static str {
+    t!("путь от корня папки проекта", "path from the project folder root")
+}
+
+fn no_file(rel: &str) -> String {
+    tf!("файла «{rel}» нет", "there is no file “{rel}”")
+}
+
+fn unreadable(e: &std::io::Error) -> String {
+    tf!("файл не читается: {e}", "the file can't be read: {e}")
+}
+
+fn no_backup(e: &std::io::Error) -> String {
+    tf!("не сохранить копию старого файла: {e}", "could not save a copy of the old file: {e}")
+}
+
+fn no_write(e: &std::io::Error) -> String {
+    tf!("не записать файл: {e}", "could not write the file: {e}")
+}
 
 /// «Вернуть как было»: старый файл из копии, а новый — удалить. Только если файл
 /// с тех пор не меняли: иначе пропала бы чужая правка.
 pub fn undo(root: &Path, step: &Step, backups: &Path) -> Result<(), String> {
     if !matches!(step.kind.as_str(), "write" | "edit" | "delete") || !step.ok || step.undone {
-        return Err("тут нечего возвращать".into());
+        return Err(t!("тут нечего возвращать", "there is nothing to undo here").into());
     }
     let path = resolve(root, &step.path, true)?;
     if step.kind == "delete" {
         if path.exists() {
-            return Err("файл с таким именем уже появился снова — возвращать не стану, чтобы его не затереть".into());
+            return Err(t!(
+                "файл с таким именем уже появился снова — возвращать не стану, чтобы его не затереть",
+                "a file with this name has appeared again — I won't restore it so as not to overwrite it"
+            )
+            .into());
         }
-        let id = step.backup.as_deref().filter(|id| id.chars().all(|c| c.is_ascii_digit())).ok_or(GONE)?;
-        let old = std::fs::read(backups.join(id)).map_err(|_| GONE.to_string())?;
+        let id = step.backup.as_deref().filter(|id| id.chars().all(|c| c.is_ascii_digit())).ok_or(gone())?;
+        let old = std::fs::read(backups.join(id)).map_err(|_| gone().to_string())?;
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("не создать папку: {e}"))?;
+            std::fs::create_dir_all(dir).map_err(|e| tf!("не создать папку: {e}", "could not create the folder: {e}"))?;
         }
-        return std::fs::write(&path, old).map_err(|e| format!("не записать файл: {e}"));
+        return std::fs::write(&path, old).map_err(|e| no_write(&e));
     }
     let now = std::fs::read(&path).ok();
     let same = now.as_ref().is_some_and(|b| Some(hex::encode(Sha256::digest(b))) == step.hash);
     if !same {
-        return Err("файл уже поменяли после модели — возвращать не стану, чтобы не потерять эти правки".into());
+        return Err(t!(
+            "файл уже поменяли после модели — возвращать не стану, чтобы не потерять эти правки",
+            "the file was changed after the model — I won't restore it so as not to lose those edits"
+        )
+        .into());
     }
     match &step.backup {
         Some(id) => {
             if !id.chars().all(|c| c.is_ascii_digit()) {
-                return Err(GONE.into());
+                return Err(gone().into());
             }
-            let old = std::fs::read(backups.join(id)).map_err(|_| GONE.to_string())?;
-            std::fs::write(&path, old).map_err(|e| format!("не записать файл: {e}"))
+            let old = std::fs::read(backups.join(id)).map_err(|_| gone().to_string())?;
+            std::fs::write(&path, old).map_err(|e| no_write(&e))
         }
         None => {
-            std::fs::remove_file(&path).map_err(|e| format!("не удалить файл: {e}"))?;
+            std::fs::remove_file(&path).map_err(|e| tf!("не удалить файл: {e}", "could not delete the file: {e}"))?;
             // Папки, которые появились ради этого файла, тоже убираем — если в них пусто.
             let mut dir = path.parent();
             while let Some(d) = dir.filter(|d| *d != root) {
@@ -646,23 +695,29 @@ impl Tools {
         let mut all = vec![
             tool(
                 "read_file",
-                "Прочитать файл из папки проекта. Длинный файл отдаётся кусками — продолжение по from_line.",
+                t!(
+                    "Прочитать файл из папки проекта. Длинный файл отдаётся кусками — продолжение по from_line.",
+                    "Read a file from the project folder. A long file comes in pieces — continue with from_line."
+                ),
                 serde_json::json!({
-                    "path": {"type": "string", "description": "путь от корня папки проекта, например src/main.py"},
-                    "from_line": {"type": "integer", "description": "с какой строки читать, по умолчанию 1"},
+                    "path": {"type": "string", "description": t!("путь от корня папки проекта, например src/main.py", "path from the project folder root, e.g. src/main.py")},
+                    "from_line": {"type": "integer", "description": t!("с какой строки читать, по умолчанию 1", "line to start reading from, 1 by default")},
                 }),
                 &["path"],
             ),
             tool(
                 "list_files",
-                "Показать, что лежит в папке внутри проекта: подпапки и файлы.",
-                serde_json::json!({"path": {"type": "string", "description": "папка от корня проекта; пусто — корень"}}),
+                t!("Показать, что лежит в папке внутри проекта: подпапки и файлы.", "Show what is in a folder inside the project: subfolders and files."),
+                serde_json::json!({"path": {"type": "string", "description": t!("папка от корня проекта; пусто — корень", "folder from the project root; empty — the root")}}),
                 &[],
             ),
             tool(
                 "search_files",
-                "Найти текст во всех файлах проекта. Возвращает строки вида путь:номер_строки: текст.",
-                serde_json::json!({"text": {"type": "string", "description": "что искать; регистр не важен"}}),
+                t!(
+                    "Найти текст во всех файлах проекта. Возвращает строки вида путь:номер_строки: текст.",
+                    "Find text in all project files. Returns lines like path:line_number: text."
+                ),
+                serde_json::json!({"text": {"type": "string", "description": t!("что искать; регистр не важен", "what to find; case doesn't matter")}}),
                 &["text"],
             ),
         ];
@@ -672,29 +727,37 @@ impl Tools {
         all.extend([
             tool(
                 "edit_file",
-                "Поправить кусок существующего файла: old_text заменить на new_text. old_text — точная копия \
-                 куска из файла, несколько строк целиком; он должен встречаться в файле один раз. \
-                 Пользователь сначала подтвердит правку.",
+                t!(
+                    "Поправить кусок существующего файла: old_text заменить на new_text. old_text — точная копия \
+                     куска из файла, несколько строк целиком; он должен встречаться в файле один раз. \
+                     Пользователь сначала подтвердит правку.",
+                    "Fix a piece of an existing file: replace old_text with new_text. old_text is an exact copy \
+                     of a piece of the file, several whole lines; it must occur in the file once. \
+                     The user will confirm the edit first."
+                ),
                 serde_json::json!({
-                    "path": {"type": "string", "description": "путь от корня папки проекта"},
-                    "old_text": {"type": "string", "description": "что заменить — точно как в файле"},
-                    "new_text": {"type": "string", "description": "на что заменить"},
+                    "path": {"type": "string", "description": path_hint()},
+                    "old_text": {"type": "string", "description": t!("что заменить — точно как в файле", "what to replace — exactly as in the file")},
+                    "new_text": {"type": "string", "description": t!("на что заменить", "what to replace it with")},
                 }),
                 &["path", "old_text", "new_text"],
             ),
             tool(
                 "write_file",
-                "Создать новый файл или заменить его целиком новым содержимым. Пользователь сначала подтвердит запись.",
+                t!(
+                    "Создать новый файл или заменить его целиком новым содержимым. Пользователь сначала подтвердит запись.",
+                    "Create a new file or replace it entirely with new content. The user will confirm the write first."
+                ),
                 serde_json::json!({
-                    "path": {"type": "string", "description": "путь от корня папки проекта"},
-                    "content": {"type": "string", "description": "полное новое содержимое файла"},
+                    "path": {"type": "string", "description": path_hint()},
+                    "content": {"type": "string", "description": t!("полное новое содержимое файла", "the full new content of the file")},
                 }),
                 &["path", "content"],
             ),
             tool(
                 "delete_file",
-                "Удалить файл из папки проекта. Только если пользователь об этом просил.",
-                serde_json::json!({"path": {"type": "string", "description": "путь от корня папки проекта"}}),
+                t!("Удалить файл из папки проекта. Только если пользователь об этом просил.", "Delete a file from the project folder. Only if the user asked for it."),
+                serde_json::json!({"path": {"type": "string", "description": path_hint()}}),
                 &["path"],
             ),
         ]);
@@ -707,38 +770,61 @@ impl Tools {
     pub fn prompt(&self, tools: bool) -> String {
         let files = self.files.lock().unwrap();
         let tree = tree(&files, (self.ctx as usize / 2).max(1500));
-        let more = if self.truncated { "\n[файлов очень много — показаны не все]" } else { "" };
+        let more = if self.truncated { t!("\n[файлов очень много — показаны не все]", "\n[too many files — not all are shown]") } else { "" };
         let see = if tools {
-            "Прежде чем отвечать про файл, прочитай его инструментом read_file — не придумывай код, \
-             которого не видел. Искать по всем файлам — search_files, смотреть папку — list_files. \
-             Пути пиши от корня папки, без её имени: например, main.py или src/app.py. \
-             Файлы, приложенные к вопросу, уже перед тобой — их читать не нужно."
+            t!(
+                "Прежде чем отвечать про файл, прочитай его инструментом read_file — не придумывай код, \
+                 которого не видел. Искать по всем файлам — search_files, смотреть папку — list_files. \
+                 Пути пиши от корня папки, без её имени: например, main.py или src/app.py. \
+                 Файлы, приложенные к вопросу, уже перед тобой — их читать не нужно.",
+                "Before answering about a file, read it with the read_file tool — don't make up code \
+                 you haven't seen. To search all files — search_files, to look at a folder — list_files. \
+                 Write paths from the folder root, without its name: for example, main.py or src/app.py. \
+                 Files attached to the question are already in front of you — no need to read them."
+            )
         } else {
-            "Содержимое файлов ты видишь, только если пользователь приложил их к вопросу. \
-             Если для ответа нужен другой файл — попроси приложить его."
+            t!(
+                "Содержимое файлов ты видишь, только если пользователь приложил их к вопросу. \
+                 Если для ответа нужен другой файл — попроси приложить его.",
+                "You see file contents only if the user attached them to the question. \
+                 If you need another file to answer, ask to attach it."
+            )
         };
         let change = match (self.mode, tools) {
-            (Mode::Plan, _) => {
+            (Mode::Plan, _) => t!(
                 "Сейчас режим плана: ты ничего не создаёшь, не меняешь и не удаляешь. Изучи нужные \
                  файлы и напиши план по шагам: какие файлы создать, изменить или удалить и что именно \
-                 в них сделать. Полный код не пиши — только ключевые места. В конце спроси, выполнять ли план."
-            }
-            (_, false) => "Новый код давай целиком в блоке кода и пиши, в какой файл его сохранить.",
-            (Mode::Ask, true) => {
+                 в них сделать. Полный код не пиши — только ключевые места. В конце спроси, выполнять ли план.",
+                "This is plan mode: you don't create, change or delete anything. Study the files you need \
+                 and write a step-by-step plan: which files to create, change or delete and what exactly \
+                 to do in them. Don't write the full code — only the key parts. At the end, ask whether to carry out the plan."
+            ),
+            (_, false) => t!(
+                "Новый код давай целиком в блоке кода и пиши, в какой файл его сохранить.",
+                "Give new code in full in a code block and say which file to save it to."
+            ),
+            (Mode::Ask, true) => t!(
                 "Поправить часть существующего файла — edit_file (точный кусок и на что его заменить), \
                  создать файл или переписать целиком — write_file, удалить — delete_file. Каждое \
-                 изменение пользователь подтверждает. Запускать программы ты не можешь."
-            }
-            (Mode::Auto, true) => {
+                 изменение пользователь подтверждает. Запускать программы ты не можешь.",
+                "To fix part of an existing file — edit_file (the exact piece and what to replace it with), \
+                 to create a file or rewrite it entirely — write_file, to delete — delete_file. The user \
+                 confirms every change. You can't run programs."
+            ),
+            (Mode::Auto, true) => t!(
                 "Поправить часть существующего файла — edit_file (точный кусок и на что его заменить), \
                  создать файл или переписать целиком — write_file, удалить — delete_file. Изменения \
                  применяются сразу, без подтверждения, — меняй только то, о чём просили. Запускать \
-                 программы ты не можешь."
-            }
+                 программы ты не можешь.",
+                "To fix part of an existing file — edit_file (the exact piece and what to replace it with), \
+                 to create a file or rewrite it entirely — write_file, to delete — delete_file. Changes \
+                 apply at once, without confirmation — change only what was asked. You can't run programs."
+            ),
         };
         let how = format!("{see} {change}");
-        format!(
+        tf!(
             "Ты работаешь с папкой проекта «{}» на компьютере пользователя. Файлы в ней:\n{tree}{more}\n\n{how}",
+            "You are working with the project folder “{}” on the user's computer. Its files:\n{tree}{more}\n\n{how}",
             self.name
         )
     }
@@ -753,7 +839,11 @@ impl Tools {
                 let from = args["from_line"].as_u64().unwrap_or(1) as usize;
                 let (root, p, max) = (self.root.clone(), path.clone(), self.read_chars());
                 let res = if self.seen.lock().unwrap().contains(&(path.clone(), from)) {
-                    Ok("Этот файл уже прочитан выше и с тех пор не менялся. Отвечай по нему.".into())
+                    Ok(t!(
+                        "Этот файл уже прочитан выше и с тех пор не менялся. Отвечай по нему.",
+                        "This file was already read above and hasn't changed since. Answer from it."
+                    )
+                    .into())
                 } else {
                     let res = blocking(move || read(&root, &p, from, max)).await;
                     if res.is_ok() {
@@ -776,7 +866,7 @@ impl Tools {
             }
             "write_file" | "edit_file" | "delete_file" if self.mode == Mode::Plan => {
                 // Инструментов записи в «Плане» модели не даём; сюда попадёт только выдуманный вызов.
-                ("plan", self.path(&arg("path")), Err("сейчас режим плана — файлы не меняем, опиши это в плане".into()))
+                ("plan", self.path(&arg("path")), Err(t!("сейчас режим плана — файлы не меняем, опиши это в плане", "this is plan mode — we don't change files, describe it in the plan").into()))
             }
             "write_file" => {
                 let path = self.path(&arg("path"));
@@ -793,7 +883,8 @@ impl Tools {
                 let (root, p) = (self.root.clone(), path.clone());
                 let current = blocking(move || {
                     let full = resolve(&root, &p, true)?;
-                    let bytes = std::fs::read(&full).map_err(|_| "такого файла нет — новый файл создавай через write_file".to_string())?;
+                    let bytes = std::fs::read(&full)
+                        .map_err(|_| t!("такого файла нет — новый файл создавай через write_file", "there is no such file — create a new file with write_file").to_string())?;
                     Ok(crate::attach::decode(&bytes))
                 })
                 .await;
@@ -807,15 +898,16 @@ impl Tools {
                     // и дважды «цитировала» строки, которых в файле не было.
                     Err(e) if text.chars().count() <= self.read_chars() => {
                         let now = text.replace("\r\n", "\n");
-                        return fail_step("edit", path, e, format!("\nФайл сейчас такой — копируй кусок отсюда точно:\n{now}"));
+                        let hint = tf!("\nФайл сейчас такой — копируй кусок отсюда точно:\n{now}", "\nThe file is now like this — copy the piece from here exactly:\n{now}");
+                        return fail_step("edit", path, e, hint);
                     }
                     Err(e) => return fail_step("edit", path, e, String::new()),
                 }
             }
-            other => ("unknown", other.to_string(), Err(format!("инструмента «{other}» нет"))),
+            other => ("unknown", other.to_string(), Err(tf!("инструмента «{other}» нет", "there is no tool “{other}”"))),
         };
         let step = Step { kind: kind.into(), path, ok: res.is_ok(), note: res.as_ref().err().cloned().unwrap_or_default(), ..Step::default() };
-        (res.unwrap_or_else(|e| format!("Ошибка: {e}")), step)
+        (res.unwrap_or_else(|e| tf!("Ошибка: {e}", "Error: {e}")), step)
     }
 
     /// Записать или удалить файл — в «Вручную» после согласия человека. `kind` — `write`
@@ -823,7 +915,7 @@ impl Tools {
     /// (`content` — `None`); у записи `content` — всегда файл целиком.
     async fn save(&self, kind: &str, path: String, content: Option<String>, change: Option<(String, String)>) -> (String, Step) {
         let fail = |note: String| {
-            (format!("Ошибка: {note}"), Step { kind: kind.into(), path: path.clone(), note, ..Step::default() })
+            (tf!("Ошибка: {note}", "Error: {note}"), Step { kind: kind.into(), path: path.clone(), note, ..Step::default() })
         };
         let full = match resolve(&self.root, &path, true) {
             Ok(p) => p,
@@ -831,7 +923,7 @@ impl Tools {
         };
         let old = std::fs::read(&full).ok().map(|b| crate::attach::decode(&b));
         if content.is_none() && old.is_none() {
-            return fail(format!("файла «{path}» нет"));
+            return fail(no_file(&path));
         }
         if self.mode == Mode::Ask {
             let ask = WriteAsk {
@@ -846,8 +938,9 @@ impl Tools {
                 after: change.map(|c| c.1),
             };
             if !(self.ask_write)(ask).await {
-                let (_, step) = fail("вы не разрешили".into());
-                return ("Пользователь не разрешил это изменение. Спроси, что поправить.".into(), step);
+                let (_, step) = fail(t!("вы не разрешили", "you didn't allow it").into());
+                let answer = t!("Пользователь не разрешил это изменение. Спроси, что поправить.", "The user didn't allow this change. Ask what to fix.");
+                return (answer.into(), step);
             }
         }
         let (root, backups, p) = (self.root.clone(), self.backups.clone(), path.clone());
@@ -868,7 +961,7 @@ impl Tools {
                     (Err(i), "write" | "edit") => files.insert(i, step.path.clone()),
                     _ => {}
                 }
-                (if kind == "delete" { "Файл удалён." } else { "Файл сохранён." }.into(), step)
+                (if kind == "delete" { t!("Файл удалён.", "File deleted.") } else { t!("Файл сохранён.", "File saved.") }.into(), step)
             }
             Err(e) => fail(e),
         }
@@ -877,7 +970,7 @@ impl Tools {
 
 /// Неудавшийся шаг: причина — в окно, причина и подсказка — модели.
 fn fail_step(kind: &str, path: String, why: String, hint: String) -> (String, Step) {
-    (format!("Ошибка: {why}{hint}"), Step { kind: kind.into(), path, note: why, ..Step::default() })
+    (tf!("Ошибка: {why}{hint}", "Error: {why}{hint}"), Step { kind: kind.into(), path, note: why, ..Step::default() })
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -893,13 +986,13 @@ pub fn steps_note(steps: &[Step]) -> String {
     let mut parts = Vec::new();
     for s in steps.iter().filter(|s| s.ok) {
         let what = match (s.kind.as_str(), s.undone) {
-            ("read", _) => "прочитан",
-            ("write", false) => "записан",
-            ("write", true) => "записан, но пользователь вернул как было:",
-            ("edit", false) => "исправлен",
-            ("edit", true) => "исправлен, но пользователь вернул как было:",
-            ("delete", false) => "удалён",
-            ("delete", true) => "удалён, но пользователь вернул:",
+            ("read", _) => t!("прочитан", "read"),
+            ("write", false) => t!("записан", "written"),
+            ("write", true) => t!("записан, но пользователь вернул как было:", "written, but the user restored the old version:"),
+            ("edit", false) => t!("исправлен", "edited"),
+            ("edit", true) => t!("исправлен, но пользователь вернул как было:", "edited, but the user restored the old version:"),
+            ("delete", false) => t!("удалён", "deleted"),
+            ("delete", true) => t!("удалён, но пользователь вернул:", "deleted, but the user restored:"),
             _ => continue,
         };
         parts.push(format!("{what} {}", s.path));
@@ -907,7 +1000,11 @@ pub fn steps_note(steps: &[Step]) -> String {
     if parts.is_empty() {
         String::new()
     } else {
-        format!("(Справка от программы, не от пользователя: в прошлом ответе инструментами {}. Другие файлы не менялись.)", parts.join("; "))
+        tf!(
+            "(Справка от программы, не от пользователя: в прошлом ответе инструментами {}. Другие файлы не менялись.)",
+            "(Note from the program, not from the user: in the previous answer, with tools: {}. No other files changed.)",
+            parts.join("; ")
+        )
     }
 }
 

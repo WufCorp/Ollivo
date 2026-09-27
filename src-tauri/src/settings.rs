@@ -2,6 +2,7 @@
 //! Секретов здесь нет — пароль прокси лежит в диспетчере учётных данных Windows.
 
 use crate::hf::HfSettings;
+use crate::i18n::Lang;
 use crate::net::ProxySettings;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -19,6 +20,8 @@ pub struct Settings {
     pub updates: UpdateSettings,
     pub models: ModelSettings,
     pub theme: Theme,
+    /// Язык окна и всего, что говорит ядро. В файле его может не быть — см. `Store::open`.
+    pub language: Lang,
 }
 
 /// Оформление окна. Меняется темой самого окна, а WebView2 подхватывает её
@@ -84,10 +87,13 @@ pub struct Store {
 impl Store {
     /// Битый или отсутствующий файл — настройки по умолчанию, программа всё равно стартует.
     pub fn open(path: PathBuf) -> Self {
-        let current = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let raw: Option<serde_json::Value> =
+            std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let mut current: Settings =
+            raw.as_ref().and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+        if raw.as_ref().and_then(|v| v.get("language")).is_none() {
+            current.language = first_language(current.setup_done);
+        }
         Self { path, current: Mutex::new(current) }
     }
 
@@ -108,11 +114,22 @@ impl Store {
     }
 }
 
+/// Языка в файле нет. До 0.3 программа была только русской: кто её уже настроил,
+/// тот ею пользовался — остаётся русский. Новому человеку — язык его Windows.
+fn first_language(setup_done: bool) -> Lang {
+    if setup_done { Lang::Ru } else { Lang::system() }
+}
+
 /// «Сбросить настройки»: всё к исходному, кроме того, что сброс сломал бы. Папка данных
 /// остаётся — иначе программа потеряла бы движки и модели; мастер первого запуска
-/// заново не нужен — компьютер тот же.
+/// заново не нужен — компьютер тот же; язык — чтобы после сброса человек понимал окно.
 pub fn reset(old: &Settings) -> Settings {
-    Settings { data_dir: old.data_dir.clone(), setup_done: old.setup_done, ..Settings::default() }
+    Settings {
+        data_dir: old.data_dir.clone(),
+        setup_done: old.setup_done,
+        language: old.language,
+        ..Settings::default()
+    }
 }
 
 /// Папка данных по умолчанию: `<диск с наибольшим свободным местом>:\Ollivo`.
@@ -146,6 +163,10 @@ mod tests {
         // Файл от старой версии, где выгрузки ещё не было, — выгружать через 10 минут.
         std::fs::write(&path, br#"{"setup_done":true}"#).unwrap();
         assert_eq!(Store::open(path.clone()).get().models.unload_after, 10);
+        // Языка до 0.3 не было, программа была русской — русский и остаётся.
+        assert_eq!(Store::open(path.clone()).get().language, Lang::Ru);
+        std::fs::write(&path, br#"{"setup_done":true,"language":"en"}"#).unwrap();
+        assert_eq!(Store::open(path.clone()).get().language, Lang::En);
         assert_eq!(Store::open(path.clone()).get().theme, Theme::Dark);
 
         // «Как в Windows» из прошлых версий — теперь тёмная.
@@ -165,7 +186,9 @@ mod tests {
         s.proxy.enabled = true;
         s.theme = Theme::Light;
         s.models.unload_after = 0;
+        s.language = Lang::En;
         let r = reset(&s);
+        assert_eq!(r.language, Lang::En);
         assert_eq!(r.data_dir, s.data_dir);
         assert!(r.setup_done);
         assert!(!r.proxy.enabled);

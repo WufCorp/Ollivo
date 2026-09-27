@@ -8,21 +8,34 @@
 use crate::llm::Msg;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+/// Строки пресетов — парой «русский, английский»: `[ru, en]`.
+type Pair = [&'static str; 2];
+
+fn pick(p: &Pair) -> &'static str {
+    if crate::i18n::en() { p[1] } else { p[0] }
+}
+
+#[derive(Debug, Clone)]
 pub struct Role {
     pub id: &'static str,
-    pub name: &'static str,
+    pub name: Pair,
     /// Одна фраза для подсказки: что изменится.
-    pub hint: &'static str,
+    pub hint: Pair,
     /// Манера, которая этой роли подходит лучше: её ставим, когда роль выбрали.
     pub style: &'static str,
     /// Системный промпт; `{target}` — язык, на который переводить (см. `prepare`).
-    #[serde(skip)]
-    pub prompt: &'static str,
+    /// Промпт — на языке окна: спрашивающему по-английски русский промпт тянул бы
+    /// ответ на русский.
+    pub prompt: Pair,
     /// Запретить движку иероглифы (`NO_CJK`). Только там, где ответ заведомо
     /// русский или английский: помощника могут прямо попросить написать по-японски.
-    #[serde(skip)]
     pub no_cjk: bool,
+}
+
+impl Role {
+    pub fn prompt(&self) -> &'static str {
+        pick(&self.prompt)
+    }
 }
 
 /// Грамматика llama.cpp: любой текст, кроме китайских, японских и корейских знаков.
@@ -31,14 +44,12 @@ pub struct Role {
 /// скорость 57 ток/с против 61 (GTX 1080).
 pub const NO_CJK: &str = r"root ::= [^\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]*";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Style {
     pub id: &'static str,
-    pub name: &'static str,
-    pub hint: &'static str,
-    #[serde(skip)]
+    pub name: Pair,
+    pub hint: Pair,
     pub temperature: f32,
-    #[serde(skip)]
     pub top_p: f32,
 }
 
@@ -48,29 +59,44 @@ pub struct Style {
 pub const ROLES: &[Role] = &[
     Role {
         id: "helper",
-        name: "Помощник",
-        hint: "Отвечает на любые вопросы",
+        name: ["Помощник", "Assistant"],
+        hint: ["Отвечает на любые вопросы", "Answers any questions"],
         style: "balanced",
-        prompt: "Отвечай на том языке, на котором задан вопрос.",
+        prompt: [
+            "Отвечай на том языке, на котором задан вопрос.",
+            "Answer in the language the question is asked in.",
+        ],
         no_cjk: false,
     },
     Role {
         id: "translator",
-        name: "Переводчик",
-        hint: "Переводит присланный текст: русский — на английский, остальное — на русский",
+        name: ["Переводчик", "Translator"],
+        hint: [
+            "Переводит присланный текст: русский — на английский, остальное — на русский",
+            "Translates the text you send: Russian into English, anything else into Russian",
+        ],
         style: "precise",
-        prompt: "Ты переводчик. Переведи сообщение пользователя на {target} язык. \
-                 Пиши только перевод, без пояснений и кавычек, сохраняя смысл, тон и абзацы.",
+        prompt: [
+            "Ты переводчик. Переведи сообщение пользователя на {target} язык. \
+             Пиши только перевод, без пояснений и кавычек, сохраняя смысл, тон и абзацы.",
+            "You are a translator. Translate the user's message into {target}. \
+             Write only the translation, without explanations or quotes, keeping the meaning, tone and paragraphs.",
+        ],
         no_cjk: true,
     },
     Role {
         id: "coder",
-        name: "Программист",
-        hint: "Пишет и объясняет код",
+        name: ["Программист", "Programmer"],
+        hint: ["Пишет и объясняет код", "Writes and explains code"],
         style: "precise",
-        prompt: "Ты опытный программист. Давай рабочий код в блоках с указанием языка, \
-                 коротко объясняй, почему сделано так. Если в вопросе не хватает данных — \
-                 спроси, а не придумывай. Отвечай на том языке, на котором задан вопрос.",
+        prompt: [
+            "Ты опытный программист. Давай рабочий код в блоках с указанием языка, \
+             коротко объясняй, почему сделано так. Если в вопросе не хватает данных — \
+             спроси, а не придумывай. Отвечай на том языке, на котором задан вопрос.",
+            "You are an experienced programmer. Give working code in blocks with the language named, \
+             briefly explain why it is done this way. If the question lacks details, \
+             ask instead of making things up. Answer in the language the question is asked in.",
+        ],
         no_cjk: false,
     },
 ];
@@ -79,9 +105,27 @@ pub const ROLES: &[Role] = &[
 /// творческий край 1,0 / 0,95 — рекомендация Gemma. Ниже 0,3 маленькие модели
 /// начинают повторяться по кругу, выше 1,0 — терять нить, поэтому края не дальше.
 pub const STYLES: &[Style] = &[
-    Style { id: "precise", name: "Точнее", hint: "Сухо и по делу, меньше выдумок", temperature: 0.3, top_p: 0.8 },
-    Style { id: "balanced", name: "Обычно", hint: "Подходит для большинства вопросов", temperature: 0.7, top_p: 0.8 },
-    Style { id: "creative", name: "Креативнее", hint: "Живее и разнообразнее, но чаще ошибается", temperature: 1.0, top_p: 0.95 },
+    Style {
+        id: "precise",
+        name: ["Точнее", "Precise"],
+        hint: ["Сухо и по делу, меньше выдумок", "Dry and to the point, less made up"],
+        temperature: 0.3,
+        top_p: 0.8,
+    },
+    Style {
+        id: "balanced",
+        name: ["Обычно", "Balanced"],
+        hint: ["Подходит для большинства вопросов", "Suits most questions"],
+        temperature: 0.7,
+        top_p: 0.8,
+    },
+    Style {
+        id: "creative",
+        name: ["Креативнее", "Creative"],
+        hint: ["Живее и разнообразнее, но чаще ошибается", "Livelier and more varied, but makes more mistakes"],
+        temperature: 1.0,
+        top_p: 0.95,
+    },
 ];
 
 /// Что уходит модели: системный промпт роли первой репликой, дальше разговор.
@@ -93,8 +137,8 @@ pub const STYLES: &[Style] = &[
 /// история не нужна, а маленькие модели указание в самом сообщении слушают лучше.
 pub fn prepare(role: &Role, messages: &[Msg]) -> Vec<Msg> {
     let system = |content: String| Msg::new("system", content);
-    if !role.prompt.contains("{target}") {
-        return std::iter::once(system(role.prompt.into())).chain(messages.iter().cloned()).collect();
+    if !role.prompt().contains("{target}") {
+        return std::iter::once(system(role.prompt().into())).chain(messages.iter().cloned()).collect();
     }
     // Приложенный документ переводчик переводит вместе с вопросом.
     let last = messages
@@ -103,12 +147,10 @@ pub fn prepare(role: &Role, messages: &[Msg]) -> Vec<Msg> {
         .find(|m| m.role == "user")
         .map_or(String::new(), |m| crate::attach::for_model(&m.files, &m.content));
     let last = last.as_str();
-    let target = if mostly_cyrillic(last) { "английский" } else { "русский" };
+    let target = if mostly_cyrillic(last) { t!("английский", "English") } else { t!("русский", "Russian") };
     vec![
-        system(role.prompt.replace("{target}", target)),
-        Msg::new("user", format!("Переведи на {target} язык:
-
-{last}")),
+        system(role.prompt().replace("{target}", target)),
+        Msg::new("user", tf!("Переведи на {target} язык:\n\n{last}", "Translate into {target}:\n\n{last}")),
     ]
 }
 
@@ -134,10 +176,32 @@ pub fn style(id: &str) -> &'static Style {
     STYLES.iter().find(|s| s.id == id).unwrap_or(&STYLES[1])
 }
 
+/// Роль или манера для окна: id, название и пояснение на языке окна.
+/// Промпты и числа в окно не уходят.
+#[derive(Serialize)]
+pub struct Choice {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub hint: &'static str,
+    /// У роли — манера, которую ставить вместе с ней; у манеры поля нет.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<&'static str>,
+}
+
 #[derive(Serialize)]
 pub struct All {
-    pub roles: &'static [Role],
-    pub styles: &'static [Style],
+    pub roles: Vec<Choice>,
+    pub styles: Vec<Choice>,
+}
+
+pub fn all() -> All {
+    All {
+        roles: ROLES
+            .iter()
+            .map(|r| Choice { id: r.id, name: pick(&r.name), hint: pick(&r.hint), style: Some(r.style) })
+            .collect(),
+        styles: STYLES.iter().map(|s| Choice { id: s.id, name: pick(&s.name), hint: pick(&s.hint), style: None }).collect(),
+    }
 }
 
 #[cfg(test)]
@@ -193,13 +257,24 @@ mod tests {
         let talk = [msg("user", "a"), msg("assistant", "b"), msg("user", "c")];
         let sent = prepare(role("coder"), &talk);
         assert_eq!(sent.len(), 4);
-        assert_eq!((sent[0].role.as_str(), sent[0].content.as_str()), ("system", role("coder").prompt));
+        assert_eq!((sent[0].role.as_str(), sent[0].content.as_str()), ("system", role("coder").prompt()));
     }
 
     /// Промпты и числа в окно не уходят — только названия и пояснения.
     #[test]
     fn window_sees_no_numbers() {
-        let json = serde_json::to_string(&All { roles: ROLES, styles: STYLES }).unwrap();
-        assert!(!json.contains("temperature") && !json.contains("prompt"));
+        let json = serde_json::to_string(&all()).unwrap();
+        assert!(!json.contains("temperature") && !json.contains("prompt") && !json.contains("Ты "));
+        assert!(json.contains("Помощник"));
+    }
+
+    #[test]
+    fn english_names_and_prompts() {
+        crate::i18n::test_en();
+        assert!(serde_json::to_string(&all()).unwrap().contains("Translator"));
+        let tr = role("translator");
+        let sent = prepare(tr, &[msg("user", "Как дела?")]);
+        assert!(sent[0].content.contains("into English") && sent[1].content.starts_with("Translate into English"));
+        assert!(prepare(tr, &[msg("user", "The cat")])[1].content.starts_with("Translate into Russian"));
     }
 }

@@ -71,11 +71,15 @@ fn command(ffmpeg: &Path) -> Command {
 /// Ошибка ffmpeg человеческими словами; сырой журнал — в конце, для того, кто будет помогать.
 fn explain(log: &str, what: &str) -> String {
     if log.contains("does not contain any stream") || log.contains("matches no streams") {
-        format!("в файле нет {what}")
+        tf!("в файле нет {what}", "the file has no {what}")
     } else if log.contains("Invalid data found") || log.contains("moov atom not found") {
-        "файл не читается — возможно, он повреждён или записан не до конца".into()
+        t!(
+            "файл не читается — возможно, он повреждён или записан не до конца",
+            "the file can't be read — it may be damaged or not fully written"
+        )
+        .into()
     } else {
-        format!("файл не удалось прочитать:\n{}", log.trim())
+        tf!("файл не удалось прочитать:\n{}", "couldn't read the file:\n{}", log.trim())
     }
 }
 
@@ -91,7 +95,7 @@ pub async fn to_wav(ffmpeg: &Path, input: &Path, out: &Path, cancel: &Cancellati
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let child = cmd.spawn().map_err(|e| format!("ffmpeg не запустился: {e}"))?;
+    let child = cmd.spawn().map_err(|e| tf!("ffmpeg не запустился: {e}", "ffmpeg did not start: {e}"))?;
     let result = tokio::select! {
         r = child.wait_with_output() => r.map_err(|e| e.to_string())?,
         _ = cancel.cancelled() => return Err(crate::llm::CANCELLED.into()),
@@ -100,7 +104,7 @@ pub async fn to_wav(ffmpeg: &Path, input: &Path, out: &Path, cancel: &Cancellati
         return Ok(());
     }
     let _ = std::fs::remove_file(out);
-    Err(explain(&String::from_utf8_lossy(&result.stderr), "звука"))
+    Err(explain(&String::from_utf8_lossy(&result.stderr), t!("звука", "audio")))
 }
 
 /// HEIC, AVIF → PNG. Сетку плиток (так снимает iPhone) и поворот из файла ffmpeg
@@ -114,7 +118,7 @@ pub fn to_png(ffmpeg: &Path, input: &Path) -> Result<Vec<u8>, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("ffmpeg не запустился: {e}"))?;
+        .map_err(|e| tf!("ffmpeg не запустился: {e}", "ffmpeg did not start: {e}"))?;
     // Читаем в отдельных потоках: картинка в 6 МБ забьёт канал, и ffmpeg встанет,
     // пока мы ждём его завершения.
     let drain = |mut r: Box<dyn Read + Send>| {
@@ -133,13 +137,13 @@ pub fn to_png(ffmpeg: &Path, input: &Path) -> Result<Vec<u8>, String> {
         }
         if started.elapsed() > IMAGE_TIMEOUT {
             let _ = child.kill();
-            return Err("картинка открывается слишком долго — возможно, она повреждена".into());
+            return Err(t!("картинка открывается слишком долго — возможно, она повреждена", "the image takes too long to open — it may be damaged").into());
         }
         std::thread::sleep(Duration::from_millis(20));
     };
     let (png, log) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
     if !status.success() || png.is_empty() {
-        return Err(explain(&String::from_utf8_lossy(&log), "картинки"));
+        return Err(explain(&String::from_utf8_lossy(&log), t!("картинки", "image")));
     }
     Ok(png)
 }

@@ -115,7 +115,7 @@ pub fn target_dir(picked: &Path) -> PathBuf {
 pub fn check_target(old: &Path, new: &Path) -> Result<(), String> {
     let inside = |a: &Path, b: &Path| crate::library::strip_prefix_ci(a, b).is_some();
     if inside(new, old) || inside(old, new) {
-        return Err("новая папка не может быть внутри старой или содержать её".into());
+        return Err(t!("новая папка не может быть внутри старой или содержать её", "the new folder can't be inside the old one or contain it").into());
     }
     if let Some(p) = PARTS.iter().map(|p| new.join(p)).find(|p| p.exists()) {
         return Err(format!("в новой папке уже есть «{}» — выберите пустую", p.file_name().unwrap().to_string_lossy()));
@@ -155,7 +155,7 @@ fn transfer(
     progress: &dyn Fn(Progress),
     rename: bool,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(new).map_err(|e| format!("не создать {}: {e}", new.display()))?;
+    std::fs::create_dir_all(new).map_err(|e| tf!("не создать {}: {e}", "could not create {}: {e}", new.display()))?;
     let parts: Vec<&str> = PARTS.iter().copied().filter(|p| old.join(p).exists()).collect();
     if rename {
         let mut done: Vec<&str> = vec![];
@@ -165,7 +165,10 @@ fn transfer(
                 for d in &done {
                     let _ = std::fs::rename(new.join(d), old.join(d));
                 }
-                return Err(format!("не перенести «{p}»: {e}. Возможно, файл открыт другой программой."));
+                return Err(tf!(
+                    "не перенести «{p}»: {e}. Возможно, файл открыт другой программой.",
+                    "could not move “{p}”: {e}. The file may be open in another program."
+                ));
             }
             done.push(p);
         }
@@ -215,18 +218,18 @@ fn copy_tree(from: &Path, to: &Path, cancel: &CancellationToken, step: &mut dyn 
         if !t.is_file() {
             continue;
         }
-        let mut r = std::fs::File::open(&src).map_err(|e| format!("не открыть {}: {e}", src.display()))?;
-        let mut w = std::fs::File::create(&dst).map_err(|e| format!("не записать {}: {e}", dst.display()))?;
+        let mut r = std::fs::File::open(&src).map_err(|e| tf!("не открыть {}: {e}", "could not open {}: {e}", src.display()))?;
+        let mut w = std::fs::File::create(&dst).map_err(|e| tf!("не записать {}: {e}", "could not write {}: {e}", dst.display()))?;
         let mut buf = vec![0u8; 8 << 20];
         loop {
             if cancel.is_cancelled() {
-                return Err("отменено".into());
+                return Err(crate::llm::CANCELLED.into());
             }
             let n = r.read(&mut buf).map_err(|e| e.to_string())?;
             if n == 0 {
                 break;
             }
-            w.write_all(&buf[..n]).map_err(|e| format!("не записать {}: {e}", dst.display()))?;
+            w.write_all(&buf[..n]).map_err(|e| tf!("не записать {}: {e}", "could not write {}: {e}", dst.display()))?;
             step(n as u64);
         }
         // Дата изменения нужна библиотеке: по ней она понимает, что файл тот же

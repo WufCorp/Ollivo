@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { t } from "../i18n";
 
 /**
  * Ответ модели с разметкой: заголовки, списки, таблицы, код.
@@ -17,20 +18,20 @@ const md = new MarkdownIt({ breaks: true, linkify: true });
  * человек хотя бы видит, что там было, и откроет в браузере сам, если захочет.
  */
 md.renderer.rules.image = (tokens, i) => {
-  const t = tokens[i];
-  const src = md.utils.escapeHtml(String(t.attrGet("src") ?? ""));
-  const alt = md.utils.escapeHtml(t.content || "картинка");
+  const tok = tokens[i];
+  const src = md.utils.escapeHtml(String(tok.attrGet("src") ?? ""));
+  const alt = md.utils.escapeHtml(tok.content || t("картинка", "image"));
   return `<a href="${src}">🖼 ${alt}</a>`;
 };
 
 /** Код — отдельной карточкой с языком и кнопкой «Копировать». */
 md.renderer.rules.fence = (tokens, i) => {
-  const t = tokens[i];
-  const lang = md.utils.escapeHtml(t.info.trim().split(/\s+/)[0] ?? "");
+  const tok = tokens[i];
+  const lang = md.utils.escapeHtml(tok.info.trim().split(/\s+/)[0] ?? "");
   return (
     `<div class="code"><div class="code-top"><span>${lang}</span>` +
-    `<button class="copy" type="button">Копировать</button></div>` +
-    `<pre><code>${md.utils.escapeHtml(t.content)}</code></pre></div>`
+    `<button class="copy" type="button">${t("Копировать", "Copy")}</button></div>` +
+    `<pre><code>${md.utils.escapeHtml(tok.content)}</code></pre></div>`
   );
 };
 
@@ -65,8 +66,8 @@ export default function Answer({ text }: { text: string }) {
     if (copy) {
       const code = copy.closest(".code")?.querySelector("code")?.textContent ?? "";
       const ok = await copyText(code);
-      copy.textContent = ok ? "Скопировано" : "Не вышло скопировать";
-      setTimeout(() => (copy.textContent = "Копировать"), 2000);
+      copy.textContent = ok ? t("Скопировано", "Copied") : t("Не вышло скопировать", "Couldn't copy");
+      setTimeout(() => (copy.textContent = t("Копировать", "Copy")), 2000);
       return;
     }
 

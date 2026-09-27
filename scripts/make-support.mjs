@@ -1,6 +1,7 @@
-// Собирает всё про поддержку проекта из одного файла site/support/support.json:
-// QR-коды и кнопки (site/support/*.svg), страницу DONATE.md, блок в README.md,
-// раздел «Поддержать» на сайте (site/index.html) и .github/FUNDING.yml (кнопка «Sponsor» на GitHub).
+// Собирает всё про поддержку проекта из одного файла site/support/support.json, на двух языках:
+// QR-коды и кнопки (site/support/*.svg), страницы DONATE.md (англ.) и DONATE.ru.md, блок в README.md
+// и README.ru.md, раздел «Поддержать» на сайте (site/index.html, site/en/index.html)
+// и .github/FUNDING.yml (кнопка «Sponsor» на GitHub).
 // Адреса живут только в support.json: если их подменят, это видно в одном диффе,
 // а не в пяти файлах, где легко пропустить один.
 //
@@ -67,7 +68,7 @@ for (const c of data.crypto) {
 
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-// Кнопки — свои SVG, а не значки shields.io: крупнее, по-русски и без стороннего сервиса.
+// Кнопки — свои SVG, а не значки shields.io: крупнее, на нужном языке и без стороннего сервиса.
 function button(title, subtitle, fill) {
   const font = "Segoe UI Variable, Segoe UI, -apple-system, Helvetica, Arial, sans-serif";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="64" viewBox="0 0 280 64" role="img" aria-label="${esc(title)}: ${esc(subtitle)}">
@@ -78,8 +79,101 @@ function button(title, subtitle, fill) {
 `;
 }
 
-writeFileSync(join(dir, "boosty.svg"), button("Boosty", "подписка на развитие проекта", "#F15F2C"));
-writeFileSync(join(dir, "yoomoney.svg"), button("ЮMoney", "разово, картой любого банка", "#8B3FFD"));
+// Всё, что видит человек, — на двух языках. Русская страница поддержки — DONATE.ru.md,
+// английская — DONATE.md (её GitHub показывает по ссылке «Sponsor»); на сайте — index.html и en/index.html.
+const L = {
+  ru: {
+    boosty: "подписка на развитие проекта",
+    yoomoney: "разово, картой любого банка",
+    boostyAlt: "Boosty — подписка на развитие",
+    yoomoneyAlt: "ЮMoney — разово, картой любого банка",
+    qr: "QR-код",
+    min: "Минимум —",
+    network: (c) => c.network,
+    note: (c) => c.note,
+    title: "Поддержать Ollivo",
+    lead: "Ollivo делает один человек. Программа бесплатная, без рекламы и слежки,\nа переписка не уходит с вашего компьютера.\nЕсли она вам пригодилась — помогите ей расти.",
+    other: "**Русский** · [English](DONATE.md)",
+    crypto: "Криптовалюта",
+    warnMd: "> ⚠️ **Важно.** На адрес отправляйте **только указанную монету и только в указанной сети** — иначе перевод не дойдёт, и вернуть его не получится.\n> После вставки сверьте первые и последние 4 символа адреса.",
+    goalsHead: "На что пойдут деньги",
+    helpsHead: "Помочь можно и без денег",
+    thanks: "Спасибо! ♥",
+    goals: [
+      ["Видеокарты AMD и Intel для проверки.", "Сейчас программа работает только с NVIDIA."],
+      ["Сервер и трафик.", "Обновления программы раздаются с нашего сервера."],
+      ["Домен ollivo.ru.", "Короткий адрес для сайта и обновлений."],
+      ["Время.", "Чем больше поддержки, тем быстрее выходят картинки, голос и видео."],
+    ],
+    helps: (link) => [
+      "Расскажите о программе знакомым, которым хотелось попробовать ИИ у себя на компьютере.",
+      `Нашли ошибку — нажмите в программе «Сообщить о проблеме» или ${link("напишите на GitHub", `${repo}/issues/new/choose`)}.`,
+      `Поставьте звезду ${link("репозиторию на GitHub", repo)} — так его чаще находят.`,
+    ],
+    readmeHead: "Поддержать проект",
+    readmeLead: "Ollivo делает один человек. Если программа пригодилась — поддержите её развитие:",
+    readmeCrypto: (coins) => `Криптовалюта (${coins}) — адреса и QR-коды на странице **[Поддержать](DONATE.ru.md)**.`,
+    eyebrow: "Поддержать",
+    siteHead: "Ollivo делает один человек",
+    siteLead: "Программа бесплатная, без рекламы и слежки. Если она вам пригодилась — помогите ей расти.",
+    boostyCard: "Подписка на развитие проекта — каждый месяц",
+    yoomoneyCard: "Разово, любой суммой, картой любого банка",
+    yoomoneyMark: "Ю",
+    yoomoneyName: "ЮMoney",
+    warnHtml: "Отправляйте <b>только указанную монету и только в указанной сети</b> — иначе перевод не дойдёт,\n        и вернуть его не получится. После вставки сверьте первые и последние 4 символа адреса.",
+    copy: "Скопировать адрес",
+  },
+  en: {
+    boosty: "a subscription for the project",
+    yoomoney: "one-time, by card (Russia)",
+    boostyAlt: "Boosty — a subscription for the project",
+    yoomoneyAlt: "YooMoney — one-time, by card (Russia)",
+    qr: "QR code",
+    min: "Minimum —",
+    network: (c) => c.network_en,
+    note: (c) => c.note_en,
+    title: "Support Ollivo",
+    lead: "Ollivo is made by one person. The app is free, with no ads and no tracking,\nand your conversations never leave your computer.\nIf it has been useful to you, help it grow.",
+    other: "[Русский](DONATE.ru.md) · **English**",
+    crypto: "Crypto",
+    warnMd: "> ⚠️ **Important.** Send **only the listed coin and only on the listed network** — otherwise the transfer won't arrive and can't be returned.\n> After pasting, check the first and last 4 characters of the address.",
+    goalsHead: "Where the money goes",
+    helpsHead: "Helping without money",
+    thanks: "Thank you! ♥",
+    goals: [
+      ["AMD and Intel graphics cards for testing.", "Right now the app works only with NVIDIA."],
+      ["Server and traffic.", "App updates are served from our own server."],
+      ["The ollivo.ru domain.", "A short address for the site and updates."],
+      ["Time.", "The more support, the sooner images, voice and video arrive."],
+    ],
+    helps: (link) => [
+      "Tell friends who wanted to try AI on their own computer about the app.",
+      `Found a bug — click “Report a problem” in the app or ${link("write on GitHub", `${repo}/issues/new/choose`)}.`,
+      `Star the ${link("repository on GitHub", repo)} — it helps others find it.`,
+    ],
+    readmeHead: "Support the project",
+    readmeLead: "Ollivo is made by one person. If the app has been useful, support its development:",
+    readmeCrypto: (coins) => `Crypto (${coins}) — addresses and QR codes on the **[Support](DONATE.md)** page.`,
+    eyebrow: "Support",
+    siteHead: "Ollivo is made by one person",
+    siteLead: "The app is free, with no ads and no tracking. If it has been useful to you, help it grow.",
+    boostyCard: "A monthly subscription for the project",
+    yoomoneyCard: "One-time, any amount, by card — convenient in Russia",
+    yoomoneyMark: "Y",
+    yoomoneyName: "YooMoney",
+    warnHtml: "Send <b>only the listed coin and only on the listed network</b> — otherwise the transfer won't arrive\n        and can't be returned. After pasting, check the first and last 4 characters of the address.",
+    copy: "Copy address",
+  },
+};
+for (const c of data.crypto) {
+  if (!c.network_en || (c.note && !c.note_en)) throw new Error(`У ${c.coin} в support.json нет network_en или note_en`);
+}
+
+// Кнопки: русские — boosty.svg, yoomoney.svg; английские — с суффиксом -en.
+for (const [lang, sfx] of [["ru", ""], ["en", "-en"]]) {
+  writeFileSync(join(dir, `boosty${sfx}.svg`), button("Boosty", L[lang].boosty, "#F15F2C"));
+  writeFileSync(join(dir, `yoomoney${sfx}.svg`), button(L[lang].yoomoneyName, L[lang].yoomoney, "#8B3FFD"));
+}
 
 // В QR — голый адрес, без «bitcoin:» и «ton://»: так его понимает любой кошелёк.
 // Белое поле вокруг кода — чтобы сканировался и в тёмной теме GitHub.
@@ -93,19 +187,26 @@ for (const c of data.crypto) {
   writeFileSync(join(dir, `${c.id}.svg`), svg);
 }
 
-const buttons = (h) =>
-  `<a href="${data.boosty}"><img src="site/support/boosty.svg" alt="Boosty — подписка на развитие" height="${h}"></a>&nbsp;&nbsp;` +
-  `<a href="${data.yoomoney}"><img src="site/support/yoomoney.svg" alt="ЮMoney — разово, картой любого банка" height="${h}"></a>`;
+const buttons = (lang, h) => {
+  const t = L[lang], sfx = lang === "en" ? "-en" : "";
+  return (
+    `<a href="${data.boosty}"><img src="site/support/boosty${sfx}.svg" alt="${t.boostyAlt}" height="${h}"></a>&nbsp;&nbsp;` +
+    `<a href="${data.yoomoney}"><img src="site/support/yoomoney${sfx}.svg" alt="${t.yoomoneyAlt}" height="${h}"></a>`
+  );
+};
+
+const extras = (lang, c) => [L[lang].note(c), c.min && `${L[lang].min} ${c.min}.`].filter(Boolean);
 
 // Предупреждение — обычной цитатой, а не плашкой [!WARNING]: у плашки заголовок всегда английский.
 // Адрес — в блоке кода: у такого блока GitHub сам показывает кнопку «скопировать».
-const cryptoRows = data.crypto
-  .map(
-    (c) => `<tr>
-<td width="176"><img src="site/support/${c.id}.svg" alt="QR-код ${esc(c.coin)}" width="160"></td>
+const cryptoRows = (lang) =>
+  data.crypto
+    .map(
+      (c) => `<tr>
+<td width="176"><img src="site/support/${c.id}.svg" alt="${L[lang].qr} ${esc(c.coin)}" width="160"></td>
 <td>
 
-**${c.coin}** · ${c.network}${[c.note, c.min && `Минимум — ${c.min}.`].filter(Boolean).map((t) => `<br>
+**${c.coin}** · ${L[lang].network(c)}${extras(lang, c).map((t) => `<br>
 <sub>${t}</sub>`).join("")}
 
 \`\`\`text
@@ -114,66 +215,57 @@ ${c.address}
 
 </td>
 </tr>`,
-  )
-  .join("\n");
+    )
+    .join("\n");
 
 const coins = data.crypto.map((c) => c.coin).join(", ");
-
-// Общий текст для GitHub и сайта. link — как оформить ссылку в нужном формате.
-const goals = [
-  ["Видеокарты AMD и Intel для проверки.", "Сейчас программа работает только с NVIDIA."],
-  ["Сервер и трафик.", "Обновления программы раздаются с нашего сервера."],
-  ["Домен ollivo.ru.", "Короткий адрес для сайта и обновлений."],
-  ["Время.", "Чем больше поддержки, тем быстрее выходят картинки, голос и видео."],
-];
-const helps = (link) => [
-  "Расскажите о программе знакомым, которым хотелось попробовать ИИ у себя на компьютере.",
-  `Нашли ошибку — нажмите в программе «Сообщить о проблеме» или ${link("напишите на GitHub", `${repo}/issues/new/choose`)}.`,
-  `Поставьте звезду ${link("репозиторию на GitHub", repo)} — так его чаще находят.`,
-];
 const mdLink = (t, u) => `[${t}](${u})`;
 const htmlLink = (t, u) => `<a href="${u}">${t}</a>`;
 
-const donate = `<!-- ${generated} -->
+for (const [lang, file] of [["ru", "DONATE.ru.md"], ["en", "DONATE.md"]]) {
+  const t = L[lang];
+  writeFileSync(
+    join(root, file),
+    `<!-- ${generated} -->
 
 <div align="center">
+
+${t.other}
 
 <img src="site/logo.svg" alt="" width="72">
 
-# Поддержать Ollivo
+# ${t.title}
 
-Ollivo делает один человек. Программа бесплатная, без рекламы и слежки,
-а переписка не уходит с вашего компьютера.
-Если она вам пригодилась — помогите ей расти.
+${t.lead}
 
-${buttons(64)}
+${buttons(lang, 64)}
 
 </div>
 
-## Криптовалюта
+## ${t.crypto}
 
-> ⚠️ **Важно.** На адрес отправляйте **только указанную монету и только в указанной сети** — иначе перевод не дойдёт, и вернуть его не получится.
-> После вставки сверьте первые и последние 4 символа адреса.
+${t.warnMd}
 
 <table>
-${cryptoRows}
+${cryptoRows(lang)}
 </table>
 
-## На что пойдут деньги
+## ${t.goalsHead}
 
-${goals.map(([t, d]) => `- **${t}** ${d}`).join("\n")}
+${t.goals.map(([a, b]) => `- **${a}** ${b}`).join("\n")}
 
-## Помочь можно и без денег
+## ${t.helpsHead}
 
-${helps(mdLink).map((t) => `- ${t}`).join("\n")}
+${t.helps(mdLink).map((x) => `- ${x}`).join("\n")}
 
 <div align="center">
 
-Спасибо! ♥
+${t.thanks}
 
 </div>
-`;
-writeFileSync(join(root, "DONATE.md"), donate);
+`,
+  );
+}
 
 // Блок между метками заменяется целиком; меток нет — падаем, а не дописываем куда попало.
 function replaceBlock(path, content, start, end) {
@@ -183,77 +275,89 @@ function replaceBlock(path, content, start, end) {
   writeFileSync(path, text.replace(re, () => content));
 }
 
-const readmeBlock = `<!-- support:start — ${generated} -->
-## Поддержать проект
+for (const [lang, file] of [["ru", "README.ru.md"], ["en", "README.md"]]) {
+  const t = L[lang];
+  replaceBlock(
+    join(root, file),
+    `<!-- support:start — ${generated} -->
+## ${t.readmeHead}
 
-Ollivo делает один человек. Если программа пригодилась — поддержите её развитие:
+${t.readmeLead}
 
-${buttons(56)}
+${buttons(lang, 56)}
 
-Криптовалюта (${coins}) — адреса и QR-коды на странице **[Поддержать](DONATE.md)**.
-<!-- support:end -->`;
-replaceBlock(join(root, "README.md"), readmeBlock, "<!-- support:start", "<!-- support:end -->");
+${t.readmeCrypto(coins)}
+<!-- support:end -->`,
+    "<!-- support:start",
+    "<!-- support:end -->",
+  );
+}
 
 // Раздел сайта — готовым HTML, а не скриптом из support.json: работает и без JS,
-// а адреса видны в том же диффе, что и в support.json.
-const coinCards = data.crypto
-  .map(
-    (c) => `        <article class="coin">
-          <img src="support/${c.id}.svg" alt="QR-код ${esc(c.coin)}" width="148" height="148" loading="lazy">
-          <h4>${esc(c.coin)} <span>${esc(c.network)}</span></h4>
-${[c.note, c.min && `Минимум — ${c.min}.`].filter(Boolean).map((t) => `          <p class="coin-note">${esc(t)}</p>`).join("\n")}
+// а адреса видны в том же диффе, что и в support.json. `up` — путь от страницы до site/.
+for (const [lang, page, up] of [["ru", "index.html", ""], ["en", "en/index.html", "../"]]) {
+  const t = L[lang];
+  const coinCards = data.crypto
+    .map(
+      (c) => `        <article class="coin">
+          <img src="${up}support/${c.id}.svg" alt="${t.qr} ${esc(c.coin)}" width="148" height="148" loading="lazy">
+          <h4>${esc(c.coin)} <span>${esc(t.network(c))}</span></h4>
+${extras(lang, c).map((x) => `          <p class="coin-note">${esc(x)}</p>`).join("\n")}
           <code class="addr">${esc(c.address)}</code>
-          <button class="btn btn-ghost copy" type="button" data-copy="${esc(c.address)}">Скопировать адрес</button>
+          <button class="btn btn-ghost copy" type="button" data-copy="${esc(c.address)}">${t.copy}</button>
         </article>`,
-  )
-  .join("\n");
-
-const siteBlock = `<!-- support:start — ${generated} -->
+    )
+    .join("\n");
+  replaceBlock(
+    join(root, "site", page),
+    `<!-- support:start — ${generated} -->
 <section id="support" class="support">
   <div class="wrap">
     <div class="section-head reveal">
-      <span class="eyebrow">Поддержать</span>
-      <h2>Ollivo делает один человек</h2>
-      <p>Программа бесплатная, без рекламы и слежки. Если она вам пригодилась — помогите ей расти.</p>
+      <span class="eyebrow">${t.eyebrow}</span>
+      <h2>${t.siteHead}</h2>
+      <p>${t.siteLead}</p>
     </div>
     <div class="give">
       <a class="give-card reveal" href="${data.boosty}" style="--brand:#F15F2C">
         <span class="give-mark" aria-hidden="true">B</span>
-        <span><b>Boosty</b><span>Подписка на развитие проекта — каждый месяц</span></span>
+        <span><b>Boosty</b><span>${t.boostyCard}</span></span>
         <span class="give-go" aria-hidden="true">→</span>
       </a>
       <a class="give-card reveal" href="${data.yoomoney}" style="--brand:#8B3FFD">
-        <span class="give-mark" aria-hidden="true">Ю</span>
-        <span><b>ЮMoney</b><span>Разово, любой суммой, картой любого банка</span></span>
+        <span class="give-mark" aria-hidden="true">${t.yoomoneyMark}</span>
+        <span><b>${t.yoomoneyName}</b><span>${t.yoomoneyCard}</span></span>
         <span class="give-go" aria-hidden="true">→</span>
       </a>
     </div>
     <div class="coins reveal">
-      <h3>Криптовалюта</h3>
-      <p class="coins-warn">Отправляйте <b>только указанную монету и только в указанной сети</b> — иначе перевод не дойдёт,
-        и вернуть его не получится. После вставки сверьте первые и последние 4 символа адреса.</p>
+      <h3>${t.crypto}</h3>
+      <p class="coins-warn">${t.warnHtml}</p>
       <div class="coin-grid">
 ${coinCards}
       </div>
     </div>
     <div class="give-more">
       <article class="card reveal">
-        <h3>На что пойдут деньги</h3>
+        <h3>${t.goalsHead}</h3>
         <ul>
-${goals.map(([t, d]) => `          <li><b>${t}</b> ${d}</li>`).join("\n")}
+${t.goals.map(([a, b]) => `          <li><b>${a}</b> ${b}</li>`).join("\n")}
         </ul>
       </article>
       <article class="card reveal">
-        <h3>Помочь можно и без денег</h3>
+        <h3>${t.helpsHead}</h3>
         <ul>
-${helps(htmlLink).map((t) => `          <li>${t}</li>`).join("\n")}
+${t.helps(htmlLink).map((x) => `          <li>${x}</li>`).join("\n")}
         </ul>
       </article>
     </div>
   </div>
 </section>
-<!-- support:end -->`;
-replaceBlock(join(root, "site", "index.html"), siteBlock, "<!-- support:start", "<!-- support:end -->");
+<!-- support:end -->`,
+    "<!-- support:start",
+    "<!-- support:end -->",
+  );
+}
 
 // В «Sponsor» у GitHub нет Boosty и ЮMoney среди своих площадок — только ссылки custom (до четырёх).
 const funding = `# ${generated}
@@ -264,4 +368,4 @@ custom:
 `;
 writeFileSync(join(root, ".github", "FUNDING.yml"), funding);
 
-console.log(`Готово: ${data.crypto.length} QR, DONATE.md, README.md, site/index.html, .github/FUNDING.yml`);
+console.log(`Готово: ${data.crypto.length} QR, DONATE.md и DONATE.ru.md, README.md и README.ru.md, site/index.html и site/en/index.html, .github/FUNDING.yml`);

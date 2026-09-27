@@ -46,25 +46,30 @@ pub fn has_vulkan() -> bool {
 }
 
 pub fn checks(hw: &Hardware) -> Vec<Check> {
-    let gb = |b: u64| format!("{:.1}", b as f64 / GIB as f64).replace('.', ",");
+    let gb = |b: u64| crate::i18n::decimal(format!("{:.1} {}", b as f64 / GIB as f64, t!("ГБ", "GB")));
+    let title_gpu = t!("Видеокарта", "Graphics card");
     let mut out = Vec::new();
 
     out.push(match &hw.gpu {
         Some(g) => Check {
             id: "gpu",
-            title: "Видеокарта",
+            title: title_gpu,
             status: if g.vram_total >= 4 * GIB { Status::Ok } else { Status::Warn },
             message: if g.vram_total >= 4 * GIB {
-                format!("{}, {} ГБ", g.name, gb(g.vram_total))
+                format!("{}, {}", g.name, gb(g.vram_total))
             } else {
-                format!("{}, {} ГБ — подойдут только маленькие модели", g.name, gb(g.vram_total))
+                tf!("{}, {} — подойдут только маленькие модели", "{}, {} — only small models will fit", g.name, gb(g.vram_total))
             },
         },
         None => Check {
             id: "gpu",
-            title: "Видеокарта",
+            title: title_gpu,
             status: Status::Warn,
-            message: "NVIDIA не найдена. Чат будет работать, но медленнее, картинки и видео — вряд ли".into(),
+            message: t!(
+                "NVIDIA не найдена. Чат будет работать, но медленнее, картинки и видео — вряд ли",
+                "No NVIDIA card found. Chat will work, but slower; images and video — unlikely"
+            )
+            .into(),
         },
     });
 
@@ -72,35 +77,43 @@ pub fn checks(hw: &Hardware) -> Vec<Check> {
         let ok = hw.cuda_driver >= 12040;
         out.push(Check {
             id: "driver",
-            title: "Драйвер NVIDIA",
+            title: t!("Драйвер NVIDIA", "NVIDIA driver"),
             status: if ok { Status::Ok } else { Status::Warn },
             message: if ok {
-                format!("{}, свежий", hw.driver)
+                tf!("{}, свежий", "{}, up to date", hw.driver)
             } else {
-                format!("{} — устарел, обновите через приложение NVIDIA или сайт nvidia.com", hw.driver)
+                tf!(
+                    "{} — устарел, обновите через приложение NVIDIA или сайт nvidia.com",
+                    "{} — outdated, update it via the NVIDIA app or nvidia.com",
+                    hw.driver
+                )
             },
         });
     }
 
     out.push(if has_vulkan() {
-        Check { id: "vulkan", title: "Vulkan", status: Status::Ok, message: "есть".into() }
+        Check { id: "vulkan", title: "Vulkan", status: Status::Ok, message: t!("есть", "present").into() }
     } else {
         Check {
             id: "vulkan",
             title: "Vulkan",
             status: Status::Warn,
-            message: "нет — обычно ставится с драйвером видеокарты. Чат поставим на CUDA".into(),
+            message: t!(
+                "нет — обычно ставится с драйвером видеокарты. Чат поставим на CUDA",
+                "missing — it usually comes with the graphics driver. We'll set up chat on CUDA"
+            )
+            .into(),
         }
     });
 
     out.push(Check {
         id: "ram",
-        title: "Оперативная память",
+        title: t!("Оперативная память", "Memory (RAM)"),
         status: if hw.ram_total >= 15 * GIB { Status::Ok } else { Status::Warn },
         message: if hw.ram_total >= 15 * GIB {
-            format!("{} ГБ", gb(hw.ram_total))
+            gb(hw.ram_total)
         } else {
-            format!("{} ГБ — большие модели не поместятся, подберём поменьше", gb(hw.ram_total))
+            tf!("{} — большие модели не поместятся, подберём поменьше", "{} — big models won't fit, we'll pick smaller ones", gb(hw.ram_total))
         },
     });
 
@@ -141,11 +154,15 @@ pub fn disk_choices(disks: &[Disk]) -> Vec<DiskChoice> {
 pub fn prepare_dir(path: &Path) -> Result<(), String> {
     let s = path.to_string_lossy();
     if crate::hardware::is_risky_path(&s) {
-        return Err("в пути не должно быть русских букв и пробелов — иначе часть движков не заработает".into());
+        return Err(t!(
+            "в пути не должно быть русских букв и пробелов — иначе часть движков не заработает",
+            "the path must not contain non-English letters or spaces — otherwise some engines won't work"
+        )
+        .into());
     }
-    std::fs::create_dir_all(path).map_err(|e| format!("не получилось создать {s}: {e}"))?;
+    std::fs::create_dir_all(path).map_err(|e| tf!("не получилось создать {s}: {e}", "could not create {s}: {e}"))?;
     let probe = path.join(".ollivo-write-test");
-    std::fs::write(&probe, b"ok").map_err(|e| format!("в папку {s} нельзя писать: {e}"))?;
+    std::fs::write(&probe, b"ok").map_err(|e| tf!("в папку {s} нельзя писать: {e}", "can't write to the folder {s}: {e}"))?;
     let _ = std::fs::remove_file(probe);
     Ok(())
 }
@@ -164,9 +181,9 @@ pub fn run_vc_redist(exe: &Path) -> Result<(), String> {
     match status.code() {
         Some(0 | 3010 | 1638) => Ok(()),
         // Отказ в окне UAC: Start-Process падает, PowerShell возвращает 1.
-        Some(1) => Err("установка отменена — Windows не получила разрешения".into()),
-        Some(c) => Err(format!("установщик Microsoft завершился с кодом {c}")),
-        None => Err("установщик Microsoft прерван".into()),
+        Some(1) => Err(t!("установка отменена — Windows не получила разрешения", "installation cancelled — Windows did not get permission").into()),
+        Some(c) => Err(tf!("установщик Microsoft завершился с кодом {c}", "the Microsoft installer exited with code {c}")),
+        None => Err(t!("установщик Microsoft прерван", "the Microsoft installer was interrupted").into()),
     }
 }
 

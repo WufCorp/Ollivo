@@ -71,16 +71,46 @@ pub struct InstallProgress {
     pub speed: f64,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error(transparent)]
-    Download(#[from] download::Error),
-    #[error("архив {0} не распаковался: {1}")]
+    Download(download::Error),
     Unpack(String, String),
-    #[error("в архиве нет {0}")]
     NoExe(String),
-    #[error("диск: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+}
+
+// Вручную, а не `thiserror`: текст зависит от языка программы.
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Download(e) => e.fmt(f),
+            Error::Unpack(a, e) => f.write_str(&tf!("архив {a} не распаковался: {e}", "archive {a} did not unpack: {e}")),
+            Error::NoExe(x) => f.write_str(&tf!("в архиве нет {x}", "{x} is not in the archive")),
+            Error::Io(e) => f.write_str(&tf!("диск: {e}", "disk: {e}")),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Download(e) => e.source(),
+            Error::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<download::Error> for Error {
+    fn from(e: download::Error) -> Self {
+        Error::Download(e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
 }
 
 pub fn engine_dir(root: &Path, engine: &Engine, build: Build) -> PathBuf {

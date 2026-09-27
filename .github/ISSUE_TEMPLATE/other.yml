@@ -1,5 +1,5 @@
-name: Другое
-description: "Всё остальное: что-то работает не так, как вы ждали"
+name: Другое / Other
+description: "Всё остальное: что-то работает не так, как вы ждали · Anything else: something works differently than you expected"
 title: "Другое: "
 labels: ["отзыв"]
 body:
@@ -9,33 +9,38 @@ body:
         Спасибо, что сообщаете! Проще всего — кнопка «Сообщить о проблеме» в Ollivo
         (Настройки или «Не помогло — сообщить» под ошибкой): она заполнит эту форму сама
         и сохранит файл отчёта в «Загрузки». Перетащите этот файл в поле «Отчёт» ниже.
+
+        Thanks for reporting! The easiest way is the “Report a problem” button in Ollivo
+        (Settings, or “Didn't help — report it” under an error): it fills in this form itself
+        and saves a report file to Downloads. Drag that file into the “Report” field below.
+        Writing in English is fine.
   - type: textarea
     id: what
     attributes:
-      label: Что случилось
-      description: Что вы делали и что пошло не так. Можно своими словами.
+      label: Что случилось / What happened
+      description: Что вы делали и что пошло не так. Можно своими словами. · What you were doing and what went wrong, in your own words.
     validations:
       required: true
   - type: input
     id: gpu
     attributes:
-      label: Видеокарта
-      description: Например, «GeForce GTX 1080» или «RTX 4060 Laptop». Программа подставит сама.
+      label: Видеокарта / Graphics card
+      description: Например, «GeForce GTX 1080» или «RTX 4060 Laptop». Программа подставит сама. · E.g. “GeForce GTX 1080”. The app fills it in.
     validations:
       required: false
   - type: input
     id: version
     attributes:
-      label: Версия Ollivo
-      description: Настройки → Обновления. Программа подставит сама.
+      label: Версия Ollivo / Ollivo version
+      description: Настройки → Обновления. Программа подставит сама. · Settings → Updates. The app fills it in.
   - type: textarea
     id: summary
     attributes:
-      label: Сводка
-      description: Коротко о компьютере — заполняет программа.
+      label: Сводка / Summary
+      description: Коротко о компьютере — заполняет программа. · A short summary of the computer — filled in by the app.
       render: text
   - type: textarea
     id: report
     attributes:
-      label: Отчёт
-      description: Перетащите сюда файл «Ollivo-отчёт-….txt» из папки «Загрузки». Ваших разговоров и файлов в нём нет — можно открыть Блокнотом и проверить.
+      label: Отчёт / Report
+      description: Перетащите сюда файл «Ollivo-отчёт-….txt» («Ollivo-report-….txt») из папки «Загрузки». Ваших разговоров и файлов в нём нет — можно открыть Блокнотом и проверить. · Drag the “Ollivo-report-….txt” file here from Downloads. Your conversations and files are not in it — open it in Notepad to check.

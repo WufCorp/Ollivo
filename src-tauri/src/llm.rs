@@ -84,7 +84,7 @@ fn args(cfg: &Config, port: u16) -> Vec<String> {
 }
 
 /// Ошибка `start`, когда загрузку отменили (`cancel`): движок уже остановлен.
-pub const CANCELLED: &str = "отменено";
+pub const CANCELLED: &str = "отменено"; // служебное слово, человеку не показывается
 
 /// Запускает llama-server и ждёт загрузки модели. `cancel` прерывает ожидание
 /// в любой момент — большая модель грузится минутами, и «Остановить» не должно ждать.
@@ -96,7 +96,7 @@ pub async fn start(
     cancel: &CancellationToken,
 ) -> Result<Llm, String> {
     if !cfg.model.is_file() {
-        return Err(format!("файл модели не найден: {}", cfg.model.display()));
+        return Err(tf!("файл модели не найден: {}", "model file not found: {}", cfg.model.display()));
     }
     crate::vcrt::prepare(&engine.exe)?;
     let port = process::free_port().map_err(|e| e.to_string())?;
@@ -106,7 +106,7 @@ pub async fn start(
         log: logs.join("llama-server.log"),
     };
     let started = Instant::now();
-    let handle = sup.spawn(&spec).map_err(|e| format!("движок не запустился: {e}"))?;
+    let handle = sup.spawn(&spec).map_err(|e| tf!("движок не запустился: {e}", "the engine did not start: {e}"))?;
     let health = format!("http://127.0.0.1:{port}/health");
     let ready = tokio::select! {
         r = process::wait_ready(&handle, &health, LOAD_TIMEOUT) => r.map_err(|e| e.to_string()),
@@ -184,8 +184,12 @@ impl Msg {
         for img in images {
             match img.path.as_deref().map(crate::attach::image_data_url) {
                 Some(Ok(url)) if vision => parts.push(serde_json::json!({"type": "image_url", "image_url": {"url": url}})),
-                Some(Ok(_)) => notes.push_str(&format!("[картинка «{}» — эта модель картинок не видит]\n", img.name)),
-                _ => notes.push_str(&format!("[картинка «{}» потерялась]\n", img.name)),
+                Some(Ok(_)) => notes.push_str(&tf!(
+                    "[картинка «{}» — эта модель картинок не видит]\n",
+                    "[image “{}” — this model can't see images]\n",
+                    img.name
+                )),
+                _ => notes.push_str(&tf!("[картинка «{}» потерялась]\n", "[image “{}” is missing]\n", img.name)),
             }
         }
         parts.insert(0, serde_json::json!({"type": "text", "text": format!("{notes}{text}")}));
@@ -253,7 +257,7 @@ pub async fn chat(
     // идёт уже по новой.
     let mut all = crate::presets::prepare(role, messages);
     // Переводчику папка не нужна: он переводит только последнее сообщение.
-    let project = project.filter(|_| !role.prompt.contains("{target}"));
+    let project = project.filter(|_| !role.prompt().contains("{target}"));
     if let Some(p) = &project {
         let note = p.tools.prompt(p.can_call);
         match all.first_mut() {
@@ -374,13 +378,17 @@ async fn round_trip(
         .header("content-type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("движок не отвечает: {e}"))?;
+        .map_err(|e| tf!("движок не отвечает: {e}", "the engine is not responding: {e}"))?;
     if !resp.status().is_success() {
         // В теле — причина: например, `exceed_context_size_error`, когда разговор
         // перерос память модели. По ней `trouble::chat` подбирает понятный текст.
         let code = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("движок ответил ошибкой {code}: {}", body.chars().take(500).collect::<String>()));
+        return Err(tf!(
+            "движок ответил ошибкой {code}: {}",
+            "the engine returned error {code}: {}",
+            body.chars().take(500).collect::<String>()
+        ));
     }
 
     let mut stream = resp.bytes_stream();
@@ -393,7 +401,7 @@ async fn round_trip(
             _ = cancel.cancelled() => return Ok(round), // ответ обрываем, что успели — уже показано
         };
         let Some(chunk) = chunk else { break };
-        let chunk = chunk.map_err(|e| format!("связь с движком оборвалась: {e}"))?;
+        let chunk = chunk.map_err(|e| tf!("связь с движком оборвалась: {e}", "connection to the engine was lost: {e}"))?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
         // Server-sent events: события разделены пустой строкой, данные — в строках `data: `.
         while let Some(end) = buf.find("\n\n") {
@@ -493,9 +501,9 @@ pub async fn ask(port: u16, prompt: &str, max_tokens: u32) -> Result<Answer, Str
         .header("content-type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("движок не отвечает: {e}"))?;
+        .map_err(|e| tf!("движок не отвечает: {e}", "the engine is not responding: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("движок ответил ошибкой {}", resp.status().as_u16()));
+        return Err(tf!("движок ответил ошибкой {}", "the engine returned error {}", resp.status().as_u16()));
     }
     let v: serde_json::Value =
         serde_json::from_slice(&resp.bytes().await.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;

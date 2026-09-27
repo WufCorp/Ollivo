@@ -1,3 +1,5 @@
+#[macro_use]
+mod i18n;
 mod attach;
 mod media;
 mod vision;
@@ -97,11 +99,15 @@ impl Core {
     fn start(&self, id: &str) -> Result<CancellationToken, String> {
         let mut running = self.running.lock().unwrap();
         if running.contains_key(id) {
-            return Err("уже идёт".into());
+            return Err(t!("уже идёт", "already running").into());
         }
         // Загрузка во время переноса писала бы в старую папку, которую перенос потом удалит.
         if running.contains_key(MOVE_TASK) {
-            return Err("идёт перенос папки программы — дождитесь, пока он закончится".into());
+            return Err(t!(
+                "идёт перенос папки программы — дождитесь, пока он закончится",
+                "the program folder is being moved — wait until it finishes"
+            )
+            .into());
         }
         let cancel = CancellationToken::new();
         running.insert(id.to_string(), cancel.clone());
@@ -215,6 +221,7 @@ fn settings_reset(app: AppHandle, core: CoreState<'_>) -> Result<SettingsView, S
     net::secret::store(net::secret::HF_TOKEN, "")?;
     let downloader = build_downloader(&fresh)?;
     apply_theme(&app, fresh.theme);
+    i18n::set(fresh.language);
     core.settings.set(fresh).map_err(|e| e.to_string())?;
     *core.downloader.write().unwrap() = Arc::new(downloader);
     Ok(settings_get(core))
@@ -247,8 +254,19 @@ fn settings_save(
     }
     let downloader = build_downloader(&settings)?;
     apply_theme(&app, settings.theme);
+    i18n::set(settings.language);
     core.settings.set(settings).map_err(|e| e.to_string())?;
     *core.downloader.write().unwrap() = Arc::new(downloader);
+    Ok(())
+}
+
+/// Язык — сразу, без остальных настроек: окно меняет его отдельным переключателем.
+#[tauri::command]
+fn language_set(core: CoreState<'_>, language: i18n::Lang) -> Result<(), String> {
+    let mut s = core.settings.get();
+    s.language = language;
+    core.settings.set(s).map_err(|e| e.to_string())?;
+    i18n::set(language);
     Ok(())
 }
 
@@ -328,7 +346,7 @@ async fn vcredist_install(core: CoreState<'_>) -> Result<(), String> {
     core.downloader()
         .download(&req, &CancellationToken::new(), &|_| {})
         .await
-        .map_err(|e| format!("не скачался установщик Microsoft: {e}"))?;
+        .map_err(|e| tf!("не скачался установщик Microsoft: {e}", "the Microsoft installer did not download: {e}"))?;
     let exe = dest.clone();
     let res = tauri::async_runtime::spawn_blocking(move || setup::run_vc_redist(&exe))
         .await
@@ -336,7 +354,11 @@ async fn vcredist_install(core: CoreState<'_>) -> Result<(), String> {
     let _ = std::fs::remove_file(&dest);
     res?;
     if !setup::has_vc_runtime() {
-        return Err("установщик отработал, но библиотек всё ещё нет — перезагрузите компьютер".into());
+        return Err(t!(
+            "установщик отработал, но библиотек всё ещё нет — перезагрузите компьютер",
+            "the installer finished, but the libraries are still missing — restart the computer"
+        )
+        .into());
     }
     Ok(())
 }
@@ -361,7 +383,7 @@ struct Finished<T: Clone> {
 /// Итог загрузки или установки в окно; ошибка (кроме паузы) — ещё и в журнал для отчёта.
 fn emit_finished<T: Clone + serde::Serialize>(app: &AppHandle, event: &str, f: Finished<T>) {
     if let Some(e) = f.error.as_deref().filter(|e| *e != "paused") {
-        let what = if event.starts_with("engine") { "Установка движка" } else { "Загрузка" };
+        let what = if event.starts_with("engine") { t!("Установка движка", "Engine install") } else { t!("Загрузка", "Download") };
         app.state::<Arc<Core>>().note(&format!("{what} {}", f.id), e, "");
     }
     let _ = app.emit(event, f);
@@ -456,7 +478,7 @@ async fn storage_usage(core: CoreState<'_>) -> Result<StorageView, String> {
 #[tauri::command]
 async fn storage_clean(core: CoreState<'_>) -> Result<u64, String> {
     if !core.running.lock().unwrap().is_empty() {
-        return Err("идут загрузки — дождитесь их или поставьте на паузу".into());
+        return Err(t!("идут загрузки — дождитесь их или поставьте на паузу", "downloads are running — wait for them or pause them").into());
     }
     let dir = core.data_dir();
     tauri::async_runtime::spawn_blocking(move || storage::clean(&dir)).await.map_err(|e| e.to_string())
@@ -480,7 +502,7 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
     let new = storage::target_dir(&picked);
     storage::check_target(&old, &new)?;
     if !core.running.lock().unwrap().is_empty() {
-        return Err("идут загрузки — дождитесь их или поставьте на паузу".into());
+        return Err(t!("идут загрузки — дождитесь их или поставьте на паузу", "downloads are running — wait for them or pause them").into());
     }
     let need = {
         let (old, new) = (old.clone(), new.clone());
@@ -494,8 +516,9 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
     // Гигабайт запаса — чтобы не забить диск Windows до отказа.
     let (size, free, same) = need;
     if !same && size + (1 << 30) > free {
-        return Err(format!(
+        return Err(tf!(
             "на новом диске не хватит места: нужно {}, свободно {}",
+            "not enough space on the new disk: {} needed, {} free",
             probe::fmt_bytes(size + (1 << 30)),
             probe::fmt_bytes(free)
         ));
@@ -521,14 +544,14 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
             core.library.rebase(&old, &new)?;
             let mut s = core.settings.get();
             s.data_dir = Some(new.clone());
-            core.settings.set(s).map_err(|e| format!("не записать настройки: {e}"))
+            core.settings.set(s).map_err(|e| tf!("не записать настройки: {e}", "could not save settings: {e}"))
         });
         core.finish(MOVE_TASK);
         let moved = match res {
             Ok(()) => Moved { dir: Some(new), error: None, stopped },
             Err(e) => {
-                if e != "отменено" {
-                    core.note("Перенос папки программы", &e, &e);
+                if e != llm::CANCELLED {
+                    core.note(t!("Перенос папки программы", "Moving the program folder"), &e, &e);
                 }
                 Moved { dir: None, error: Some(e), stopped }
             }
@@ -566,7 +589,7 @@ struct EngineStatus {
 
 #[tauri::command]
 async fn engine_status(core: CoreState<'_>, id: String) -> Result<EngineStatus, String> {
-    let engine = core.manifest.engine(&id).ok_or("нет такого движка")?;
+    let engine = core.manifest.engine(&id).ok_or(t!("нет такого движка", "no such engine"))?;
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
     let pick = engine.pick(hw.cuda_build, setup::has_vulkan(), None);
     Ok(EngineStatus {
@@ -595,11 +618,14 @@ async fn engine_install(
     id: String,
     build: Option<hardware::Build>,
 ) -> Result<(), String> {
-    let engine = core.manifest.engine(&id).ok_or("нет такого движка")?.clone();
+    let engine = core.manifest.engine(&id).ok_or(t!("нет такого движка", "no such engine"))?.clone();
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
     let chosen = engine
         .pick(hw.cuda_build, setup::has_vulkan(), build)
-        .ok_or("нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan")?
+        .ok_or(t!(
+            "нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan",
+            "no build for this PC: an NVIDIA graphics card or Vulkan is required"
+        ))?
         .clone();
     let task = format!("engine:{id}");
     let cancel = core.start(&task)?;
@@ -623,7 +649,7 @@ async fn engine_install(
 /// Чинит ту сборку текущей версии, что стоит; не стоит ни одной — ставит сборку для этого ПК.
 #[tauri::command]
 async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Result<(), String> {
-    let engine = core.manifest.engine(&id).ok_or("нет такого движка")?.clone();
+    let engine = core.manifest.engine(&id).ok_or(t!("нет такого движка", "no such engine"))?.clone();
     let root = core.data_dir();
     let current = engines::installed(&root, &id).into_iter().find(|i| i.version == engine.version);
     let chosen = match current.and_then(|i| engine.builds.iter().find(|b| b.build == i.build)) {
@@ -632,7 +658,10 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
             let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
             engine
                 .pick(hw.cuda_build, setup::has_vulkan(), None)
-                .ok_or("нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan")?
+                .ok_or(t!(
+            "нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan",
+            "no build for this PC: an NVIDIA graphics card or Vulkan is required"
+        ))?
                 .clone()
         }
     };
@@ -797,7 +826,7 @@ fn model_layers(core: &Core, model: &std::path::Path) -> Option<u32> {
 
 fn emit_llm(app: &AppHandle, s: LlmState) {
     if let Some(p) = &s.problem {
-        app.state::<Arc<Core>>().note("Модель", &p.text, &p.details);
+        app.state::<Arc<Core>>().note(t!("Модель", "Model"), &p.text, &p.details);
     }
     let _ = app.emit("llm://state", s);
 }
@@ -812,11 +841,11 @@ fn model_dest(root: &std::path::Path, repo: &str, name: &str) -> Result<PathBuf,
             && !s.starts_with('.')
             && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
     };
-    let (author, model) = repo.split_once('/').ok_or("непонятный репозиторий")?;
+    let (author, model) = repo.split_once('/').ok_or(t!("непонятный репозиторий", "unrecognized repository"))?;
     // Файл может лежать в подпапке репозитория — берём только имя.
     let file = name.rsplit('/').next().unwrap_or(name);
     if !plain(author) || !plain(model) || !plain(file) || !file.to_ascii_lowercase().ends_with(".gguf") {
-        return Err("непонятное имя файла".into());
+        return Err(t!("непонятное имя файла", "unrecognized file name").into());
     }
     Ok(root.join("models").join(author).join(model).join(file))
 }
@@ -865,8 +894,8 @@ async fn catalog_picks(core: CoreState<'_>) -> Result<Vec<PickView>, String> {
                 id: m.id.clone(),
                 title: m.title.clone(),
                 vendor: m.vendor.clone(),
-                about: m.about.clone(),
-                tags: m.tags.iter().cloned().chain(m.vision.then(|| "видит картинки".into())).collect(),
+                about: m.about().to_string(),
+                tags: m.tags().iter().cloned().chain(m.vision.then(|| t!("видит картинки", "sees images").into())).collect(),
                 license: m.license.clone(),
                 repo: m.repo.clone(),
                 params: m.params,
@@ -1065,14 +1094,14 @@ fn local_seer(core: &Core, current: &std::path::Path, hw: &hardware::Hardware) -
 /// id задачи — `vision:<путь модели>`. В библиотеку файл не попадает: отдельно он не запускается.
 #[tauri::command]
 async fn vision_download(app: AppHandle, core: CoreState<'_>, model: PathBuf) -> Result<String, String> {
-    let repo = core.library.find(&model).and_then(|e| e.repo).ok_or("неизвестно, откуда скачана модель")?;
+    let repo = core.library.find(&model).and_then(|e| e.repo).ok_or(t!("неизвестно, откуда скачана модель", "unknown where the model was downloaded from"))?;
     let base = core.settings.get().hf.base()?;
     let p = catalog::projector(core.downloader().client(), &base, &hf::load_token(), &repo)
         .await?
-        .ok_or("у этой модели нет зрения")?;
+        .ok_or(t!("у этой модели нет зрения", "this model has no vision"))?;
     // Имя пришло с чужого сервера: проверяем тем же способом, что и модели.
     let file = model_dest(&core.data_dir(), &repo, &p.name)?;
-    let dest = model.parent().ok_or("непонятная папка модели")?.join(file.file_name().unwrap());
+    let dest = model.parent().ok_or(t!("непонятная папка модели", "unrecognized model folder"))?.join(file.file_name().unwrap());
     let request = download::Request::new(vec![hf::file_url(&base, &repo, "main", &p.name)], dest.clone(), p.sha256);
     let id = format!("vision:{}", model.display());
     let cancel = core.start(&id)?;
@@ -1181,10 +1210,10 @@ fn speech_model_download(app: AppHandle, core: CoreState<'_>) -> Result<String, 
 
 /// Движок и модель распознавания; ошибка — если что-то не поставлено.
 fn speech_parts(core: &Core) -> Result<(PathBuf, PathBuf), String> {
-    let exe = ready_engine(core, media::WHISPER).ok_or("распознавание речи не установлено")?.exe;
+    let exe = ready_engine(core, media::WHISPER).ok_or(t!("распознавание речи не установлено", "speech recognition is not installed"))?.exe;
     let model = speech::model_path(&core.data_dir());
     if !model.is_file() {
-        return Err("распознавание речи не установлено".into());
+        return Err(t!("распознавание речи не установлено", "speech recognition is not installed").into());
     }
     Ok((exe, model))
 }
@@ -1220,7 +1249,7 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     // M4A, OPUS, видео: звук достаёт ffmpeg во временный WAV — whisper их не читает.
     let wav = if media::parts_for(&path).contains(&media::FFMPEG) {
-        let ffmpeg = ready_engine(&core, media::FFMPEG).ok_or("чтение таких записей не установлено")?.exe;
+        let ffmpeg = ready_engine(&core, media::FFMPEG).ok_or(t!("чтение таких записей не установлено", "reading such recordings is not installed"))?.exe;
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
         let wav = core.data_dir().join("downloads").join(format!("speech-{stamp}.wav"));
         std::fs::create_dir_all(wav.parent().unwrap()).map_err(|e| e.to_string())?;
@@ -1239,7 +1268,7 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
     }
     let text = text?;
     if text.trim().is_empty() {
-        return Err("в записи не нашлось речи".into());
+        return Err(t!("в записи не нашлось речи", "no speech found in the recording").into());
     }
     let mut a = attach::Attachment {
         name,
@@ -1270,13 +1299,15 @@ fn speech_stop(core: CoreState<'_>) {
 async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
     let core = core.inner().clone();
     let model = core.llm.lock().await.as_ref().map(|l| {
-        format!(
+        let yes = |b: bool| if b { t!("да", "yes") } else { t!("нет", "no") };
+        tf!(
             "{}, память разговора {}, слоёв на видеокарте {}, зрение: {}, инструменты: {}",
+            "{}, conversation memory {}, layers on GPU {}, vision: {}, tools: {}",
             l.model.display(),
             l.ctx,
             l.gpu_layers,
-            if l.vision { "да" } else { "нет" },
-            if l.tools { "да" } else { "нет" }
+            yes(l.vision),
+            yes(l.tools)
         )
     });
     tauri::async_runtime::spawn_blocking(move || {
@@ -1294,7 +1325,7 @@ async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
                 sysinfo::System::kernel_version().unwrap_or_default()
             ),
             cpu: sys.cpus().first().map_or(String::new(), |c| c.brand().trim().to_string())
-                + &format!(", ядер {}", sysinfo::System::physical_core_count().unwrap_or(0)),
+                + &tf!(", ядер {}", ", {} cores", sysinfo::System::physical_core_count().unwrap_or(0)),
             hardware: Some(hardware::detect()),
             vulkan: setup::has_vulkan(),
             vc_runtime: setup::has_vc_runtime(),
@@ -1303,7 +1334,7 @@ async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
             settings: serde_json::to_value(&settings).unwrap_or_default(),
             logs: ["llama-server.log", "llama-server.prev.log"]
                 .iter()
-                .map(|n| (n.trim_end_matches(".log").replace(".prev", ", прошлый запуск"), logs.join(n)))
+                .map(|n| (n.trim_end_matches(".log").replace(".prev", t!(", прошлый запуск", ", previous run")), logs.join(n)))
                 .collect(),
             problems: core.problems.clone(),
             data_dir: root,
@@ -1322,7 +1353,7 @@ async fn report_send(app: AppHandle, kind: report::Kind, what: String, report: r
     let now = std::time::SystemTime::now();
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
     let file = dir.join(report::file_name(now));
-    std::fs::write(&file, report.full.replace('\n', "\r\n")).map_err(|e| format!("не удалось сохранить отчёт: {e}"))?;
+    std::fs::write(&file, report.full.replace('\n', "\r\n")).map_err(|e| tf!("не удалось сохранить отчёт: {e}", "could not save the report: {e}"))?;
     let gpu = tauri::async_runtime::spawn_blocking(hardware::detect)
         .await
         .ok()
@@ -1330,7 +1361,7 @@ async fn report_send(app: AppHandle, kind: report::Kind, what: String, report: r
         .unwrap_or_default();
     let url = report::issue_url(kind, &what, &report.summary, env!("CARGO_PKG_VERSION"), &gpu);
     let _ = app.opener().reveal_item_in_dir(&file);
-    app.opener().open_url(url, None::<&str>).map_err(|e| format!("не удалось открыть браузер: {e}"))?;
+    app.opener().open_url(url, None::<&str>).map_err(|e| tf!("не удалось открыть браузер: {e}", "could not open the browser: {e}"))?;
     Ok(file)
 }
 
@@ -1500,7 +1531,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version));
     // Без движка — не ошибка вызова, а состояние с кнопкой «Установить движок».
     let Some(engine) = engine else {
-        let p = trouble::start("движок чата не установлен", can_lighter);
+        let p = trouble::start(trouble::NO_ENGINE, can_lighter);
         emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
         return Ok(());
     };
@@ -1508,10 +1539,10 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
     // которую перенос потом удаляет.
     if core.running.lock().unwrap().contains_key(MOVE_TASK) {
         let p = trouble::Problem {
-            text: "Сейчас переносится папка программы.".into(),
-            hint: Some("Модель можно будет запустить, когда перенос закончится.".into()),
+            text: t!("Сейчас переносится папка программы.", "The program folder is being moved right now.").into(),
+            hint: Some(t!("Модель можно будет запустить, когда перенос закончится.", "You can start the model once the move is finished.").into()),
             actions: vec![],
-            details: "идёт перенос папки программы".into(),
+            details: t!("идёт перенос папки программы", "the program folder is being moved").into(),
         };
         emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
         return Ok(());
@@ -1563,8 +1594,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
                         *slot = None;
                     }
                     let tail = process::log_tail(&handle.log, 15);
-                    let raw = format!("движок чата упал (код {:?})
-{tail}", exit.code);
+                    let raw = tf!("движок чата упал (код {:?})\n{tail}", "the chat engine crashed (code {:?})\n{tail}", exit.code);
                     emit_llm(&app2, LlmState::crashed(&model, lighter, trouble::crashed(&raw, can_lighter)));
                 });
             }
@@ -1630,7 +1660,7 @@ struct ChatDone {
 /// Роли и манеры ответа для окна: только названия и пояснения, без чисел.
 #[tauri::command]
 fn chat_presets() -> presets::All {
-    presets::All { roles: presets::ROLES, styles: presets::STYLES }
+    presets::all()
 }
 
 //// Ответ на весь разговор. Текст идёт кусками в `llm://token`, размышления думающей
@@ -1656,8 +1686,8 @@ async fn llm_chat(
         Ok(slot) => slot
             .as_ref()
             .map(|l| (l.port, l.vision, l.tools, l.ctx))
-            .ok_or_else(|| trouble::chat("модель не запущена"))?,
-        Err(_) => return Err(trouble::chat("модель ещё загружается")),
+            .ok_or_else(|| trouble::chat(t!("модель не запущена", "the model is not running")))?,
+        Err(_) => return Err(trouble::chat(t!("модель ещё загружается", "the model is still loading"))),
     };
     // Папку обходим до ответа: пропала — человек узнает сразу, а не посреди ответа.
     let tools = match folder {
@@ -1666,8 +1696,8 @@ async fn llm_chat(
                 .await
                 .map_err(|e| trouble::chat(&e.to_string()))?
                 .map_err(|e| trouble::Problem {
-                    text: format!("Папка проекта недоступна: {e}."),
-                    hint: Some("Выберите папку заново кнопкой 📁 или уберите её.".into()),
+                    text: tf!("Папка проекта недоступна: {e}.", "The project folder is unavailable: {e}."),
+                    hint: Some(t!("Выберите папку заново кнопкой 📁 или уберите её.", "Pick the folder again with the 📁 button or remove it.").into()),
                     actions: vec![],
                     details: e,
                 })?;
@@ -1703,7 +1733,7 @@ async fn llm_chat(
             Ok(stats) => ChatDone { stats: Some(stats), problem: None },
             Err(e) => {
                 let p = trouble::chat(&e);
-                app.state::<Arc<Core>>().note("Ответ в чате", &p.text, &p.details);
+                app.state::<Arc<Core>>().note(t!("Ответ в чате", "Chat answer"), &p.text, &p.details);
                 ChatDone { stats: None, problem: Some(p) }
             }
         };
@@ -1787,7 +1817,7 @@ async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attac
 async fn attach_preview(core: CoreState<'_>, path: PathBuf) -> Result<String, String> {
     let inside = path.parent().is_some_and(|p| p == core.attachments) && path.is_file();
     if !inside {
-        return Err("картинка потерялась".into());
+        return Err(t!("картинка потерялась", "the image is missing").into());
     }
     tauri::async_runtime::spawn_blocking(move || attach::image_data_url(&path))
         .await
@@ -1826,7 +1856,7 @@ async fn update_check(
     let info = found.as_ref().map(|u| update::Available {
         version: u.version.clone(),
         current: u.current_version.clone(),
-        notes: u.body.clone(),
+        notes: u.body.as_deref().map(update::notes_for_lang).filter(|n| !n.is_empty()),
         date: u.date.map(|d| d.to_string()),
     });
     *core.update.lock().await = found;
@@ -1844,7 +1874,7 @@ struct UpdateProgress {
 #[tauri::command]
 async fn update_install(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
     let core = core.inner().clone();
-    let found = core.update.lock().await.take().ok_or("обновление не найдено")?;
+    let found = core.update.lock().await.take().ok_or(t!("обновление не найдено", "update not found"))?;
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let on_progress = move |done, total| {
@@ -1883,6 +1913,7 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let settings = settings::Store::open(config_dir.join("settings.json"));
+            i18n::set(settings.get().language);
             // Кривые настройки прокси не должны мешать запуску: тогда без прокси,
             // а ошибку пользователь увидит при проверке в настройках.
             let downloader = build_downloader(&settings.get()).unwrap_or_default();
@@ -1920,6 +1951,7 @@ pub fn run() {
             settings_get,
             settings_save,
             settings_reset,
+            language_set,
             chats_open_folder,
             storage_usage,
             storage_clean,

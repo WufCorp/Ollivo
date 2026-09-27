@@ -1,4 +1,5 @@
 // Типы и вызовы Rust-ядра. Поля совпадают с serde-структурами в src-tauri/src.
+import { decimal, t, type Lang } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -109,9 +110,10 @@ export interface Settings {
   setup_done: boolean;
   updates: UpdateSettings;
   models: ModelSettings;
-  /** Оформление окна: `system` — как в Windows. */
   /** Своя тема программы, от Windows не зависит; «system» из старых версий ядро читает как тёмную. */
   theme: "light" | "dark";
+  /** Язык окна и ядра. Нет в файле — ядро само решает: прежним — русский, новым — как в Windows. */
+  language: Lang;
 }
 
 export interface SettingsView {
@@ -182,6 +184,9 @@ export const onStorageMoved = (cb: (m: StorageMoved) => void): Promise<UnlistenF
   listen<StorageMoved>("storage://moved", (e) => cb(e.payload));
 
 /** Секреты: undefined — не менять сохранённый, "" — удалить. */
+/** Язык — отдельной командой и сразу: не ждёт «Сохранить» и не тащит за собой остальные правки. */
+export const languageSet = (language: Lang) => invoke<void>("language_set", { language });
+
 export const settingsSave = (settings: Settings, secrets: { proxyPassword?: string; hfToken?: string } = {}) =>
   invoke<void>("settings_save", {
     settings,
@@ -305,18 +310,15 @@ export const onEngineProgress = (cb: (p: EngineProgress) => void): Promise<Unlis
 export const onEngineFinished = (cb: (f: EngineFinished) => void): Promise<UnlistenFn> =>
   listen<EngineFinished>("engine://finished", (e) => cb(e.payload));
 
-export const BUILD_NAMES: Record<Build, string> = {
-  cuda13: "CUDA 13",
-  cuda12: "CUDA 12",
-  vulkan: "Vulkan",
-  cpu: "на процессоре",
-};
+export function buildName(b: Build): string {
+  return b === "cpu" ? t("на процессоре", "on the processor") : { cuda13: "CUDA 13", cuda12: "CUDA 12", vulkan: "Vulkan" }[b];
+}
 
 export function formatBytes(b: number): string {
   const gb = b / 2 ** 30;
-  if (gb >= 1000) return `${(gb / 1024).toFixed(1).replace(".", ",")} ТБ`;
-  if (gb >= 1) return `${gb.toFixed(1).replace(".", ",")} ГБ`;
-  return `${Math.round(b / 2 ** 20)} МБ`;
+  if (gb >= 1000) return `${decimal(gb / 1024)} ${t("ТБ", "TB")}`;
+  if (gb >= 1) return `${decimal(gb)} ${t("ГБ", "GB")}`;
+  return `${Math.round(b / 2 ** 20)} ${t("МБ", "MB")}`;
 }
 
 // --- Библиотека моделей ---
@@ -395,7 +397,7 @@ export interface Model {
   license: string | null;
   info: ModelInfo;
   file: string;
-  kind_ru: string;
+  kind_name: string;
   /** Файла нет на месте. */
   missing: boolean;
   verdict: Verdict | null;

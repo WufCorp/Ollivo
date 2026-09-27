@@ -53,14 +53,15 @@ import {
   type Problem,
 } from "../api";
 import Answer, { copyText } from "../components/Answer";
-import ChatPanel, { PANEL_TABS, type PanelTab } from "../components/ChatPanel";
+import ChatPanel, { panelTabs, type PanelTab } from "../components/ChatPanel";
 import Icon from "../components/Icon";
 import ProblemCard from "../components/ProblemCard";
 import PartsSetup from "../components/PartsSetup";
-import { Mentions, Steps, WriteCard, claimsChanges, matchFiles, mentionAt } from "../components/Project";
+import { Mentions, Steps, WriteCard, claimsChanges, fileModes, matchFiles, mentionAt } from "../components/Project";
 import { record, type Recording } from "../recorder";
 import { crashActions } from "../components/RunningModel";
 import { memoryPages, wordsPerSecond } from "../words";
+import { t } from "../i18n";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -104,13 +105,13 @@ function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number
               <Icon name={f.kind === "audio" ? "mic" : "doc"} size={15} />
               {f.name}
               <span className="muted">
-                {f.trimmed ? "только начало, " : ""}
+                {f.trimmed ? t("только начало, ", "only the beginning, ") : ""}
                 {memoryPages(f.tokens)}
               </span>
             </>
           )}
           {onRemove && (
-            <button className="forget" title="Убрать" onClick={() => onRemove(i)}>
+            <button className="forget" title={t("Убрать", "Remove")} onClick={() => onRemove(i)}>
               <Icon name="close" size={14} />
             </button>
           )}
@@ -154,52 +155,73 @@ function EyesCard({
   onClose: () => void;
 }) {
   const o = eyes.offer;
-  const what = eyes.images.length > 1 ? `Картинки (${eyes.images.length})` : `«${eyes.images[0].name}»`;
+  const what =
+    eyes.images.length > 1 ? t(`Картинки (${eyes.images.length})`, `Images (${eyes.images.length})`) : t(`«${eyes.images[0].name}»`, `“${eyes.images[0].name}”`);
   // Из подробностей — только скорость («пишет примерно…»): память и слои новичку ни к чему,
   // а медленную модель он должен увидеть до загрузки. Стоит она у разных оценок в разных строках.
   const how = (v: Verdict) => {
-    const speed = v.details.find((d) => d.startsWith("пишет"));
+    // Начало строки скорости — из `probe::speed_words`, на обоих языках.
+    const speed = v.details.find((d) => d.startsWith("пишет") || d.startsWith("writes"));
     return `${LIGHTS[v.light]} ${v.headline}${speed ? `, ${speed}` : ""}`;
   };
   let text: string;
   let action: { label: string; run: () => void } | null = null;
   if (eyes.restarting) {
-    text = eyes.target ? "Запускаю модель, которая видит картинки…" : "Перезапускаю модель со зрением…";
+    text = eyes.target
+      ? t("Запускаю модель, которая видит картинки…", "Starting a model that sees images…")
+      : t("Перезапускаю модель со зрением…", "Restarting the model with vision…");
   } else if (eyes.task) {
-    const what = eyes.step === "model" ? `Качаю «${o?.pick?.title}»` : "Качаю зрение";
-    text = `${what}: ${formatBytes(eyes.done ?? 0)} из ${formatBytes(eyes.total ?? 0)}.`;
+    const what = eyes.step === "model" ? t(`Качаю «${o?.pick?.title}»`, `Downloading “${o?.pick?.title}”`) : t("Качаю зрение", "Downloading vision");
+    text = `${what}: ${formatBytes(eyes.done ?? 0)} ${t("из", "of")} ${formatBytes(eyes.total ?? 0)}.`;
   } else if (o === undefined) {
-    text = "Ищу, как ей помочь…";
+    text = t("Ищу, как ей помочь…", "Looking for a way to help it…");
   } else if (o?.projector) {
-    text = `Ей можно докачать зрение — ${formatBytes(o.projector.size)}, потом модель перезапустится.`;
-    action = { label: "Докачать зрение", run: onProjector };
+    text = t(
+      `Ей можно докачать зрение — ${formatBytes(o.projector.size)}, потом модель перезапустится.`,
+      `You can add vision to it — ${formatBytes(o.projector.size)}, then the model restarts.`,
+    );
+    action = { label: t("Докачать зрение", "Download vision"), run: onProjector };
   } else if (o?.local) {
-    text = `Картинки видит ваша «${o.local.name}»: ${how(o.local.verdict)}. Разговор продолжится с ней.`;
-    action = { label: "Переключиться на неё", run: onLocal };
+    text = t(
+      `Картинки видит ваша «${o.local.name}»: ${how(o.local.verdict)}. Разговор продолжится с ней.`,
+      `Your “${o.local.name}” sees images: ${how(o.local.verdict)}. The conversation will continue with it.`,
+    );
+    action = { label: t("Переключиться на неё", "Switch to it"), run: onLocal };
   } else if (o?.pick) {
     const p = o.pick;
     const size = p.variant.downloaded ? p.projector.size : p.variant.size + p.projector.size;
-    text =
-      `Картинки видит «${p.title}» из каталога: ${formatBytes(size)}` +
-      `${p.variant.downloaded ? " — докачать зрение" : " вместе со зрением"}, ${how(p.variant.verdict)}. ` +
-      "Потом разговор продолжится с ней.";
-    action = { label: p.variant.downloaded ? "Докачать и переключиться" : "Скачать и переключиться", run: onPick };
+    text = p.variant.downloaded
+      ? t(
+          `Картинки видит «${p.title}» из каталога: ${formatBytes(size)} — докачать зрение, ${how(p.variant.verdict)}. Потом разговор продолжится с ней.`,
+          `“${p.title}” from the catalog sees images: ${formatBytes(size)} — download vision, ${how(p.variant.verdict)}. Then the conversation continues with it.`,
+        )
+      : t(
+          `Картинки видит «${p.title}» из каталога: ${formatBytes(size)} вместе со зрением, ${how(p.variant.verdict)}. Потом разговор продолжится с ней.`,
+          `“${p.title}” from the catalog sees images: ${formatBytes(size)} with vision, ${how(p.variant.verdict)}. Then the conversation continues with it.`,
+        );
+    action = {
+      label: p.variant.downloaded ? t("Докачать и переключиться", "Download and switch") : t("Скачать и переключиться", "Download and switch"),
+      run: onPick,
+    };
   } else {
-    text = "Зрение ей не докачать. Видят картинки модели с пометкой «видит картинки» в каталоге.";
-    action = { label: "В каталог", run: onCatalog };
+    text = t(
+      "Зрение ей не докачать. Видят картинки модели с пометкой «видит картинки» в каталоге.",
+      "Vision can't be added to it. Models marked “sees images” in the catalog can see pictures.",
+    );
+    action = { label: t("В каталог", "To the catalog"), run: onCatalog };
   }
   return (
     <div className="card notice">
       <p>
-        {what} — а эта модель пока не видит картинки. {text}
+        {what} — {t("а эта модель пока не видит картинки.", "but this model can't see images yet.")} {text}
       </p>
       {eyes.task && <progress value={eyes.done ?? 0} max={eyes.total || undefined} />}
       {eyes.error && <p className="error small">{eyes.error}</p>}
       {!eyes.task && !eyes.restarting && o !== undefined && (
         <div className="actions">
-          {action && <button onClick={action.run}>{eyes.error ? "Ещё раз" : action.label}</button>}
+          {action && <button onClick={action.run}>{eyes.error ? t("Ещё раз", "Try again") : action.label}</button>}
           <button className="secondary" onClick={onClose}>
-            Не надо
+            {t("Не надо", "No, thanks")}
           </button>
         </div>
       )}
@@ -208,11 +230,21 @@ function EyesCard({
 }
 
 /** Подсказка в поле ввода, когда что-то приложено: про то, что именно приложено. */
-const ASK_ABOUT: Record<Attachment["kind"], string> = {
-  document: "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать.",
-  image: "Что спросить про картинку? Например: «Что здесь написано?» Можно и ничего не писать.",
-  audio: "Что сделать с записью? Например: «Выпиши главное». Можно и ничего не писать.",
-};
+const askAbout = (kind: Attachment["kind"]) =>
+  ({
+    document: t(
+      "Что сделать с документом? Например: «Перескажи коротко». Можно и ничего не писать.",
+      "What to do with the document? For example: “Summarize it briefly”. You can also leave this empty.",
+    ),
+    image: t(
+      "Что спросить про картинку? Например: «Что здесь написано?» Можно и ничего не писать.",
+      "What to ask about the image? For example: “What does it say?” You can also leave this empty.",
+    ),
+    audio: t(
+      "Что сделать с записью? Например: «Выпиши главное». Можно и ничего не писать.",
+      "What to do with the recording? For example: “List the main points”. You can also leave this empty.",
+    ),
+  })[kind];
 
 /** Реплика в окне: у ответа модели ещё есть числа и ошибка. */
 interface Line extends Msg {
@@ -241,7 +273,7 @@ const fullPath = (folder: string, rel: string) => `${folder.replace(/[\\/]+$/, "
 const asProblem = (e: unknown): Problem =>
   typeof e === "object" && e !== null && "text" in e
     ? (e as Problem)
-    : { text: "Не получилось получить ответ.", hint: null, actions: ["retry"], details: String(e) };
+    : { text: t("Не получилось получить ответ.", "Couldn't get an answer."), hint: null, actions: ["retry"], details: String(e) };
 
 export default function Chat({
   chatId,
@@ -354,7 +386,7 @@ export default function Chat({
       const e = eyesRef.current;
       if (f.id !== e?.task) return;
       if (f.error) {
-        setEyes({ ...e, task: undefined, error: f.error === "paused" ? "Загрузка прервалась." : f.error });
+        setEyes({ ...e, task: undefined, error: f.error === "paused" ? t("Загрузка прервалась.", "The download was interrupted.") : f.error });
         return;
       }
       // Модель из подборки скачалась — следом зрение к ней.
@@ -430,7 +462,7 @@ export default function Chat({
   useEffect(() => {
     if (!eyes?.restarting) return;
     if (llm?.state === "crashed") {
-      setEyes({ ...eyes, restarting: false, error: "Модель не запустилась." });
+      setEyes({ ...eyes, restarting: false, error: t("Модель не запустилась.", "The model did not start.") });
       return;
     }
     // Ещё не та модель: «готова» пока прошлая, новая только загружается.
@@ -439,7 +471,11 @@ export default function Chat({
       setFiles((f) => [...f, ...eyes.images]);
       setEyes(null);
     } else {
-      setEyes({ ...eyes, restarting: false, error: "Модель запустилась без зрения — картинки ей не показать." });
+      setEyes({
+        ...eyes,
+        restarting: false,
+        error: t("Модель запустилась без зрения — картинки ей не показать.", "The model started without vision — images can't be shown to it."),
+      });
     }
   }, [llm]);
 
@@ -596,8 +632,8 @@ export default function Chat({
             if (rel) a = { ...a, name: rel };
           }
         } catch (e) {
-          // «Остановить» — не ошибка.
-          if (String(e) !== "отменено") setFileError(`«${fileName(p)}»: ${String(e)}.`);
+          // «Остановить» — не ошибка; «отменено» — служебное слово ядра (`llm::CANCELLED`).
+          if (String(e) !== "отменено") setFileError(t(`«${fileName(p)}»: ${String(e)}.`, `“${fileName(p)}”: ${String(e)}.`));
           continue;
         } finally {
           setTranscribing(null);
@@ -621,7 +657,7 @@ export default function Chat({
       // Порядок установки — как у ядра: ffmpeg, движок распознавания, модель.
       const order = ["ffmpeg", ...SPEECH_PARTS];
       setSetup({
-        why: waitingAudio ? "расшифровать запись" : "открыть такую картинку",
+        why: waitingAudio ? t("расшифровать запись", "transcribe the recording") : t("открыть такую картинку", "open such an image"),
         parts: order.filter((p) => parts.has(p)),
         paths: waiting,
       });
@@ -691,9 +727,9 @@ export default function Chat({
       try {
         const text = await speechDictate(await rec.stop());
         if (text) setDraft((d) => (d.trim() ? d.trimEnd() + " " : "") + text);
-        else setFileError("Не расслышал — попробуйте ещё раз, ближе к микрофону.");
+        else setFileError(t("Не расслышал — попробуйте ещё раз, ближе к микрофону.", "Didn't catch that — try again, closer to the microphone."));
       } catch (e) {
-        setFileError(`Не получилось распознать: ${String(e)}.`);
+        setFileError(t(`Не получилось распознать: ${String(e)}.`, `Couldn't recognize: ${String(e)}.`));
       } finally {
         setHearing(false);
       }
@@ -702,7 +738,7 @@ export default function Chat({
     setFileError(null);
     const s = await partsStatus(SPEECH_PARTS);
     if (s.missing.length) {
-      setSetup({ why: "надиктовать вопрос", parts: SPEECH_PARTS });
+      setSetup({ why: t("надиктовать вопрос", "dictate a question"), parts: SPEECH_PARTS });
       return;
     }
     try {
@@ -710,7 +746,10 @@ export default function Chat({
       setRec(await record());
     } catch {
       setFileError(
-        "Микрофон недоступен: проверьте, что он подключён и что Windows разрешает программам им пользоваться.",
+        t(
+          "Микрофон недоступен: проверьте, что он подключён и что Windows разрешает программам им пользоваться.",
+          "The microphone is unavailable: check that it is connected and that Windows lets programs use it.",
+        ),
       );
     }
   };
@@ -718,7 +757,7 @@ export default function Chat({
   micRef.current = mic;
 
   const pickFolder = async () => {
-    const picked = await open({ directory: true, title: "Папка проекта" });
+    const picked = await open({ directory: true, title: t("Папка проекта", "Project folder") });
     if (typeof picked === "string") {
       setFolder(picked);
       // Файлы папки видны в панели — туда и смотрят сразу после выбора.
@@ -764,7 +803,7 @@ export default function Chat({
   const runPlan = () => {
     const how = working.current;
     setMode(how);
-    ask([...lines, { role: "user", content: "Выполни этот план." }], how);
+    ask([...lines, { role: "user", content: t("Выполни этот план.", "Carry out this plan.") }], how);
   };
 
   const answerWrite = (ok: boolean) => {
@@ -783,7 +822,7 @@ export default function Chat({
   const pickFiles = async () => {
     const picked = await open({
       multiple: true,
-      filters: [{ name: "Документы, картинки и записи", extensions: ATTACH_EXTENSIONS }],
+      filters: [{ name: t("Документы, картинки и записи", "Documents, images and recordings"), extensions: ATTACH_EXTENSIONS }],
     });
     if (picked) attach(Array.isArray(picked) ? picked : [picked]);
   };
@@ -852,14 +891,17 @@ export default function Chat({
       <>
         <p>
           {llm.state === "starting"
-            ? `Загружаю ${fileName(llm.model ?? "")} в видеокарту — это займёт немного времени.`
+            ? t(
+                `Загружаю ${fileName(llm.model ?? "")} в видеокарту — это займёт немного времени.`,
+                `Loading ${fileName(llm.model ?? "")} into the graphics card — this takes a little while.`,
+              )
             : lines.length
-              ? "Чтобы продолжить разговор, запустите модель."
-              : "Чтобы начать разговор, выберите модель и запустите её."}
+              ? t("Чтобы продолжить разговор, запустите модель.", "To continue the conversation, start the model.")
+              : t("Чтобы начать разговор, выберите модель и запустите её.", "To start a conversation, pick a model and start it.")}
         </p>
         {llm.state !== "starting" && (
           <div className="actions">
-            <button onClick={onGoToModels}>К моделям</button>
+            <button onClick={onGoToModels}>{t("К моделям", "To models")}</button>
           </div>
         )}
       </>
@@ -868,7 +910,7 @@ export default function Chat({
   if (waiting && lines.length === 0) {
     return (
       <div className="chat-empty">
-        <h2>Чат</h2>
+        <h2>{t("Чат", "Chat")}</h2>
         <div className="card">{waiting}</div>
       </div>
     );
@@ -879,15 +921,15 @@ export default function Chat({
   const lastSpeed = lastStats?.stats
     ? wordsPerSecond(`${lastStats.thought ?? ""} ${lastStats.content}`, lastStats.stats.tokens, lastStats.stats.speed)
     : null;
-  const togglePanel = (t: PanelTab) => setPanel(panel === t ? null : t);
-  const modeName = { ask: "Вручную", auto: "Авто", plan: "План" }[mode];
+  const togglePanel = (tab: PanelTab) => setPanel(panel === tab ? null : tab);
+  const modeName = fileModes().find((m) => m.id === mode)?.name;
 
   return (
     <div className="chat-page">
       <div className="chat-main">
       {/* Шапка: название разговора и кнопки панели. Папка — ярлычком, её настройки в панели «Файлы». */}
       <header className="chat-head">
-        <h2 title={title}>{title || "Новый разговор"}</h2>
+        <h2 title={title}>{title || t("Новый разговор", "New conversation")}</h2>
         {folder && (
           <button className="folder-chip" title={folder} onClick={() => setPanel("files")}>
             <Icon name="folder" size={15} />
@@ -896,15 +938,15 @@ export default function Chat({
           </button>
         )}
         <div className="chat-tools">
-          {PANEL_TABS.map((t) => (
+          {panelTabs().map((tab) => (
             <button
-              key={t.id}
-              className={panel === t.id ? "tool on" : "tool"}
-              aria-pressed={panel === t.id}
-              onClick={() => togglePanel(t.id)}
+              key={tab.id}
+              className={panel === tab.id ? "tool on" : "tool"}
+              aria-pressed={panel === tab.id}
+              onClick={() => togglePanel(tab.id)}
             >
-              <Icon name={t.icon} size={16} />
-              {t.name}
+              <Icon name={tab.icon} size={16} />
+              {tab.name}
             </button>
           ))}
         </div>
@@ -914,18 +956,27 @@ export default function Chat({
           <p className="muted">
             {folder
               ? mode === "plan"
-                ? "Режим «План»: модель изучит файлы и распишет, что сделать, но ничего не изменит."
+                ? t(
+                    "Режим «План»: модель изучит файлы и распишет, что сделать, но ничего не изменит.",
+                    "“Plan” mode: the model will study the files and lay out what to do, but won't change anything.",
+                  )
                 : mode === "auto"
-                  ? "Режим «Авто»: модель сама создаёт, меняет и удаляет файлы в папке. Любое изменение можно вернуть."
-                  : "Спросите про файлы папки: модель откроет нужные сама, а менять их будет только с вашего разрешения."
+                  ? t(
+                      "Режим «Авто»: модель сама создаёт, меняет и удаляет файлы в папке. Любое изменение можно вернуть.",
+                      "“Auto” mode: the model creates, changes and deletes files in the folder by itself. Any change can be undone.",
+                    )
+                  : t(
+                      "Спросите про файлы папки: модель откроет нужные сама, а менять их будет только с вашего разрешения.",
+                      "Ask about the folder's files: the model opens the ones it needs by itself and changes them only with your permission.",
+                    )
               : role === "helper" || !roleNow
-                ? "Спросите что угодно — модель отвечает прямо на вашем компьютере."
+                ? t("Спросите что угодно — модель отвечает прямо на вашем компьютере.", "Ask anything — the model answers right on your computer.")
                 : `${roleNow.name}: ${roleNow.hint.toLowerCase()}.`}
           </p>
         )}
         {lines.map((l, i) => (
           <div key={i} className={l.role === "user" ? "line you" : "line bot"}>
-            <span className="who">{l.role === "user" ? "Вы" : "Модель"}</span>
+            <span className="who">{l.role === "user" ? t("Вы", "You") : t("Модель", "Model")}</span>
             <div className="body">
               {l.role === "user" ? (
                 <>
@@ -938,8 +989,8 @@ export default function Chat({
                     <details className="thought">
                       <summary>
                         {answering && i === lines.length - 1 && !l.content
-                          ? "Модель обдумывает ответ…"
-                          : "Как модель рассуждала"}
+                          ? t("Модель обдумывает ответ…", "The model is thinking…")
+                          : t("Как модель рассуждала", "How the model reasoned")}
                       </summary>
                       <p>{l.thought}</p>
                     </details>
@@ -952,14 +1003,17 @@ export default function Chat({
                   />
                   {answering && i === lines.length - 1 && l.calling && !l.write && (
                     <p className="muted small">
-                      {l.calling === "write_file" ? "Модель пишет файл…" : "Модель открывает файлы…"}
+                      {l.calling === "write_file" ? t("Модель пишет файл…", "The model is writing a file…") : t("Модель открывает файлы…", "The model is opening files…")}
                     </p>
                   )}
                   {l.write && <WriteCard ask={l.write} onAnswer={answerWrite} />}
                   {folder && !(answering && i === lines.length - 1) && claimsChanges(l.content, l.steps) && (
                     <p className="warn small">
-                      <Icon name="warn" size={15} /> Модель пишет, что меняла файлы, но ни одного файла не изменила — проверьте. Что она на
-                      самом деле делала, видно в строках над ответом.
+                      <Icon name="warn" size={15} />{" "}
+                      {t(
+                        "Модель пишет, что меняла файлы, но ни одного файла не изменила — проверьте. Что она на самом деле делала, видно в строках над ответом.",
+                        "The model says it changed files, but it didn't change a single one — check. What it actually did is shown in the lines above the answer.",
+                      )}
                     </p>
                   )}
                 </>
@@ -985,18 +1039,22 @@ export default function Chat({
               {l.role === "assistant" && !answering && !waiting && i === lines.length - 1 && l.content.trim() && (
                 <div className="after">
                   <button className="link" onClick={() => copyText(l.content)}>
-                    Копировать
+                    {t("Копировать", "Copy")}
                   </button>
                   <button className="link" onClick={again}>
-                    Ответить заново
+                    {t("Ответить заново", "Answer again")}
                   </button>
                   {folder && mode === "plan" && (
                     <button
                       className="link"
-                      title={working.current === "auto" ? "Модель выполнит план сама" : "Каждое изменение — с вашего разрешения"}
+                      title={
+                        working.current === "auto"
+                          ? t("Модель выполнит план сама", "The model will carry out the plan by itself")
+                          : t("Каждое изменение — с вашего разрешения", "Every change — with your permission")
+                      }
                       onClick={runPlan}
                     >
-                      Выполнить план
+                      {t("Выполнить план", "Carry out the plan")}
                     </button>
                   )}
                 </div>
@@ -1029,26 +1087,30 @@ export default function Chat({
               {tooBig.room >= 650 ? (
                 <>
                   <p>
-                    «{tooBig.file.name}» — это {memoryPages(tooBig.file.tokens)}, а в память модели сейчас
-                    поместится {memoryPages(tooBig.room)}. Целиком модель его не прочтёт.
+                    {t(
+                      `«${tooBig.file.name}» — это ${memoryPages(tooBig.file.tokens)}, а в память модели сейчас поместится ${memoryPages(tooBig.room)}. Целиком модель его не прочтёт.`,
+                      `“${tooBig.file.name}” is ${memoryPages(tooBig.file.tokens)}, but only ${memoryPages(tooBig.room)} fits in the model's memory now. The model won't read it whole.`,
+                    )}
                   </p>
                   <div className="actions">
-                    <button onClick={attachHead}>Приложить только начало</button>
+                    <button onClick={attachHead}>{t("Приложить только начало", "Attach only the beginning")}</button>
                     <button className="secondary" onClick={() => setTooBig(null)}>
-                      Не прикладывать
+                      {t("Не прикладывать", "Don't attach")}
                     </button>
                   </div>
                 </>
               ) : (
                 <>
                   <p>
-                    Разговор уже занял почти всю память модели — «{tooBig.file.name}» сюда не поместится.
-                    В новом разговоре места больше.
+                    {t(
+                      `Разговор уже занял почти всю память модели — «${tooBig.file.name}» сюда не поместится. В новом разговоре места больше.`,
+                      `The conversation already takes almost all of the model's memory — “${tooBig.file.name}” won't fit here. A new conversation has more room.`,
+                    )}
                   </p>
                   <div className="actions">
-                    <button onClick={onNewChat}>Новый разговор</button>
+                    <button onClick={onNewChat}>{t("Новый разговор", "New conversation")}</button>
                     <button className="secondary" onClick={() => setTooBig(null)}>
-                      Не прикладывать
+                      {t("Не прикладывать", "Don't attach")}
                     </button>
                   </div>
                 </>
@@ -1071,19 +1133,19 @@ export default function Chat({
           {transcribing && (
             <div className="card notice">
               <p>
-                Расшифровываю «{transcribing.name}»… {transcribing.percent}%
+                {t(`Расшифровываю «${transcribing.name}»…`, `Transcribing “${transcribing.name}”…`)} {transcribing.percent}%
               </p>
               <progress value={transcribing.percent} max={100} />
               <div className="actions">
                 <button className="secondary" onClick={() => speechStop()}>
-                  Остановить
+                  {t("Остановить", "Stop")}
                 </button>
               </div>
             </div>
           )}
           {files.length > 0 && <Files files={files} onRemove={(i) => setFiles(files.filter((_, j) => j !== i))} />}
           {mention && listing && <Mentions files={found} active={mention.active} onPick={pickMention} />}
-          {reading && <p className="muted small">Читаю файл…</p>}
+          {reading && <p className="muted small">{t("Читаю файл…", "Reading the file…")}</p>}
           {fileError && <p className="error small">{fileError}</p>}
           <div className="composer">
             <textarea
@@ -1092,10 +1154,13 @@ export default function Chat({
               value={draft}
               placeholder={
                 files.length
-                  ? ASK_ABOUT[files.every((f) => f.kind === files[0].kind) ? files[0].kind : "document"]
+                  ? askAbout(files.every((f) => f.kind === files[0].kind) ? files[0].kind : "document")
                   : folder
-                    ? "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка."
-                    : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
+                    ? t(
+                        "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка.",
+                        "A question about the project. @ — refer to a file. Enter — send, Shift+Enter — new line.",
+                      )
+                    : t("Ваш вопрос. Enter — отправить, Shift+Enter — новая строка.", "Your question. Enter — send, Shift+Enter — new line.")
               }
               onChange={typed}
               onKeyDown={keys}
@@ -1104,7 +1169,10 @@ export default function Chat({
             <div className="actions">
               <button
                 className="icon-button"
-                title="Приложить документ или картинку: PDF, Word, текст, код, фото. Файл можно и перетащить в окно."
+                title={t(
+                  "Приложить документ или картинку: PDF, Word, текст, код, фото. Файл можно и перетащить в окно.",
+                  "Attach a document or image: PDF, Word, text, code, photo. You can also drag the file into the window.",
+                )}
                 disabled={answering || reading || !!eyes?.task}
                 onClick={pickFiles}
               >
@@ -1114,8 +1182,11 @@ export default function Chat({
                 className={folder ? "icon-button on" : "icon-button"}
                 title={
                   folder
-                    ? `Папка проекта: ${folder}. Нажмите, чтобы выбрать другую.`
-                    : "Работать с папкой: модель увидит её файлы, сможет их читать, а с вашего разрешения — создавать и менять."
+                    ? t(`Папка проекта: ${folder}. Нажмите, чтобы выбрать другую.`, `Project folder: ${folder}. Click to pick another one.`)
+                    : t(
+                        "Работать с папкой: модель увидит её файлы, сможет их читать, а с вашего разрешения — создавать и менять.",
+                        "Work with a folder: the model will see its files, read them, and with your permission create and change them.",
+                      )
                 }
                 disabled={answering}
                 onClick={pickFolder}
@@ -1124,7 +1195,7 @@ export default function Chat({
               </button>
               <button
                 className={rec ? "icon-button recording" : hearing ? "icon-button wide" : "icon-button"}
-                title={rec ? "Закончить и распознать" : "Надиктовать вопрос"}
+                title={rec ? t("Закончить и распознать", "Finish and recognize") : t("Надиктовать вопрос", "Dictate a question")}
                 disabled={answering || hearing || reading}
                 onClick={mic}
               >
@@ -1134,7 +1205,7 @@ export default function Chat({
                     {Math.floor(recSec / 60)}:{String(Math.floor(recSec % 60)).padStart(2, "0")}
                   </>
                 ) : hearing ? (
-                  "Распознаю…"
+                  t("Распознаю…", "Recognizing…")
                 ) : (
                   <Icon name="mic" />
                 )}
@@ -1154,7 +1225,7 @@ export default function Chat({
                 ))}
               </select>
               )}
-              <div className="seg" role="radiogroup" aria-label="Как отвечать">
+              <div className="seg" role="radiogroup" aria-label={t("Как отвечать", "How to answer")}>
                 {styles.map((s) => (
                   <button
                     key={s.id}
@@ -1173,11 +1244,11 @@ export default function Chat({
               {answering ? (
                 <button className="send stop" onClick={() => llmChatStop()}>
                   <i className="stop-mark" />
-                  Остановить
+                  {t("Остановить", "Stop")}
                 </button>
               ) : (
                 <button className="send" onClick={send} disabled={(!draft.trim() && !files.length) || reading}>
-                  Отправить
+                  {t("Отправить", "Send")}
                 </button>
               )}
             </div>

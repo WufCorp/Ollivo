@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { hfCheckToken, type HfSettings, type HfSource, type TokenCheck } from "../api";
+import { t } from "../i18n";
 
 interface Props {
   hf: HfSettings;
@@ -29,7 +30,7 @@ export default function HfForm({ hf, onChange, token, onToken, hasToken }: Props
   return (
     <>
       <label>
-        Откуда качать модели
+        {t("Откуда качать модели", "Where to download models from")}
         <select
           value={hf.source}
           onChange={(e) => {
@@ -38,19 +39,21 @@ export default function HfForm({ hf, onChange, token, onToken, hasToken }: Props
           }}
         >
           <option value="official">HuggingFace (huggingface.co)</option>
-          <option value="mirror">Зеркало hf-mirror.com</option>
-          <option value="custom">Своё зеркало</option>
+          <option value="mirror">{t("Зеркало hf-mirror.com", "Mirror hf-mirror.com")}</option>
+          <option value="custom">{t("Своё зеркало", "Custom mirror")}</option>
         </select>
       </label>
       {hf.source === "mirror" && (
         <p className="muted small">
-          Зеркало помогает, если huggingface.co не открывается. Из некоторых стран оно само перенаправляет на
-          huggingface.co — тогда поможет только прокси.
+          {t(
+            "Зеркало помогает, если huggingface.co не открывается. Из некоторых стран оно само перенаправляет на huggingface.co — тогда поможет только прокси.",
+            "A mirror helps if huggingface.co won't open. From some countries it redirects to huggingface.co itself — then only a proxy helps.",
+          )}
         </p>
       )}
       {hf.source === "custom" && (
         <label>
-          Адрес зеркала
+          {t("Адрес зеркала", "Mirror address")}
           <input
             value={hf.custom_url}
             placeholder="https://hf.example.ru"
@@ -61,11 +64,11 @@ export default function HfForm({ hf, onChange, token, onToken, hasToken }: Props
       )}
 
       <label>
-        Токен HuggingFace
+        {t("Токен HuggingFace", "HuggingFace token")}
         <input
           type="password"
           value={token ?? ""}
-          placeholder={hasToken ? "сохранён" : "hf_…"}
+          placeholder={hasToken ? t("сохранён", "saved") : "hf_…"}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => {
@@ -75,13 +78,15 @@ export default function HfForm({ hf, onChange, token, onToken, hasToken }: Props
         />
       </label>
       <p className="muted small">
-        Нужен только для закрытых моделей (Llama, Gemma, Flux dev): сначала примите лицензию на странице модели, потом
-        создайте токен «Read» в настройках аккаунта HuggingFace → Access Tokens.
+        {t(
+          "Нужен только для закрытых моделей (Llama, Gemma, Flux dev): сначала примите лицензию на странице модели, потом создайте токен «Read» в настройках аккаунта HuggingFace → Access Tokens.",
+          "Only needed for gated models (Llama, Gemma, Flux dev): first accept the license on the model page, then create a “Read” token in your HuggingFace account settings → Access Tokens.",
+        )}
       </p>
       {(token || hasToken) && (
         <div className="actions">
           <button className="secondary" onClick={run} disabled={checking}>
-            {checking ? "Проверяю…" : "Проверить токен"}
+            {checking ? t("Проверяю…", "Checking…") : t("Проверить токен", "Check token")}
           </button>
           {check && <span className={check.ok ? "ok" : "error"}>{check.message}</span>}
         </div>

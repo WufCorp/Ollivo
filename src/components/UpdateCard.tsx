@@ -10,6 +10,7 @@ import {
   type UpdateProgress,
   type UpdateSettings,
 } from "../api";
+import { t } from "../i18n";
 
 /**
  * Обновления программы: переключатель автопроверки, канал, «Проверить сейчас»
@@ -67,53 +68,57 @@ export default function UpdateCard({
 
   return (
     <div className="card form">
-      {version && <p className="muted small">У вас версия {version}</p>}
+      {version && <p className="muted small">{t(`У вас версия ${version}`, `You have version ${version}`)}</p>}
       <label className="check">
         <input
           type="checkbox"
           checked={settings.auto_check}
           onChange={(e) => onChange({ ...settings, auto_check: e.target.checked })}
         />
-        Проверять обновления автоматически
+        {t("Проверять обновления автоматически", "Check for updates automatically")}
       </label>
       <p className="muted small">
-        Если выключить, Ollivo не будет выходить в интернет сама — проверяйте кнопкой ниже.
+        {t(
+          "Если выключить, Ollivo не будет выходить в интернет сама — проверяйте кнопкой ниже.",
+          "If turned off, Ollivo won't go online by itself — check with the button below.",
+        )}
       </p>
 
       <label>
-        Версии
+        {t("Версии", "Versions")}
         <select
           value={settings.channel}
           onChange={(e) => onChange({ ...settings, channel: e.target.value as UpdateSettings["channel"] })}
         >
-          <option value="stable">Обычные — проверенные</option>
-          <option value="beta">Ранние — новое раньше всех, но бывают сбои</option>
+          <option value="stable">{t("Обычные — проверенные", "Regular — tested")}</option>
+          <option value="beta">{t("Ранние — новое раньше всех, но бывают сбои", "Early — new things first, but glitches happen")}</option>
         </select>
       </label>
 
       {found && (
         <p className="ok">
-          Есть версия {found.version} (у вас {found.current}).{found.notes ? ` ${found.notes}` : ""}
+          {t(`Есть версия ${found.version} (у вас ${found.current}).`, `Version ${found.version} is available (you have ${found.current}).`)}
+          {found.notes ? ` ${found.notes}` : ""}
         </p>
       )}
-      {fresh && <p className="muted">У вас свежая версия.</p>}
+      {fresh && <p className="muted">{t("У вас свежая версия.", "You have the latest version.")}</p>}
       {progress && (
         <>
           <p className="small">
-            Скачиваю обновление… {formatBytes(progress.done)}
-            {progress.total ? ` из ${formatBytes(progress.total)}` : ""}
+            {t("Скачиваю обновление…", "Downloading the update…")} {formatBytes(progress.done)}
+            {progress.total ? ` ${t("из", "of")} ${formatBytes(progress.total)}` : ""}
           </p>
           {progress.total ? <progress max={progress.total} value={progress.done} /> : <progress />}
-          <p className="muted small">После установки Ollivo перезапустится сама.</p>
+          <p className="muted small">{t("После установки Ollivo перезапустится сама.", "Ollivo will restart by itself after installing.")}</p>
         </>
       )}
       {error && <p className="error">{error}</p>}
 
       <div className="actions">
         <button className="secondary" onClick={check} disabled={checking || !!progress}>
-          {checking ? "Проверяю…" : "Проверить сейчас"}
+          {checking ? t("Проверяю…", "Checking…") : t("Проверить сейчас", "Check now")}
         </button>
-        {found && !progress && <button onClick={install}>Обновить</button>}
+        {found && !progress && <button onClick={install}>{t("Обновить", "Update")}</button>}
       </div>
     </div>
   );

@@ -9,15 +9,17 @@ import {
   type EngineProgress,
   type EngineStatus,
 } from "./api";
+import { pl, t } from "./i18n";
 
-export const STAGE_NAMES: Record<EngineProgress["stage"], string> = {
-  download: "Скачиваю",
-  verify: "Проверяю файлы",
-  unpack: "Распаковываю",
-  python: "Готовлю движок картинок",
-  packages: "Ставлю части движка картинок",
-  warmup: "Проверяю видеокарту",
-};
+export const stageName = (stage: EngineProgress["stage"]) =>
+  ({
+    download: t("Скачиваю", "Downloading"),
+    verify: t("Проверяю файлы", "Checking files"),
+    unpack: t("Распаковываю", "Unpacking"),
+    python: t("Готовлю движок картинок", "Preparing the image engine"),
+    packages: t("Ставлю части движка картинок", "Installing parts of the image engine"),
+    warmup: t("Проверяю видеокарту", "Checking the graphics card"),
+  })[stage];
 
 /** Состояние и установка движка: статус, прогресс, пауза, ошибка. */
 export function useEngine(id: string) {
@@ -49,10 +51,12 @@ export function useEngine(id: string) {
         setErrorKind(f.kind);
         const r = f.result;
         if (r?.reinstalled !== undefined) {
+          const n = r.broken?.length ?? 0;
+          const files = `${n} ${pl(n, ["файл", "файла", "файлов"], ["file", "files"])}`;
           setRepaired(
             r.reinstalled
-              ? `Нашёл и исправил: ${r.broken?.length ?? 0} ${plural(r.broken?.length ?? 0)}. Движок переустановлен.`
-              : "Всё в порядке: файлы движка целы.",
+              ? t(`Нашёл и исправил: ${files}. Движок переустановлен.`, `Found and fixed: ${files}. The engine was reinstalled.`)
+              : t("Всё в порядке: файлы движка целы.", "All good: the engine files are intact."),
           );
         }
         refresh();
@@ -89,10 +93,3 @@ export function useEngine(id: string) {
 
   return { status, installed, progress, last, paused, error, errorKind, repaired, install, repair, pause };
 }
-
-const plural = (n: number) => {
-  const d = n % 10, h = n % 100;
-  if (d === 1 && h !== 11) return "файл";
-  if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return "файла";
-  return "файлов";
-};

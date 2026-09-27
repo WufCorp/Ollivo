@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   chatsOpenFolder,
+  languageSet,
   settingsGet,
   settingsReset,
   settingsSave,
@@ -13,14 +14,21 @@ import UpdateCard from "../components/UpdateCard";
 import StorageCard from "../components/StorageCard";
 import { openReport } from "../components/Report";
 import { openSupport } from "../support";
+import { setLang, t, type Lang } from "../i18n";
 
 /** Через сколько минут простоя выгружать модель; 0 — никогда. */
-const UNLOAD: [number, string][] = [
-  [5, "через 5 минут"],
-  [10, "через 10 минут"],
-  [30, "через полчаса"],
-  [60, "через час"],
-  [0, "никогда"],
+const unload = (): [number, string][] => [
+  [5, t("через 5 минут", "after 5 minutes")],
+  [10, t("через 10 минут", "after 10 minutes")],
+  [30, t("через полчаса", "after half an hour")],
+  [60, t("через час", "after an hour")],
+  [0, t("никогда", "never")],
+];
+
+/** Названия языков — каждый на своём языке: выбравший по ошибке чужой найдёт дорогу назад. */
+const LANGUAGES: [Lang, string][] = [
+  ["ru", "Русский"],
+  ["en", "English"],
 ];
 
 export default function Settings() {
@@ -50,7 +58,14 @@ export default function Settings() {
     settingsGet().then(show);
   }, []);
 
-  if (!settings) return <p className="muted">Загружаю настройки…</p>;
+  if (!settings) return <p className="muted">{t("Загружаю настройки…", "Loading settings…")}</p>;
+
+  /** Язык — сразу и сам по себе, без «Сохранить»: окно на непонятном языке — тупик. */
+  const changeLanguage = async (language: Lang) => {
+    await languageSet(language);
+    setSettings({ ...settings, language });
+    setLang(language);
+  };
 
   const reset = async () => {
     setResetError(null);
@@ -78,7 +93,7 @@ export default function Settings() {
       if (token !== undefined) setHasToken(token.trim() !== "");
       setPassword(undefined);
       setToken(undefined);
-      setStatus({ ok: true, text: "Сохранено" });
+      setStatus({ ok: true, text: t("Сохранено", "Saved") });
     } catch (e) {
       setStatus({ ok: false, text: String(e) });
     }
@@ -86,14 +101,36 @@ export default function Settings() {
 
   return (
     <>
-      <h2>Папка программы</h2>
+      <h2>{t("Язык", "Language")}</h2>
+      <div className="card form">
+        <label>
+          Язык · Language
+          <select value={settings.language} onChange={(e) => changeLanguage(e.target.value as Lang)}>
+            {LANGUAGES.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          {t(
+            "Язык окна и подсказок модели. Сама модель отвечает на том языке, на котором вы спрашиваете.",
+            "The language of the window and of the model's instructions. The model itself answers in the language you ask in.",
+          )}
+        </p>
+      </div>
+
+      <h2>{t("Папка программы", "Program folder")}</h2>
       <StorageCard />
 
-      <h2>Сеть</h2>
+      <h2>{t("Сеть", "Network")}</h2>
       <div className="card form">
         <p className="muted small">
-          Если модели или программы не скачиваются из-за ограничений в вашем регионе. Через прокси пойдут все загрузки
-          Ollivo.
+          {t(
+            "Если модели или программы не скачиваются из-за ограничений в вашем регионе. Через прокси пойдут все загрузки Ollivo.",
+            "If models or programs don't download because of restrictions in your region. All Ollivo downloads will go through the proxy.",
+          )}
         </p>
         <ProxyForm
           proxy={settings.proxy}
@@ -115,29 +152,29 @@ export default function Settings() {
         />
       </div>
 
-      <h2>Оформление</h2>
+      <h2>{t("Оформление", "Appearance")}</h2>
       <div className="card form">
         <label>
-          Цвет окна
+          {t("Цвет окна", "Window color")}
           <select
             value={settings.theme}
             onChange={(e) => update({ theme: e.target.value as SettingsData["theme"] })}
           >
-            <option value="dark">Тёмное</option>
-            <option value="light">Светлое</option>
+            <option value="dark">{t("Тёмное", "Dark")}</option>
+            <option value="light">{t("Светлое", "Light")}</option>
           </select>
         </label>
       </div>
 
-      <h2>Видеокарта</h2>
+      <h2>{t("Видеокарта", "Graphics card")}</h2>
       <div className="card form">
         <label>
-          Выгружать модель, если ею не пользуются
+          {t("Выгружать модель, если ею не пользуются", "Unload the model when it isn't used")}
           <select
             value={settings.models.unload_after}
             onChange={(e) => update({ models: { ...settings.models, unload_after: Number(e.target.value) } })}
           >
-            {UNLOAD.map(([min, text]) => (
+            {unload().map(([min, text]) => (
               <option key={min} value={min}>
                 {text}
               </option>
@@ -145,91 +182,108 @@ export default function Settings() {
           </select>
         </label>
         <p className="muted small">
-          Пока модель загружена, она занимает память видеокарты — играм и другим программам её может не хватить.
-          Выгруженная модель загрузится снова сама, когда вы зададите вопрос; это займёт несколько секунд.
+          {t(
+            "Пока модель загружена, она занимает память видеокарты — играм и другим программам её может не хватить. Выгруженная модель загрузится снова сама, когда вы зададите вопрос; это займёт несколько секунд.",
+            "While the model is loaded, it takes up graphics card memory — games and other programs may run short of it. An unloaded model loads again by itself when you ask a question; this takes a few seconds.",
+          )}
         </p>
       </div>
 
-      <h2>Обновления Ollivo</h2>
+      <h2>{t("Обновления Ollivo", "Ollivo updates")}</h2>
       <UpdateCard settings={settings.updates} onChange={(updates) => update({ updates })} />
 
       <div className="actions save">
-        <button onClick={save}>Сохранить</button>
+        <button onClick={save}>{t("Сохранить", "Save")}</button>
         {status && <span className={status.ok ? "ok" : "error"}>{status.text}</span>}
       </div>
 
-      <h2>Приватность</h2>
+      <h2>{t("Приватность", "Privacy")}</h2>
       <div className="card">
         <p>
-          Ollivo работает на этом компьютере. Разговоры, файлы, фото и записи никуда не отправляются — модель считает их
-          здесь же. Программа не собирает статистику о вас.
+          {t(
+            "Ollivo работает на этом компьютере. Разговоры, файлы, фото и записи никуда не отправляются — модель считает их здесь же. Программа не собирает статистику о вас.",
+            "Ollivo runs on this computer. Conversations, files, photos and recordings aren't sent anywhere — the model processes them right here. The program collects no statistics about you.",
+          )}
         </p>
-        <p className="muted small">В интернет Ollivo выходит, только чтобы:</p>
+        <p className="muted small">{t("В интернет Ollivo выходит, только чтобы:", "Ollivo goes online only to:")}</p>
         <ul className="muted small">
-          <li>найти и скачать модель — с HuggingFace или выбранного выше зеркала;</li>
-          <li>скачать движки и компоненты Windows — с GitHub и сайта Microsoft;</li>
-          <li>проверить и скачать обновление Ollivo — если проверка включена;</li>
-          <li>проверить прокси или токен — когда вы нажимаете «Проверить».</li>
+          <li>{t("найти и скачать модель — с HuggingFace или выбранного выше зеркала;", "find and download a model — from HuggingFace or the mirror chosen above;")}</li>
+          <li>{t("скачать движки и компоненты Windows — с GitHub и сайта Microsoft;", "download engines and Windows components — from GitHub and the Microsoft site;")}</li>
+          <li>{t("проверить и скачать обновление Ollivo — если проверка включена;", "check for and download an Ollivo update — if checking is on;")}</li>
+          <li>{t("проверить прокси или токен — когда вы нажимаете «Проверить».", "check the proxy or token — when you click “Check”.")}</li>
         </ul>
         <p className="muted small">
-          Отчёт о проблеме уходит, только если вы сами нажмёте «Отправить», и перед этим вы видите его целиком.
+          {t(
+            "Отчёт о проблеме уходит, только если вы сами нажмёте «Отправить», и перед этим вы видите его целиком.",
+            "A problem report is sent only if you click “Send” yourself, and before that you see it in full.",
+          )}
         </p>
-        <p className="muted small">Разговоры хранятся здесь: {chatsDir}</p>
+        <p className="muted small">
+          {t("Разговоры хранятся здесь:", "Conversations are stored here:")} {chatsDir}
+        </p>
         <div className="actions">
           <button className="secondary" onClick={() => chatsOpenFolder()}>
-            Открыть папку с разговорами
+            {t("Открыть папку с разговорами", "Open the conversations folder")}
           </button>
         </div>
       </div>
 
-      <h2>Помощь</h2>
+      <h2>{t("Помощь", "Help")}</h2>
       <div className="card">
         <p className="muted small">
-          Что-то не ставится, модель не запускается или работает не так, как вы ждали, — расскажите. Программа сама
-          соберёт отчёт о компьютере, и вы увидите его целиком до отправки.
+          {t(
+            "Что-то не ставится, модель не запускается или работает не так, как вы ждали, — расскажите. Программа сама соберёт отчёт о компьютере, и вы увидите его целиком до отправки.",
+            "Something won't install, a model won't start or works differently than you expected — tell us. The program puts together a report about the computer by itself, and you'll see it in full before sending.",
+          )}
         </p>
         <div className="actions">
           <button className="secondary" onClick={() => openReport()}>
-            Сообщить о проблеме
+            {t("Сообщить о проблеме", "Report a problem")}
           </button>
         </div>
 
         {resetting === "ask" ? (
           <>
             <p className="apart">
-              Сеть, HuggingFace, оформление, видеокарта и обновления вернутся к исходным. Пароль прокси и токен
-              HuggingFace удалятся. Модели, разговоры и папка программы останутся.
+              {t(
+                "Сеть, HuggingFace, оформление, видеокарта и обновления вернутся к исходным. Пароль прокси и токен HuggingFace удалятся. Модели, разговоры и папка программы останутся.",
+                "Network, HuggingFace, appearance, graphics card and updates go back to defaults. The proxy password and HuggingFace token are deleted. Models, conversations, the program folder and the language stay.",
+              )}
             </p>
             <div className="actions">
-              <button onClick={reset}>Сбросить</button>
+              <button onClick={reset}>{t("Сбросить", "Reset")}</button>
               <button className="secondary" onClick={() => setResetting(null)}>
-                Отмена
+                {t("Отмена", "Cancel")}
               </button>
             </div>
           </>
         ) : (
           <>
-            <p className="muted small apart">Если после экспериментов с настройками что-то перестало работать.</p>
+            <p className="muted small apart">
+              {t("Если после экспериментов с настройками что-то перестало работать.", "If something stopped working after experimenting with settings.")}
+            </p>
             <div className="actions">
               <button className="secondary" onClick={() => setResetting("ask")}>
-                Сбросить настройки
+                {t("Сбросить настройки", "Reset settings")}
               </button>
-              {resetting === "done" && <span className="ok">Сброшено — всё как после установки</span>}
+              {resetting === "done" && <span className="ok">{t("Сброшено — всё как после установки", "Reset — everything is as after installing")}</span>}
             </div>
           </>
         )}
         {resetError && <p className="error">{resetError}</p>}
       </div>
 
-      <h2>Поддержать Ollivo</h2>
+      <h2>{t("Поддержать Ollivo", "Support Ollivo")}</h2>
       <div className="card">
         <p>
-          Ollivo делает один человек. Программа бесплатная и без рекламы. Если она вам пригодилась — поддержите её
-          развитие: подпиской на Boosty, разово через ЮMoney или криптовалютой.
+          {t(
+            "Ollivo делает один человек. Программа бесплатная и без рекламы. Если она вам пригодилась — поддержите её развитие: подпиской на Boosty, разово через ЮMoney или криптовалютой.",
+            "Ollivo is made by one person. The program is free and has no ads. If it has been useful to you, support its development: with a Boosty subscription, a one-time YooMoney payment, or crypto.",
+          )}
         </p>
-        <p className="muted small">Откроется страница на сайте Ollivo, в браузере.</p>
+        <p className="muted small">{t("Откроется страница на сайте Ollivo, в браузере.", "A page on the Ollivo website opens in the browser.")}</p>
         <div className="actions">
-          <button onClick={openSupport}>Поддержать проект</button>
+          <button onClick={openSupport}>{t("Поддержать проект", "Support the project")}</button>
         </div>
       </div>
     </>

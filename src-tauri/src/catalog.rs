@@ -30,6 +30,11 @@ pub struct Pick {
     pub vendor: String,
     pub about: String,
     pub tags: Vec<String>,
+    /// То же по-английски. В каталоге из S3 старой схемы их может не быть — тогда русские.
+    #[serde(default)]
+    pub about_en: Option<String>,
+    #[serde(default)]
+    pub tags_en: Vec<String>,
     /// Видит картинки: в репозитории есть `mmproj`. Полем, а не меткой — по нему
     /// программа выбирает, что предложить, когда модель не видит приложенное фото.
     #[serde(default)]
@@ -52,6 +57,21 @@ pub struct PickFile {
     pub sha256: String,
 }
 
+impl Pick {
+    /// Описание на языке окна.
+    pub fn about(&self) -> &str {
+        match &self.about_en {
+            Some(en) if crate::i18n::en() => en,
+            _ => &self.about,
+        }
+    }
+
+    /// Метки на языке окна.
+    pub fn tags(&self) -> &[String] {
+        if crate::i18n::en() && self.tags_en.len() == self.tags.len() { &self.tags_en } else { &self.tags }
+    }
+}
+
 impl Catalog {
     pub fn bundled() -> Self {
         Self::parse(BUNDLED).expect("встроенный каталог")
@@ -60,7 +80,7 @@ impl Catalog {
     pub fn parse(json: &str) -> Result<Self, String> {
         let c: Catalog = serde_json::from_str(json).map_err(|e| e.to_string())?;
         if c.schema != SCHEMA {
-            return Err(format!("каталог схемы {}, программа понимает {SCHEMA}", c.schema));
+            return Err(tf!("каталог схемы {}, программа понимает {SCHEMA}", "catalog schema {}, the program understands {SCHEMA}", c.schema));
         }
         Ok(c)
     }
@@ -154,13 +174,19 @@ fn bits(quant: &str) -> u8 {
 pub fn quality(quant: &str) -> &'static str {
     match bits(quant) {
         0 => "",
-        1..=2 => "сжата сильнее некуда: влезет куда угодно, но отвечает заметно хуже",
-        3 => "сильно сжата: экономит память, иногда путается",
-        4 => "обычный выбор: почти как оригинал, а места вдвое меньше",
-        5 => "чуть лучше обычной и чуть больше",
-        6 => "почти неотличима от оригинала",
-        7..=8 => "без потерь качества, но большая",
-        _ => "оригинал без сжатия — для переписки такой не нужен",
+        1..=2 => t!(
+            "сжата сильнее некуда: влезет куда угодно, но отвечает заметно хуже",
+            "squeezed to the limit: fits anywhere, but answers noticeably worse"
+        ),
+        3 => t!("сильно сжата: экономит память, иногда путается", "strongly squeezed: saves memory, sometimes gets confused"),
+        4 => t!(
+            "обычный выбор: почти как оригинал, а места вдвое меньше",
+            "the usual choice: almost like the original, at half the size"
+        ),
+        5 => t!("чуть лучше обычной и чуть больше", "a bit better than usual and a bit bigger"),
+        6 => t!("почти неотличима от оригинала", "almost indistinguishable from the original"),
+        7..=8 => t!("без потерь качества, но большая", "no quality loss, but big"),
+        _ => t!("оригинал без сжатия — для переписки такой не нужен", "the uncompressed original — not needed for chatting"),
     }
 }
 
@@ -364,17 +390,21 @@ async fn get_json<T: serde::de::DeserializeOwned>(
     }
     let resp = req.send().await.map_err(|e| {
         if e.is_timeout() {
-            "HuggingFace не ответил — нужен прокси или зеркало?".to_string()
+            t!("HuggingFace не ответил — нужен прокси или зеркало?", "HuggingFace did not respond — do you need a proxy or a mirror?").to_string()
         } else {
-            "HuggingFace не открывается — нужен прокси или зеркало?".to_string()
+            t!("HuggingFace не открывается — нужен прокси или зеркало?", "HuggingFace won't open — do you need a proxy or a mirror?").to_string()
         }
     })?;
     match resp.status().as_u16() {
-        200 => resp.json().await.map_err(|_| "HuggingFace ответил непонятным".to_string()),
-        401 | 403 => Err("модель закрытая: нужен токен HuggingFace и согласие на её странице".into()),
-        404 => Err("такого репозитория нет".into()),
-        429 => Err("слишком много запросов к HuggingFace — подождите минуту".into()),
-        s => Err(format!("HuggingFace ответил ошибкой {s}")),
+        200 => resp.json().await.map_err(|_| t!("HuggingFace ответил непонятным", "HuggingFace returned something unreadable").to_string()),
+        401 | 403 => Err(t!(
+            "модель закрытая: нужен токен HuggingFace и согласие на её странице",
+            "the model is gated: you need a HuggingFace token and to accept the terms on its page"
+        )
+        .into()),
+        404 => Err(t!("такого репозитория нет", "no such repository").into()),
+        429 => Err(t!("слишком много запросов к HuggingFace — подождите минуту", "too many requests to HuggingFace — wait a minute").into()),
+        s => Err(tf!("HuggingFace ответил ошибкой {s}", "HuggingFace returned error {s}")),
     }
 }
 
@@ -408,6 +438,9 @@ mod tests {
         assert!(c.models.len() >= 5);
         for m in &c.models {
             assert!(m.repo.contains('/'), "{}", m.id);
+            // Английское — у каждой модели и метка в метку: иначе окно покажет смесь языков.
+            assert!(m.about_en.as_ref().is_some_and(|a| !a.is_empty()), "{}", m.id);
+            assert_eq!(m.tags_en.len(), m.tags.len(), "{}", m.id);
             assert!(m.params > 0 && !m.about.is_empty(), "{}", m.id);
             assert!(!m.files.is_empty(), "{}", m.id);
             for f in &m.files {

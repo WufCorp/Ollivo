@@ -47,9 +47,9 @@ impl Kind {
 
     fn title(self) -> &'static str {
         match self {
-            Kind::Install => "Не ставится",
-            Kind::Model => "Модель не запускается",
-            Kind::Other => "Другое",
+            Kind::Install => t!("Не ставится", "Won't install"),
+            Kind::Model => t!("Модель не запускается", "Model won't start"),
+            Kind::Other => t!("Другое", "Other"),
         }
     }
 }
@@ -85,15 +85,16 @@ pub struct Report {
 }
 
 pub fn build(f: &Facts, now: SystemTime) -> Report {
-    let gb = |b: u64| format!("{:.1} ГБ", b as f64 / 1e9).replace('.', ",");
-    let yes = |b: bool| if b { "есть" } else { "нет" };
+    let gb = |b: u64| crate::i18n::decimal(format!("{:.1} {}", b as f64 / 1e9, t!("ГБ", "GB")));
+    let yes = |b: bool| if b { t!("есть", "yes") } else { t!("нет", "no") };
+    let free = t!("свободно", "free");
 
-    let mut gpu_line = "видеокарта NVIDIA не найдена".to_string();
+    let mut gpu_line = t!("видеокарта NVIDIA не найдена", "no NVIDIA graphics card found").to_string();
     let mut driver_line = String::new();
     if let Some(hw) = &f.hardware {
         if let Some(g) = &hw.gpu {
             gpu_line = format!(
-                "{}, {} (свободно {}), CC {}.{}",
+                "{}, {} ({free} {}), CC {}.{}",
                 g.name,
                 gb(g.vram_total),
                 gb(g.vram_free),
@@ -101,82 +102,89 @@ pub fn build(f: &Facts, now: SystemTime) -> Report {
                 g.cc.1
             );
         }
-        driver_line = format!(
+        driver_line = tf!(
             "{}, CUDA {}.{} (по драйверу подходит сборка {})",
+            "{}, CUDA {}.{} (the driver fits build {})",
             if hw.driver.is_empty() { "?" } else { &hw.driver },
             hw.cuda_driver / 1000,
             hw.cuda_driver % 1000 / 10,
             build_name(hw.cuda_build)
         );
     }
-    let ram = f.hardware.as_ref().map_or(String::new(), |hw| format!("{} (свободно {})", gb(hw.ram_total), gb(hw.ram_avail)));
+    let ram = f.hardware.as_ref().map_or(String::new(), |hw| format!("{} ({free} {})", gb(hw.ram_total), gb(hw.ram_avail)));
     let last_problem = tail_lines(&f.problems, 1);
 
     let mut summary = format!("Ollivo {} ({}), {}\n", f.version, f.channel, f.windows);
-    summary += &format!("Видеокарта: {gpu_line}\n");
+    let (l_gpu, l_driver, l_ram) = (t!("Видеокарта", "GPU"), t!("Драйвер", "Driver"), t!("Память", "Memory"));
+    summary += &format!("{l_gpu}: {gpu_line}\n");
     if !driver_line.is_empty() {
-        summary += &format!("Драйвер: {driver_line}\n");
+        summary += &format!("{l_driver}: {driver_line}\n");
     }
-    summary += &format!("Память: {ram}\n");
+    summary += &format!("{l_ram}: {ram}\n");
     for (id, e) in &f.engines {
         if let Some(e) = e {
             summary += &format!("{id} {} ({})\n", e.version, build_name(e.build));
         }
     }
     if !last_problem.is_empty() {
-        summary += &format!("Последняя ошибка: {last_problem}\n");
+        summary += &tf!("Последняя ошибка: {last_problem}\n", "Last error: {last_problem}\n");
     }
 
     let mut t = String::new();
-    let _ = writeln!(t, "Отчёт Ollivo — {} UTC", stamp(now));
-    t += "Этот файл собрала программа. Ваших разговоров, файлов и паролей в нём нет,\n";
-    t += "имя пользователя в путях заменено на %USERNAME%.\n";
+    let _ = writeln!(t, "{}", tf!("Отчёт Ollivo — {} UTC", "Ollivo report — {} UTC", stamp(now)));
+    t += t!(
+        "Этот файл собрала программа. Ваших разговоров, файлов и паролей в нём нет,\n\
+         имя пользователя в путях заменено на %USERNAME%.\n",
+        "This file was put together by the program. Your conversations, files and passwords are not in it,\n\
+         the user name in paths is replaced with %USERNAME%.\n"
+    );
 
-    t += "\n== Программа ==\n";
-    let _ = writeln!(t, "Ollivo {}, канал обновлений {}", f.version, f.channel);
+    let _ = writeln!(t, "\n== {} ==", t!("Программа", "Program"));
+    let _ = writeln!(t, "{}", tf!("Ollivo {}, канал обновлений {}", "Ollivo {}, update channel {}", f.version, f.channel));
     let _ = writeln!(t, "Windows: {}", f.windows);
-    let _ = writeln!(t, "Папка программы: {}", f.data_dir.display());
+    let _ = writeln!(t, "{}", tf!("Папка программы: {}", "Program folder: {}", f.data_dir.display()));
 
-    t += "\n== Компьютер ==\n";
-    let _ = writeln!(t, "Видеокарта: {gpu_line}");
+    let _ = writeln!(t, "\n== {} ==", t!("Компьютер", "Computer"));
+    let _ = writeln!(t, "{l_gpu}: {gpu_line}");
     if !driver_line.is_empty() {
-        let _ = writeln!(t, "Драйвер: {driver_line}");
+        let _ = writeln!(t, "{l_driver}: {driver_line}");
     }
-    let _ = writeln!(t, "Процессор: {}", f.cpu);
-    let _ = writeln!(t, "Память: {ram}");
+    let _ = writeln!(t, "{}: {}", t!("Процессор", "CPU"), f.cpu);
+    let _ = writeln!(t, "{l_ram}: {ram}");
     if let Some(hw) = &f.hardware {
-        let disks: Vec<String> = hw.disks.iter().map(|d| format!("{} {} (свободно {})", d.mount, gb(d.total), gb(d.free))).collect();
-        let _ = writeln!(t, "Диски: {}", disks.join(", "));
-        let _ = writeln!(t, "Кириллица или пробел в профиле: {}", if hw.profile_risky { "да" } else { "нет" });
+        let disks: Vec<String> = hw.disks.iter().map(|d| format!("{} {} ({free} {})", d.mount, gb(d.total), gb(d.free))).collect();
+        let _ = writeln!(t, "{}: {}", t!("Диски", "Disks"), disks.join(", "));
+        let risky = if hw.profile_risky { t!("да", "yes") } else { t!("нет", "no") };
+        let _ = writeln!(t, "{}: {risky}", t!("Кириллица или пробел в профиле", "Cyrillic or space in the profile"));
     }
-    let _ = writeln!(t, "Vulkan в системе: {}, VC++ Runtime: {}", yes(f.vulkan), yes(f.vc_runtime));
+    let _ = writeln!(t, "{}", tf!("Vulkan в системе: {}, VC++ Runtime: {}", "Vulkan in the system: {}, VC++ Runtime: {}", yes(f.vulkan), yes(f.vc_runtime)));
 
-    t += "\n== Движки ==\n";
+    let _ = writeln!(t, "\n== {} ==", t!("Движки", "Engines"));
     for (id, e) in &f.engines {
         match e {
             Some(e) => {
                 let _ = writeln!(t, "{id} {} ({}) — {}", e.version, build_name(e.build), e.dir.display());
             }
             None => {
-                let _ = writeln!(t, "{id} — не установлен");
+                let _ = writeln!(t, "{id} — {}", t!("не установлен", "not installed"));
             }
         }
     }
 
-    t += "\n== Модель ==\n";
-    let _ = writeln!(t, "{}", f.model.as_deref().unwrap_or("не запущена"));
+    let _ = writeln!(t, "\n== {} ==", t!("Модель", "Model"));
+    let _ = writeln!(t, "{}", f.model.as_deref().unwrap_or(t!("не запущена", "not running")));
 
-    t += "\n== Настройки ==\n";
+    let _ = writeln!(t, "\n== {} ==", t!("Настройки", "Settings"));
     let _ = writeln!(t, "{}", serde_json::to_string_pretty(&without_secrets(f.settings.clone())).unwrap_or_default());
 
-    let _ = writeln!(t, "\n== Последние ошибки программы (до {PROBLEMS}) ==");
+    let _ = writeln!(t, "\n== {} ==", tf!("Последние ошибки программы (до {PROBLEMS})", "Latest program errors (up to {PROBLEMS})"));
     let problems = tail_lines(&f.problems, PROBLEMS);
-    let _ = writeln!(t, "{}", if problems.is_empty() { "нет" } else { &problems });
+    let _ = writeln!(t, "{}", if problems.is_empty() { t!("нет", "none") } else { &problems });
 
     for (name, path) in &f.logs {
-        let _ = writeln!(t, "\n== Журнал {name} (последние {LOG_LINES} строк) ==");
+        let _ = writeln!(t, "\n== {} ==", tf!("Журнал {name} (последние {LOG_LINES} строк)", "Log {name} (last {LOG_LINES} lines)"));
         let log = tail_lines(path, LOG_LINES);
-        let _ = writeln!(t, "{}", if log.is_empty() { "пусто" } else { &log });
+        let _ = writeln!(t, "{}", if log.is_empty() { t!("пусто", "empty") } else { &log });
     }
 
     Report { summary: scrub_env(&summary), full: scrub_env(&t) }
@@ -275,7 +283,7 @@ pub fn issue_url(kind: Kind, what: &str, summary: &str, version: &str, gpu: &str
 
 /// Имя файла отчёта: по времени, чтобы второй отчёт не затёр первый.
 pub fn file_name(now: SystemTime) -> String {
-    format!("Ollivo-отчёт-{}.txt", stamp(now).replace([' ', ':'], "-"))
+    format!("Ollivo-{}-{}.txt", t!("отчёт", "report"), stamp(now).replace([' ', ':'], "-"))
 }
 
 /// Запоминает ошибку, которую человек видел, — для отчёта. Файл, а не память: человек

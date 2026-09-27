@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { llmStart, llmStop, llmStatus, modelsRemove, onLlmState, vcredistInstall, type LlmState } from "../api";
 import { memoryPages } from "../words";
 import ProblemCard from "./ProblemCard";
+import { decimal, t } from "../i18n";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -11,11 +12,11 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
  */
 export const whoComputes = (onGpu: number | null, total: number | null) => {
   if (onGpu === null) return null;
-  if (onGpu === 0) return "Считает процессор — ответы будут медленными";
-  if (onGpu >= 900 || (total !== null && onGpu >= total)) return "Считает видеокарта";
+  if (onGpu === 0) return t("Считает процессор — ответы будут медленными", "The processor computes — answers will be slow");
+  if (onGpu >= 900 || (total !== null && onGpu >= total)) return t("Считает видеокарта", "The graphics card computes");
   return total !== null
-    ? `Видеокарта считает ${onGpu} слоёв из ${total}, остальное — процессор`
-    : `Видеокарта считает ${onGpu} слоёв, остальное — процессор`;
+    ? t(`Видеокарта считает ${onGpu} слоёв из ${total}, остальное — процессор`, `The graphics card computes ${onGpu} of ${total} layers, the rest — the processor`)
+    : t(`Видеокарта считает ${onGpu} слоёв, остальное — процессор`, `The graphics card computes ${onGpu} layers, the rest — the processor`);
 };
 
 /** Что сейчас загружено в видеокарту: состояние и «Остановить». Разговор — на вкладке «Чат». */
@@ -44,24 +45,37 @@ export default function RunningModel({
 
   return (
     <div className="card form">
-      {state.state === "starting" && <p>Загружаю {fileName(state.model ?? "")} в видеокарту…</p>}
+      {state.state === "starting" && (
+        <p>{t(`Загружаю ${fileName(state.model ?? "")} в видеокарту…`, `Loading ${fileName(state.model ?? "")} into the graphics card…`)}</p>
+      )}
 
       {state.state === "ready" && (
         <>
           <p className="ok">
-            ✓ Готова к разговору: {fileName(state.model ?? "")}, загрузилась за{" "}
-            {state.started_in?.toFixed(1).replace(".", ",")} с
+            ✓{" "}
+            {t(
+              `Готова к разговору: ${fileName(state.model ?? "")}, загрузилась за ${decimal(state.started_in ?? 0)} с`,
+              `Ready to talk: ${fileName(state.model ?? "")}, loaded in ${decimal(state.started_in ?? 0)} s`,
+            )}
           </p>
           <p className="muted small">
-            {whoComputes(state.gpu_layers, state.layers)}. {state.ctx !== null && <> Помнит {memoryPages(state.ctx)} разговора.</>}
+            {whoComputes(state.gpu_layers, state.layers)}.{" "}
+            {state.ctx !== null && t(`Помнит ${memoryPages(state.ctx)} разговора.`, `Remembers ${memoryPages(state.ctx)} of conversation.`)}
           </p>
         </>
       )}
 
       {state.state === "sleeping" && (
         <>
-          <p>{fileName(state.model ?? "")} выгружена, пока вы не пользовались, — видеокарта свободна.</p>
-          <p className="muted small">Загрузится снова сама, когда вы зададите вопрос в чате.</p>
+          <p>
+            {t(
+              `${fileName(state.model ?? "")} выгружена, пока вы не пользовались, — видеокарта свободна.`,
+              `${fileName(state.model ?? "")} was unloaded while you weren't using it — the graphics card is free.`,
+            )}
+          </p>
+          <p className="muted small">
+            {t("Загрузится снова сама, когда вы зададите вопрос в чате.", "It will load again by itself when you ask something in the chat.")}
+          </p>
         </>
       )}
 
@@ -71,7 +85,7 @@ export default function RunningModel({
           on={crashActions(state, onGo, onRemoved)}
           extra={
             <button className="secondary" onClick={() => llmStop()}>
-              Понятно
+              {t("Понятно", "OK")}
             </button>
           }
         />
@@ -79,12 +93,16 @@ export default function RunningModel({
 
       {state.state !== "crashed" && (
         <div className="actions">
-          {state.state === "ready" && <button onClick={onGoToChat}>Перейти в чат</button>}
+          {state.state === "ready" && <button onClick={onGoToChat}>{t("Перейти в чат", "Go to chat")}</button>}
           {state.state === "sleeping" && state.model && (
-            <button onClick={() => llmStart(state.model!, { lighter: state.lighter })}>Загрузить сейчас</button>
+            <button onClick={() => llmStart(state.model!, { lighter: state.lighter })}>{t("Загрузить сейчас", "Load now")}</button>
           )}
           <button className="secondary" onClick={() => llmStop()}>
-            {state.state === "starting" ? "Отменить" : state.state === "sleeping" ? "Забыть" : "Остановить"}
+            {state.state === "starting"
+              ? t("Отменить", "Cancel")
+              : state.state === "sleeping"
+                ? t("Забыть", "Forget")
+                : t("Остановить", "Stop")}
           </button>
         </div>
       )}

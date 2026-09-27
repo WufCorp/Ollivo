@@ -52,12 +52,12 @@ pub fn estimate_tokens(text: &str) -> u64 {
 /// Картинки копируются в `images`; HEIC и AVIF открывает `ffmpeg`, если он установлен.
 pub fn read(path: &Path, images: &Path, ffmpeg: Option<&Path>) -> Result<Attachment, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let meta = std::fs::metadata(path).map_err(|_| "файл не открывается — возможно, его переместили".to_string())?;
+    let meta = std::fs::metadata(path).map_err(|_| t!("файл не открывается — возможно, его переместили", "the file won't open — it may have been moved").to_string())?;
     if meta.is_dir() {
-        return Err("это папка, а не файл".into());
+        return Err(t!("это папка, а не файл", "this is a folder, not a file").into());
     }
     if meta.len() > MAX_FILE {
-        return Err("файл больше 100 МБ — это слишком много для разговора".into());
+        return Err(t!("файл больше 100 МБ — это слишком много для разговора", "the file is over 100 MB — too much for a conversation").into());
     }
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let text = match ext.as_str() {
@@ -65,17 +65,23 @@ pub fn read(path: &Path, images: &Path, ffmpeg: Option<&Path>) -> Result<Attachm
         "docx" => docx_text(path)?,
         "odt" => odt_text(path)?,
         "doc" | "rtf" => {
-            return Err("старый формат Word — откройте файл в Word и сохраните как DOCX или PDF".into())
+            return Err(t!(
+                "старый формат Word — откройте файл в Word и сохраните как DOCX или PDF",
+                "old Word format — open the file in Word and save it as DOCX or PDF"
+            )
+            .into())
         }
-        "xls" | "xlsx" | "ods" => return Err("таблицы пока не читаю — сохраните таблицу как CSV".into()),
+        "xls" | "xlsx" | "ods" => {
+            return Err(t!("таблицы пока не читаю — сохраните таблицу как CSV", "spreadsheets aren't supported yet — save the table as CSV").into())
+        }
         "jpg" | "jpeg" | "png" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "heic" | "heif" | "hif" | "avif" => {
             return store_image(path, name, images, meta.len(), ffmpeg)
         }
         // Записи и видео расшифровывает `speech.rs` — сюда они не доходят.
         _ => {
-            let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
+            let bytes = std::fs::read(path).map_err(|e| tf!("файл не читается: {e}", "the file can't be read: {e}"))?;
             if looks_binary(&bytes) {
-                return Err("это не текст и не документ — такие файлы модель прочесть не может".into());
+                return Err(t!("это не текст и не документ — такие файлы модель прочесть не может", "this is neither text nor a document — the model can't read such files").into());
             }
             decode(&bytes)
         }
@@ -84,9 +90,9 @@ pub fn read(path: &Path, images: &Path, ffmpeg: Option<&Path>) -> Result<Attachm
     if text.trim().is_empty() {
         // Скан без текстового слоя: внутри PDF только картинки страниц.
         return Err(if ext == "pdf" {
-            "в этом PDF нет текста — похоже, это отсканированные страницы".into()
+            t!("в этом PDF нет текста — похоже, это отсканированные страницы", "this PDF has no text — it looks like scanned pages").into()
         } else {
-            "в файле нет текста".into()
+            t!("в файле нет текста", "the file has no text").into()
         });
     }
     Ok(Attachment { name, kind: "document".into(), tokens: estimate_tokens(&text), text, trimmed: false, path: None })
@@ -100,11 +106,11 @@ pub fn read(path: &Path, images: &Path, ffmpeg: Option<&Path>) -> Result<Attachm
 fn store_image(path: &Path, name: String, images: &Path, size: u64, ffmpeg: Option<&Path>) -> Result<Attachment, String> {
     use sha2::{Digest, Sha256};
     if size > MAX_IMAGE {
-        return Err("картинка больше 20 МБ — уменьшите её".into());
+        return Err(t!("картинка больше 20 МБ — уменьшите её", "the image is over 20 MB — make it smaller").into());
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("файл не читается: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| tf!("файл не читается: {e}", "the file can't be read: {e}"))?;
     // По первым байтам, а не по имени: бывает PNG, переименованный в .jpg.
-    let format = sniff(&bytes).ok_or("файл называется картинкой, но внутри не картинка")?;
+    let format = sniff(&bytes).ok_or(t!("файл называется картинкой, но внутри не картинка", "the file is named like an image, but it isn't one inside"))?;
     let hash = hex::encode(Sha256::digest(&bytes));
     let stem = &hash[..16];
     // Уже прикладывали: перекодированная лежит под хешем исходного файла.
@@ -115,15 +121,18 @@ fn store_image(path: &Path, name: String, images: &Path, size: u64, ffmpeg: Opti
             let (bytes, ext) = match format {
                 "webp" | "tiff" => convert(&bytes)?,
                 "heif" => {
-                    let ffmpeg = ffmpeg.ok_or("для таких картинок нужно докачать чтение файлов — приложите картинку ещё раз")?;
+                    let ffmpeg = ffmpeg.ok_or(t!(
+        "для таких картинок нужно докачать чтение файлов — приложите картинку ещё раз",
+        "such images need an extra file reader to be downloaded — attach the image again"
+    ))?;
                     convert(&crate::media::to_png(ffmpeg, path)?)?
                 }
                 "jpg" => upright_jpeg(&bytes).unwrap_or((bytes, "jpg")),
                 other => (bytes, other),
             };
             let dest = images.join(format!("{stem}.{ext}"));
-            std::fs::create_dir_all(images).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
-            std::fs::write(&dest, &bytes).map_err(|e| format!("не удалось сохранить картинку: {e}"))?;
+            std::fs::create_dir_all(images).map_err(|e| tf!("не удалось сохранить картинку: {e}", "could not save the image: {e}"))?;
+            std::fs::write(&dest, &bytes).map_err(|e| tf!("не удалось сохранить картинку: {e}", "could not save the image: {e}"))?;
             dest
         }
     };
@@ -178,7 +187,7 @@ fn convert(bytes: &[u8]) -> Result<(Vec<u8>, &'static str), String> {
             .encode_image(&img.to_rgb8())
             .map(|_| "jpg")
     }
-    .map_err(|e| format!("не удалось перекодировать картинку: {e}"))?;
+    .map_err(|e| tf!("не удалось перекодировать картинку: {e}", "could not convert the image: {e}"))?;
     Ok((out.into_inner(), ext))
 }
 
@@ -188,12 +197,12 @@ fn convert(bytes: &[u8]) -> Result<(Vec<u8>, &'static str), String> {
 fn decode_upright(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     use image::ImageDecoder;
     let broken = |e: image::ImageError| match e {
-        image::ImageError::Limits(_) => "картинка слишком большая — уменьшите её".to_string(),
-        _ => "картинка повреждена — не удалось её открыть".to_string(),
+        image::ImageError::Limits(_) => t!("картинка слишком большая — уменьшите её", "the image is too big — make it smaller").to_string(),
+        _ => t!("картинка повреждена — не удалось её открыть", "the image is damaged — couldn't open it").to_string(),
     };
     let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|_| "картинка повреждена — не удалось её открыть".to_string())?
+        .map_err(|_| t!("картинка повреждена — не удалось её открыть", "the image is damaged — couldn't open it").to_string())?
         .into_decoder()
         .map_err(broken)?;
     let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -216,7 +225,7 @@ fn upright_jpeg(bytes: &[u8]) -> Option<(Vec<u8>, &'static str)> {
 /// Картинка как `data:`-адрес — так её принимает движок и показывает окно.
 pub fn image_data_url(path: &Path) -> Result<String, String> {
     use base64::Engine;
-    let bytes = std::fs::read(path).map_err(|_| "картинка потерялась".to_string())?;
+    let bytes = std::fs::read(path).map_err(|_| t!("картинка потерялась", "the image is missing").to_string())?;
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let mime = match ext.as_str() {
         "png" => "image/png",
@@ -255,8 +264,8 @@ pub fn trim(mut a: Attachment, max_tokens: u64) -> Attachment {
 pub fn for_model(files: &[Attachment], question: &str) -> String {
     let mut out = String::new();
     for f in files.iter().filter(|f| f.kind != "image") {
-        let what = if f.kind == "audio" { "Расшифровка записи" } else { "Документ" };
-        let note = if f.trimmed { " (только начало — целиком не поместился)" } else { "" };
+        let what = if f.kind == "audio" { t!("Расшифровка записи", "Recording transcript") } else { t!("Документ", "Document") };
+        let note = if f.trimmed { t!(" (только начало — целиком не поместился)", " (only the beginning — it didn't fit whole)") } else { "" };
         out.push_str(&format!("{what} «{}»{note}:\n<<<\n{}\n>>>\n\n", f.name, f.text));
     }
     out.push_str(question);
@@ -326,8 +335,8 @@ fn tidy(text: &str) -> String {
 // ---------- DOCX и ODT ----------
 
 fn zip_entry(path: &Path, entry: &str) -> Result<String, String> {
-    let broken = || "документ повреждён или это не документ Word".to_string();
-    let file = std::fs::File::open(path).map_err(|e| format!("файл не читается: {e}"))?;
+    let broken = || t!("документ повреждён или это не документ Word", "the document is damaged or isn't a Word document").to_string();
+    let file = std::fs::File::open(path).map_err(|e| tf!("файл не читается: {e}", "the file can't be read: {e}"))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| broken())?;
     let mut f = zip.by_name(entry).map_err(|_| broken())?;
     let mut xml = String::new();
@@ -477,7 +486,7 @@ fn pdf_text(path: &Path) -> Result<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("не удалось открыть PDF: {e}"))?;
+        .map_err(|e| tf!("не удалось открыть PDF: {e}", "could not open the PDF: {e}"))?;
     let mut stdout = child.stdout.take().unwrap();
     // Читаем в отдельном потоке: большой текст забьёт канал, и разборщик встанет,
     // пока мы ждём его завершения.
@@ -493,13 +502,13 @@ fn pdf_text(path: &Path) -> Result<String, String> {
         }
         if started.elapsed() > PDF_TIMEOUT {
             let _ = child.kill();
-            return Err("PDF разбирается слишком долго — возможно, он повреждён".into());
+            return Err(t!("PDF разбирается слишком долго — возможно, он повреждён", "the PDF takes too long to parse — it may be damaged").into());
         }
         std::thread::sleep(Duration::from_millis(50));
     };
     let out = reader.join().unwrap_or_default();
     if !status.success() {
-        return Err("PDF не читается — возможно, он повреждён или защищён паролем".into());
+        return Err(t!("PDF не читается — возможно, он повреждён или защищён паролем", "the PDF can't be read — it may be damaged or password-protected").into());
     }
     Ok(String::from_utf8_lossy(&out).into_owned())
 }

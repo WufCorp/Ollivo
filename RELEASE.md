@@ -22,20 +22,23 @@
 2. Проверить сборку и подпись, ничего не публикуя:
 
 ```bash
-powershell -File scripts/publish-update.ps1 -DryRun -Notes "Что нового"
+powershell -File scripts/publish-update.ps1 -DryRun -Notes "Что нового" -NotesEn "What's new"
 ```
 
 3. Опубликовать. Сначала для ранних версий:
 
 ```bash
-powershell -File scripts/publish-update.ps1 -Channel beta -Notes "Что нового"
+powershell -File scripts/publish-update.ps1 -Channel beta -Notes "Что нового" -NotesEn "What's new"
 ```
 
 4. Убедиться, что у бета-пользователей обновление встало, и выпустить для всех:
 
 ```bash
-powershell -File scripts/publish-update.ps1 -SkipBuild -Notes "Что нового"
+powershell -File scripts/publish-update.ps1 -SkipBuild -Notes "Что нового" -NotesEn "What's new"
 ```
+
+`-NotesEn` — то же по-английски: в `latest.json` оба текста идут через строку `---`,
+программа показывает часть на своём языке. Без `-NotesEn` все увидят русский.
 
 `-SkipBuild` берёт уже собранный установщик, поэтому в оба канала уходит один и тот же файл.
 Подпись при этом делается заново: установщик мог быть пересобран без ключа, а старый `.sig`
@@ -70,7 +73,8 @@ git push origin v0.1.0
 ```
 
 Workflow `release.yml` берёт из S3 тот же установщик, что раздаёт автообновление, и создаёт
-GitHub Release: текст — `release-notes/<версия>.md`, ниже — SHA256 и как пройти SmartScreen.
+GitHub Release: текст — `release-notes/<версия>.md` и английский `release-notes/<версия>.en.md`
+(без него workflow остановится), ниже — SHA256 и как пройти SmartScreen на обоих языках.
 Рядом кладёт `latest.json` со ссылкой на установщик на GitHub — это запасной адрес автообновления:
 если S3 не ответит, программа возьмёт обновление отсюда. Поэтому тег ставится только после
 публикации в stable — иначе workflow остановится: в S3 `latest.json` не про эту версию.
