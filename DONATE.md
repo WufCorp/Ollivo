@@ -24,7 +24,8 @@ Ollivo делает один человек. Программа бесплатн
 <td width="176"><img src="site/support/usdt-trc20.svg" alt="QR-код USDT" width="160"></td>
 <td>
 
-**USDT** · сеть TRON (TRC20)
+**USDT** · сеть TRON (TRC20)<br>
+<sub>Минимум — 0.005 USDT.</sub>
 
 ```text
 TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7
@@ -37,7 +38,8 @@ TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7
 <td>
 
 **TON** · сеть TON<br>
-<sub>На некоторых биржах монета называется GRAM.</sub>
+<sub>На некоторых биржах монета называется GRAM.</sub><br>
+<sub>Минимум — 0.005 TON.</sub>
 
 ```text
 UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls
@@ -49,7 +51,8 @@ UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls
 <td width="176"><img src="site/support/btc.svg" alt="QR-код Bitcoin" width="160"></td>
 <td>
 
-**Bitcoin** · сеть Bitcoin
+**Bitcoin** · сеть Bitcoin<br>
+<sub>Минимум — 0.00001 BTC.</sub>
 
 ```text
 1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq

@@ -7,7 +7,8 @@
       "coin": "USDT",
       "network": "сеть TRON (TRC20)",
       "check": "tron",
-      "address": "TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7"
+      "address": "TGEzLrBGuovgiRe9dqcm1i23ZJYXyg5LL7",
+      "min": "0.005 USDT"
     },
     {
       "id": "ton",
@@ -15,14 +16,16 @@
       "network": "сеть TON",
       "note": "На некоторых биржах монета называется GRAM.",
       "check": "ton",
-      "address": "UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls"
+      "address": "UQA6f8IIN_z6hMVhKffPcLCOE91D5x7wFxHQSgnJ8wmM4Uls",
+      "min": "0.005 TON"
     },
     {
       "id": "btc",
       "coin": "Bitcoin",
       "network": "сеть Bitcoin",
       "check": "btc",
-      "address": "1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq"
+      "address": "1RnUJjdzXEqPs5t735xU9aWJAtnHGqDtq",
+      "min": "0.00001 BTC"
     }
   ]
 }

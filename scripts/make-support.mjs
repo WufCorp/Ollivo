@@ -105,8 +105,8 @@ const cryptoRows = data.crypto
 <td width="176"><img src="site/support/${c.id}.svg" alt="QR-код ${esc(c.coin)}" width="160"></td>
 <td>
 
-**${c.coin}** · ${c.network}${c.note ? `<br>
-<sub>${c.note}</sub>` : ""}
+**${c.coin}** · ${c.network}${[c.note, c.min && `Минимум — ${c.min}.`].filter(Boolean).map((t) => `<br>
+<sub>${t}</sub>`).join("")}
 
 \`\`\`text
 ${c.address}
