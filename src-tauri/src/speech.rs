@@ -82,6 +82,7 @@ pub async fn transcribe(
     cancel: &CancellationToken,
     on_progress: impl Fn(u8),
 ) -> Result<String, String> {
+    crate::vcrt::prepare(exe)?;
     let mut cmd = tokio::process::Command::new(exe);
     cmd.args(args(model, audio, seconds))
         .stdin(Stdio::null())

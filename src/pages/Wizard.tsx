@@ -7,7 +7,6 @@ import {
   setupCheck,
   setupChooseDir,
   setupFinish,
-  vcredistInstall,
   type CheckStatus,
   type ProxyReport,
   type Settings,
@@ -62,26 +61,12 @@ export default function Wizard({ onDone }: { onDone: () => void }) {
 
 function CheckStep({ next }: { next: () => void }) {
   const [info, setInfo] = useState<SetupInfo | null>(null);
-  const [fixing, setFixing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = () => setupCheck().then(setInfo, (e) => setError(String(e)));
   useEffect(() => {
     load();
   }, []);
-
-  const fixVc = async () => {
-    setFixing(true);
-    setError(null);
-    try {
-      await vcredistInstall();
-      await load();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setFixing(false);
-    }
-  };
 
   if (!info) return <p className="muted">Смотрю, что за компьютер…</p>;
   const blocked = info.checks.some((c) => c.status === "fail");
@@ -95,13 +80,6 @@ function CheckStep({ next }: { next: () => void }) {
             <span className="icon">{ICONS[c.status]}</span>
             <div>
               <b>{c.title}</b> — {c.message}
-              {c.fix === "vcredist" && (
-                <div>
-                  <button onClick={fixVc} disabled={fixing}>
-                    {fixing ? "Устанавливаю… подтвердите запрос Windows" : "Установить"}
-                  </button>
-                </div>
-              )}
             </div>
           </li>
         ))}

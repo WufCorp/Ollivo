@@ -98,6 +98,7 @@ pub async fn start(
     if !cfg.model.is_file() {
         return Err(format!("файл модели не найден: {}", cfg.model.display()));
     }
+    crate::vcrt::prepare(&engine.exe)?;
     let port = process::free_port().map_err(|e| e.to_string())?;
     let spec = process::Spec {
         exe: engine.exe.clone(),
@@ -556,7 +557,7 @@ mod tests {
             .await
             .unwrap();
 
-        let msgs = vec![Msg::new("user", "Посчитай вслух от 1 до 20.".into())];
+        let msgs = vec![Msg::new("user", "Напиши числа от 1 до 20 словами, через запятую.".into())];
         let chunks = std::sync::Mutex::new(Vec::<String>::new());
         let stats = chat(llm.port, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
             chunks.lock().unwrap().push(t.to_string())

@@ -1,4 +1,5 @@
-//! Мастер первого запуска: проверки ПК, выбор папки, установка VC++ Runtime.
+//! Мастер первого запуска: проверки ПК, выбор папки. Установка VC++ Runtime — запасной путь:
+//! обычно библиотеки кладутся рядом с движком (`vcrt.rs`) и мастер о них не спрашивает.
 
 use crate::hardware::{Disk, Hardware};
 use serde::Serialize;
@@ -10,7 +11,7 @@ pub const MIN_FREE: u64 = 20 * GIB;
 
 /// Официальный установщик VC++ 2015–2022 x64 (постоянная ссылка Microsoft).
 pub const VC_REDIST_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
-/// Эти библиотеки импортирует llama.cpp (проверено по b11081).
+/// Эти библиотеки импортируют llama.cpp и whisper.cpp; есть ли они в системе — для отчёта о проблеме.
 const VC_DLLS: &[&str] = &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -27,11 +28,9 @@ pub struct Check {
     pub title: &'static str,
     pub status: Status,
     pub message: String,
-    /// Что может сделать программа сама: `"vcredist"` — поставить VC++.
-    pub fix: Option<&'static str>,
 }
 
-fn system32() -> PathBuf {
+pub fn system32() -> PathBuf {
     let win = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     Path::new(&win).join("System32")
 }
@@ -59,14 +58,12 @@ pub fn checks(hw: &Hardware) -> Vec<Check> {
             } else {
                 format!("{}, {} ГБ — подойдут только маленькие модели", g.name, gb(g.vram_total))
             },
-            fix: None,
         },
         None => Check {
             id: "gpu",
             title: "Видеокарта",
             status: Status::Warn,
             message: "NVIDIA не найдена. Чат будет работать, но медленнее, картинки и видео — вряд ли".into(),
-            fix: None,
         },
     });
 
@@ -81,31 +78,17 @@ pub fn checks(hw: &Hardware) -> Vec<Check> {
             } else {
                 format!("{} — устарел, обновите через приложение NVIDIA или сайт nvidia.com", hw.driver)
             },
-            fix: None,
         });
     }
 
     out.push(if has_vulkan() {
-        Check { id: "vulkan", title: "Vulkan", status: Status::Ok, message: "есть".into(), fix: None }
+        Check { id: "vulkan", title: "Vulkan", status: Status::Ok, message: "есть".into() }
     } else {
         Check {
             id: "vulkan",
             title: "Vulkan",
             status: Status::Warn,
             message: "нет — обычно ставится с драйвером видеокарты. Чат поставим на CUDA".into(),
-            fix: None,
-        }
-    });
-
-    out.push(if has_vc_runtime() {
-        Check { id: "vcredist", title: "Библиотеки Microsoft VC++", status: Status::Ok, message: "есть".into(), fix: None }
-    } else {
-        Check {
-            id: "vcredist",
-            title: "Библиотеки Microsoft VC++",
-            status: Status::Fail,
-            message: "нет — без них движок чата не запустится. Поставим официальный установщик Microsoft".into(),
-            fix: Some("vcredist"),
         }
     });
 
@@ -118,7 +101,6 @@ pub fn checks(hw: &Hardware) -> Vec<Check> {
         } else {
             format!("{} ГБ — большие модели не поместятся, подберём поменьше", gb(hw.ram_total))
         },
-        fix: None,
     });
 
     out

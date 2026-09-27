@@ -87,7 +87,7 @@
 - Vite по умолчанию слушал только `::1`, а Tauri ждал IPv4 → dev-сервер и `devUrl` привязаны к `127.0.0.1`.
 - ⚠️ llama.cpp (b11081) импортирует `msvcp140`, `vcruntime140`, `vcruntime140_1` и `vulkan-1.dll`.
   На чистой Windows VC++ может не быть → мастер ставит `aka.ms/vs/17/release/vc_redist.x64.exe /install /quiet /norestart`
-  через UAC (коды 0, 3010, 1638 — успех). Позже: класть 3 DLL рядом с движком (app-local) — без UAC.
+  через UAC (коды 0, 3010, 1638 — успех). С 0.1 три DLL кладутся рядом с движком (app-local) — без UAC ([Веха 0.1](v0.1.md)).
 - Нет `vulkan-1.dll` → чат ставим на CUDA (`Engine::pick(.., vulkan, ..)`).
 - hf-mirror.com отсюда отвечает 308 на huggingface.co (и файлы, и API) — зеркало работает не из всех стран.
   Поэтому токен разрешён и для huggingface.co, а проверка токена при таком перенаправлении спрашивает HF напрямую.

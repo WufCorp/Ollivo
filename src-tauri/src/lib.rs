@@ -25,6 +25,7 @@ mod safetensors;
 mod settings;
 mod update;
 mod setup;
+mod vcrt;
 #[cfg(test)]
 mod testserver;
 

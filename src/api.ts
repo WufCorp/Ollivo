@@ -206,7 +206,6 @@ export interface SetupCheck {
   title: string;
   status: CheckStatus;
   message: string;
-  fix: "vcredist" | null;
 }
 
 export interface DiskChoice {

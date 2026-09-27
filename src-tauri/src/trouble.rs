@@ -89,9 +89,11 @@ pub fn start(raw: &str, can_lighter: bool) -> Problem {
     }
     if DLL_CODES.iter().any(|c| raw.contains(c)) {
         return problem(
-            "Не хватает компонентов Windows, нужных движку чата.",
-            Some("Их ставит установщик Microsoft; Windows спросит разрешение."),
-            &[Vcredist, Engine],
+            "Движку чата не хватает файлов.",
+            // Библиотеки VC++ программа кладёт рядом с движком сама (`vcrt.rs`), так что
+            // скорее побит сам движок: сначала «Починить», установщик Microsoft — запасной путь.
+            Some("Обычно помогает «Починить» движок на странице «Компьютер». Не помогло — поставьте компоненты Microsoft, Windows спросит разрешение."),
+            &[Engine, Vcredist],
             raw,
         );
     }
@@ -218,7 +220,7 @@ mod tests {
     fn own_errors_are_recognized() {
         assert_eq!(start(r"файл модели не найден: D:\m.gguf", true).actions, [Forget]);
         assert_eq!(start("движок чата не установлен", true).actions, [Engine]);
-        assert_eq!(start("движок завершился при запуске (код Some(-1073741515))\n", true).actions, [Vcredist, Engine]);
+        assert_eq!(start("движок завершился при запуске (код Some(-1073741515))\n", true).actions, [Engine, Vcredist]);
         assert_eq!(start("что-то совсем новое", true).actions, [Retry]);
     }
 
