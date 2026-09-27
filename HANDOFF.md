@@ -343,6 +343,12 @@ site/                 сайт-одностраничник (GitHub Pages, workf
 Всего до 1.0 — ~3–4 месяца. Рискованнее всего: ComfyUI и custom nodes без интерфейса, видео
 на 8 ГБ, качественный русский TTS на процессоре.
 
+### Как обновить значок
+
+Исходники — `src-tauri/icons/app-icon.svg` (знак) и `app-icon-small.svg` (он же жирнее, для 16 и 24 px).
+После правки: `python scripts/make-icons.py` — пересоберёт все PNG и `icon.ico`. Логотип сайта
+`site/logo.svg` — копия `app-icon.svg`, его поправить тем же движением.
+
 ### Как обновлять подборку каталога
 
 Размеры и хеши в `manifest/catalog.json` сняты через API HuggingFace. Чтобы добавить модель

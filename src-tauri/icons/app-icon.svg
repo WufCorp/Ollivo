@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <!-- Значок Ollivo: буква «О» — облачко разговора, внутри точка — модель.
-       Логотип сайта; исходник значка программы — src-tauri/icons/app-icon.svg. -->
+       Исходник для `npm run tauri icon`; логотип сайта — тот же знак (site/logo.svg). -->
   <defs>
     <mask id="hole">
       <rect width="1024" height="1024" fill="#fff"/>
