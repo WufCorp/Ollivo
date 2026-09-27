@@ -95,34 +95,33 @@ const NO_RELEASES: &str = "в этом канале пока нет выпуще
 mod tests {
     use super::*;
 
-    /// Настоящая проверка выпущенного обновления: берём описание из S3, скачиваем
-    /// установщик и сверяем подпись тем же ключом, что зашит в программе.
+    /// Настоящая проверка выпущенного обновления по каждому адресу — S3 (оба канала) и
+    /// запасному GitHub: скачиваем описание и установщик и сверяем подпись тем же ключом,
+    /// что зашит в программе. Упадёт любой адрес — обновление у кого-то не встанет.
     /// `cargo test update::tests::published_update_real -- --ignored --nocapture`
     #[tokio::test]
     #[ignore]
     async fn published_update_real() {
         use base64::Engine;
-        let manifest: serde_json::Value = reqwest::get(&endpoints("beta")[0]).await.unwrap().json().await.unwrap();
-        let win = &manifest["platforms"]["windows-x86_64"];
-        println!("версия {}, файл {}", manifest["version"], win["url"]);
-
-        let setup = reqwest::get(win["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
-        assert!(setup.len() > 1_000_000, "установщик подозрительно мал: {} байт", setup.len());
-
         let b64 = base64::engine::general_purpose::STANDARD;
-        let key = minisign_verify::PublicKey::decode(
-            &String::from_utf8(b64.decode(PUBKEY).unwrap()).unwrap(),
-        )
-        .unwrap();
-        let sig = minisign_verify::Signature::decode(
-            &String::from_utf8(b64.decode(win["signature"].as_str().unwrap()).unwrap()).unwrap(),
-        )
-        .unwrap();
-        key.verify(&setup, &sig, true).expect("подпись обновления не сходится с ключом программы");
+        let key = minisign_verify::PublicKey::decode(&String::from_utf8(b64.decode(PUBKEY).unwrap()).unwrap()).unwrap();
+        for url in endpoints("beta").into_iter().chain(endpoints("stable")) {
+            let manifest: serde_json::Value = reqwest::get(&url).await.unwrap().json().await.unwrap();
+            let win = &manifest["platforms"]["windows-x86_64"];
+            println!("{url}
+  версия {}, файл {}", manifest["version"], win["url"]);
 
-        // Подпись привязана к версии (--app-version), её видно в доверенном комментарии.
-        let version = manifest["version"].as_str().unwrap();
-        assert!(sig.trusted_comment().contains(&format!("version:{version}")), "{}", sig.trusted_comment());
+            let setup = reqwest::get(win["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
+            assert!(setup.len() > 1_000_000, "установщик подозрительно мал: {} байт", setup.len());
+            let sig = minisign_verify::Signature::decode(
+                &String::from_utf8(b64.decode(win["signature"].as_str().unwrap()).unwrap()).unwrap(),
+            )
+            .unwrap();
+            key.verify(&setup, &sig, true).expect("подпись обновления не сходится с ключом программы");
+            // Подпись привязана к версии (--app-version), её видно в доверенном комментарии.
+            let version = manifest["version"].as_str().unwrap();
+            assert!(sig.trusted_comment().contains(&format!("version:{version}")), "{}", sig.trusted_comment());
+        }
     }
 
     /// Публичная половина ключа обновлений — та же, что в `tauri.conf.json`.
