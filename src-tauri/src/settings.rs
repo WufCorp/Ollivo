@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_broken_file() {
-        let dir = std::env::temp_dir().join(format!("ollivo-set-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-set-{}", std::process::id()));
         let path = dir.join("settings.json");
         let store = Store::open(path.clone());
         let mut s = store.get();

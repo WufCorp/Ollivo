@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "revision": 1,
+  "revision": 2,
   "engines": [
     {
       "id": "llama.cpp",
@@ -96,6 +96,100 @@
           ]
         }
       ]
+    },
+    {
+      "id": "uv",
+      "title": "Установщик Python",
+      "version": "0.12.19",
+      "exe": "uv.exe",
+      "prefer": ["cpu"],
+      "builds": [
+        {
+          "build": "cpu",
+          "files": [
+            {
+              "name": "uv-x86_64-pc-windows-msvc.zip",
+              "urls": ["https://github.com/astral-sh/uv/releases/download/0.12.19/uv-x86_64-pc-windows-msvc.zip"],
+              "sha256": "6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0",
+              "size": 17955780,
+              "only": ["uv.exe"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "comfyui",
+      "title": "Движок картинок",
+      "version": "0.37.0",
+      "exe": "ComfyUI-0.37.0/main.py",
+      "prefer": ["cpu"],
+      "builds": [
+        {
+          "build": "cpu",
+          "files": [
+            {
+              "name": "ComfyUI-0.37.0.zip",
+              "urls": ["https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/v0.37.0.zip"],
+              "sha256": "b0a25a6c11d8ee040c1fb6b300b5f6a2785490493331830e57185001cd78a34b",
+              "size": 13104933
+            }
+          ]
+        }
+      ]
     }
-  ]
+  ],
+  "python": {
+    "version": "3.12.14",
+    "exclude_newer": "2026-09-27",
+    "skip": ["comfyui-frontend-package", "comfyui-workflow-templates", "comfyui-embedded-docs", "PyOpenGL", "comfy-angle"],
+    "torch": [
+      {
+        "build": "cuda12",
+        "files": [
+          {
+            "name": "torch-2.14.0+cu126-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu126/torch-2.14.0%2Bcu126-cp312-cp312-win_amd64.whl"],
+            "sha256": "11a492e40dfd18597fdb8271879a3a09496a23140deb81a6b5a005d9cff7312b",
+            "size": 2602771598
+          },
+          {
+            "name": "torchvision-0.29.0+cu126-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu126/torchvision-0.29.0%2Bcu126-cp312-cp312-win_amd64.whl"],
+            "sha256": "31b3c9353f18d31a1140a332893c09bfd47ad1664af4fc956068a25c5107d2f6",
+            "size": 6111826
+          },
+          {
+            "name": "torchaudio-2.11.0+cu126-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu126/torchaudio-2.11.0%2Bcu126-cp312-cp312-win_amd64.whl"],
+            "sha256": "ca5b7815c6952c79c65dce9a78eb96be8b73a8b291f82ca473812a910cdc9fbc",
+            "size": 1519626
+          }
+        ]
+      },
+      {
+        "build": "cuda13",
+        "files": [
+          {
+            "name": "torch-2.14.0+cu130-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp312-cp312-win_amd64.whl"],
+            "sha256": "6a20371bf5af2af933a6149e5ec13f7ea7ad506276137dae9386f98d236c02ff",
+            "size": 1990604486
+          },
+          {
+            "name": "torchvision-0.29.0+cu130-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.0%2Bcu130-cp312-cp312-win_amd64.whl"],
+            "sha256": "b33bbcaef5227b66de396163b7a8fb4d444072ffcc4d672774c7368db8f3a52a",
+            "size": 6405845
+          },
+          {
+            "name": "torchaudio-2.11.0+cu130-cp312-cp312-win_amd64.whl",
+            "urls": ["https://download-r2.pytorch.org/whl/cu130/torchaudio-2.11.0%2Bcu130-cp312-cp312-win_amd64.whl"],
+            "sha256": "f74949f9ace1e4a6cf9468bdb3211b9cfa0af6ea348125471ac71c8621d6c77d",
+            "size": 1722734
+          }
+        ]
+      }
+    ]
+  }
 }

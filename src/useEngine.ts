@@ -14,6 +14,9 @@ export const STAGE_NAMES: Record<EngineProgress["stage"], string> = {
   download: "Скачиваю",
   verify: "Проверяю файлы",
   unpack: "Распаковываю",
+  python: "Готовлю движок картинок",
+  packages: "Ставлю части движка картинок",
+  warmup: "Проверяю видеокарту",
 };
 
 /** Состояние и установка движка: статус, прогресс, пауза, ошибка. */

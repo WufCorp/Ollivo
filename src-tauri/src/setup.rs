@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn prepare_rejects_risky_path() {
         assert!(prepare_dir(Path::new(r"C:\Users\Иван\Ollivo")).is_err());
-        let ok = std::env::temp_dir().join(format!("ollivo-setup-{}", std::process::id()));
+        let ok = crate::testserver::tmp().join(format!("ollivo-setup-{}", std::process::id()));
         if !crate::hardware::is_risky_path(&ok.to_string_lossy()) {
             prepare_dir(&ok).unwrap();
         }

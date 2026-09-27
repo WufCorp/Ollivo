@@ -181,7 +181,7 @@ mod tests {
     use super::*;
 
     fn tmp_log(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("ollivo-proc-{}-{name}", std::process::id())).join("t.log")
+        crate::testserver::tmp().join(format!("ollivo-proc-{}-{name}", std::process::id())).join("t.log")
     }
 
     fn spec(args: &[&str], log: PathBuf) -> Spec {

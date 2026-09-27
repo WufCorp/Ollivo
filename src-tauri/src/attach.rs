@@ -536,7 +536,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("ollivo-attach-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-attach-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }

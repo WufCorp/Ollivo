@@ -254,7 +254,8 @@ export interface EngineStatus {
 
 export interface EngineProgress {
   id: string;
-  stage: "download" | "verify" | "unpack";
+  /** `python`, `packages`, `warmup` — только у установки картинок: там `total` уже скачано. */
+  stage: "download" | "verify" | "unpack" | "python" | "packages" | "warmup";
   done: number;
   total: number;
   speed: number;
@@ -281,6 +282,21 @@ export const engineInstall = (id: string, build?: Build) =>
   invoke<void>("engine_install", { id, build: build ?? null });
 
 export const engineRepair = (id: string) => invoke<void>("engine_repair", { id });
+
+/** Картинки на этом ПК: готово ли, а если нет — сколько качать и места. */
+export interface ImagesStatus {
+  ready: boolean;
+  /** Нет видеокарты NVIDIA — картинок не будет. */
+  supported: boolean;
+  download: number;
+  disk: number;
+  free: number;
+}
+
+export const imagesStatus = () => invoke<ImagesStatus>("images_status");
+
+/** Прогресс и итог — `engine://progress` / `engine://finished` с id `images`. */
+export const imagesInstall = () => invoke<void>("images_install");
 
 export const onEngineProgress = (cb: (p: EngineProgress) => void): Promise<UnlistenFn> =>
   listen<EngineProgress>("engine://progress", (e) => cb(e.payload));

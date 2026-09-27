@@ -105,3 +105,12 @@ pub fn loaded_from(pid: u32, module: &str) -> String {
     let out = std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
+
+/// Временная папка тестов — `target\test-tmp` на диске проекта, а не системный TEMP: тесты
+/// оставляли там папки на каждый прогон (к 2026-09-27 — ~3000 папок, 2,2 ГБ на диске C:).
+/// Уходит вместе с `cargo clean`.
+pub fn tmp() -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("test-tmp");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}

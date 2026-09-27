@@ -355,7 +355,7 @@ c:/users/иван петров/AppData | owner: Иван Петров";
 
     #[test]
     fn problems_are_one_line_each_and_file_stays_small() {
-        let file = std::env::temp_dir().join(format!("ollivo-report-{}", std::process::id())).join("problems.log");
+        let file = crate::testserver::tmp().join(format!("ollivo-report-{}", std::process::id())).join("problems.log");
         let _ = std::fs::remove_file(&file);
         note(&file, "Модель не запустилась", "Не хватило видеопамяти.", "line one\n\nline two\n");
         let text = std::fs::read_to_string(&file).unwrap();
@@ -369,7 +369,7 @@ c:/users/иван петров/AppData | owner: Иван Петров";
 
     #[test]
     fn report_has_no_secrets_and_long_lines_are_cut() {
-        let dir = std::env::temp_dir().join(format!("ollivo-report-b-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-report-b-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("llama-server.log");
         std::fs::write(&log, format!("I srv  load_model: loading\nW parse: {}\n", "y".repeat(2000))).unwrap();
@@ -406,7 +406,7 @@ c:/users/иван петров/AppData | owner: Иван Петров";
                 .map(|id| (id.to_string(), crate::engines::installed(root, id).pop()))
                 .collect(),
             logs: vec![("llama-server".into(), root.join(r"logs\llama-server.log"))],
-            problems: std::env::temp_dir().join("none.log"),
+            problems: crate::testserver::tmp().join("none.log"),
             data_dir: root.into(),
             ..Default::default()
         };

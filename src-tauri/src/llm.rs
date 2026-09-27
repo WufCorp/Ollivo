@@ -533,7 +533,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-llm-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-llm-test"), &CancellationToken::new())
             .await
             .unwrap();
         println!("готов за {:.1} с, порт {}", llm.started_in.as_secs_f64(), llm.port);
@@ -599,7 +599,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-chat-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-chat-test"), &CancellationToken::new())
             .await
             .unwrap();
 
@@ -640,7 +640,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-ctx-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-ctx-test"), &CancellationToken::new())
             .await
             .unwrap();
         let long = vec![Msg::new("user", "слово ".repeat(2000))];
@@ -666,7 +666,7 @@ mod tests {
         let file = std::env::var("OLLIVO_MODEL").unwrap_or("qwen2.5-3b-instruct-q4_k_m.gguf".into());
         let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-roles-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-roles-test"), &CancellationToken::new())
             .await
             .unwrap();
         let ask = |role: &'static str, style: &'static str, text: &'static str| {
@@ -726,7 +726,7 @@ mod tests {
             exe: PathBuf::from("llama-server.exe"),
         };
         let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
-        let err = start(&Supervisor::new(), &engine, &cfg, &std::env::temp_dir(), &CancellationToken::new())
+        let err = start(&Supervisor::new(), &engine, &cfg, &crate::testserver::tmp(), &CancellationToken::new())
             .await
             .err()
             .unwrap();
@@ -737,7 +737,7 @@ mod tests {
     /// Вместо llama-server — ping, который никогда не ответит на /health.
     #[tokio::test]
     async fn cancel_during_load_stops_engine() {
-        let dir = std::env::temp_dir().join(format!("ollivo-llm-cancel-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-llm-cancel-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let model = dir.join("m.gguf");
         std::fs::write(&model, b"GGUF").unwrap();
@@ -771,7 +771,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-doc-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-doc-test"), &CancellationToken::new())
             .await
             .unwrap();
         let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/borsch.pdf");
@@ -815,13 +815,13 @@ mod tests {
         assert!(mmproj.is_some(), "дополнение не нашлось");
         let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-vision-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-vision-test"), &CancellationToken::new())
             .await
             .unwrap();
         println!("готов за {:.1} с, зрение: {}", llm.started_in.as_secs_f64(), llm.vision);
         assert!(llm.vision);
 
-        let images = std::env::temp_dir().join("ollivo-vision-test").join("images");
+        let images = crate::testserver::tmp().join("ollivo-vision-test").join("images");
         let pic = crate::attach::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/circle42.png"), &images, None).unwrap();
         let ask = |question: &'static str, files: Vec<crate::attach::Attachment>| {
             let port = llm.port;
@@ -863,13 +863,13 @@ mod tests {
         let file = std::env::var("OLLIVO_MODEL").unwrap_or(r"unsloth\Qwen3.5-2B-GGUF\Qwen3.5-2B-Q4_K_M.gguf".into());
         let cfg = Config { model: root.join("models").join(file), ctx: 8192, gpu_layers: 999, mmproj: None };
         let sup = Supervisor::new();
-        let llm = start(&sup, &engine, &cfg, &std::env::temp_dir().join("ollivo-project-test"), &CancellationToken::new())
+        let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-project-test"), &CancellationToken::new())
             .await
             .unwrap();
         println!("готов за {:.1} с, инструменты: {}", llm.started_in.as_secs_f64(), llm.tools);
         assert!(llm.tools);
 
-        let dir = std::env::temp_dir().join(format!("ollivo-real-project-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-real-project-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("shop")).unwrap();
         std::fs::write(dir.join("main.py"), "from shop.prices import total\n\nprint(total([120, 80, 45]))\n").unwrap();

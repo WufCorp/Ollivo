@@ -5,6 +5,7 @@ mod speech;
 mod storage;
 mod catalog;
 mod chats;
+mod comfy;
 mod download;
 mod engines;
 mod gguf;
@@ -16,6 +17,7 @@ mod llm;
 mod net;
 mod presets;
 mod project;
+mod pyenv;
 mod probe;
 mod report;
 mod trouble;
@@ -654,6 +656,67 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
         core.finish(&task);
         let (error, kind, result) = engine_outcome(res);
         emit_finished(&app, "engine://finished", Finished { id, error, kind, result });
+    });
+    Ok(())
+}
+
+/// Картинки на этом ПК: готово ли окружение, а если нет — сколько качать и сколько места нужно.
+#[derive(serde::Serialize)]
+struct ImagesStatus {
+    ready: bool,
+    /// Нет видеокарты NVIDIA — картинок не будет (в MVP только CUDA).
+    supported: bool,
+    download: u64,
+    /// Сколько места займёт всё вместе со скачанным.
+    disk: u64,
+    /// Свободно на диске папки программы.
+    free: u64,
+}
+
+#[tauri::command]
+async fn images_status(core: CoreState<'_>) -> Result<ImagesStatus, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (root, hw) = (core.data_dir(), hardware::detect().cuda_build);
+        let ready = pyenv::ready(&root, &core.manifest, hw).is_some();
+        let free = free_space(&root);
+        match pyenv::needs(&root, &core.manifest, hw) {
+            Ok(n) => ImagesStatus { ready, supported: true, download: n.download, disk: n.disk, free },
+            Err(_) => ImagesStatus { ready: false, supported: false, download: 0, disk: 0, free },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Установка всего для картинок в фоне: `engine://progress` и `engine://finished` с id `images`.
+#[tauri::command]
+async fn images_install(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?.cuda_build;
+    let proxy = core.settings.get().proxy.url(&net::load_password())?;
+    let task = "engine:images".to_string();
+    let cancel = core.start(&task)?;
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let progress_app = app.clone();
+        let on_progress = move |progress| {
+            let _ = progress_app.emit("engine://progress", EngineProgress { id: "images".into(), progress });
+        };
+        let root = core.data_dir();
+        let res = pyenv::install(&core.downloader(), &root, &core.manifest, hw, proxy, &cancel, &on_progress).await;
+        core.finish(&task);
+        let (error, kind, result) = match res {
+            Ok(env) => (None, None, Some(env)),
+            Err(pyenv::Error::Engine(e)) => {
+                let (error, kind, _) = engine_outcome::<()>(Err(e));
+                (error, kind, None)
+            }
+            Err(e) => {
+                let kind = if e.is_net() { "net" } else { "other" };
+                (Some(e.to_string()), Some(kind), None)
+            }
+        };
+        emit_finished(&app, "engine://finished", Finished { id: "images".into(), error, kind, result });
     });
     Ok(())
 }
@@ -1873,6 +1936,8 @@ pub fn run() {
             engine_status,
             engine_install,
             engine_repair,
+            images_status,
+            images_install,
             catalog_picks,
             catalog_search,
             catalog_files,
@@ -1940,7 +2005,7 @@ mod tests {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         let sup = process::Supervisor::new();
-        let logs = std::env::temp_dir().join("ollivo-oom-test");
+        let logs = crate::testserver::tmp().join("ollivo-oom-test");
         let model = root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf");
         // 262144 токенов памяти разговора у 3B — ~9 ГБ сверх весов: на 8 ГБ не влезет.
         let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999, mmproj: None };

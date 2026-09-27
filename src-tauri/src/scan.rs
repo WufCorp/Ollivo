@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ollivo-scan-{}-{name}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-scan-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

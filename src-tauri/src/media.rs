@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn what_each_file_needs() {
-        let dir = std::env::temp_dir().join(format!("ollivo-media-{}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-media-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let vorbis = dir.join("song.ogg");
         std::fs::write(&vorbis, b"OggS\0\x02\0\0\0\0\0\0\0\0\x01\x1evorbis").unwrap();
@@ -192,7 +192,7 @@ mod tests {
             assert_eq!((img.width(), img.height()), (w, h));
         }
         // Целиком, как из окна: HEIC → JPG в папке вложений.
-        let a = crate::attach::read(&dir.join("arrow.heic"), &std::env::temp_dir().join("ollivo-media-img"), Some(&ff)).unwrap();
+        let a = crate::attach::read(&dir.join("arrow.heic"), &crate::testserver::tmp().join("ollivo-media-img"), Some(&ff)).unwrap();
         let stored = a.path.unwrap();
         let img = image::open(&stored).unwrap();
         println!("{} — {} КБ", stored.display(), std::fs::metadata(&stored).unwrap().len() / 1024);
@@ -200,14 +200,14 @@ mod tests {
 
         let c = CancellationToken::new();
         for name in ["ch00.m4a", "ch00.opus", "ch00.mp4"] {
-            let out = std::env::temp_dir().join(format!("{name}.wav"));
+            let out = crate::testserver::tmp().join(format!("{name}.wav"));
             let started = Instant::now();
             to_wav(&ff, &dir.join(name), &out, &c).await.unwrap();
             let seconds = crate::speech::wav_seconds(std::fs::metadata(&out).unwrap().len() as usize);
             println!("{name}: {seconds:.1} с звука за {:.2} с", started.elapsed().as_secs_f64());
             assert!((seconds - 72.0).abs() < 1.5, "{seconds}");
         }
-        let err = to_wav(&ff, &dir.join("silent.mp4"), &std::env::temp_dir().join("silent.wav"), &c).await.unwrap_err();
+        let err = to_wav(&ff, &dir.join("silent.mp4"), &crate::testserver::tmp().join("silent.wav"), &c).await.unwrap_err();
         assert_eq!(err, "в файле нет звука");
     }
 }

@@ -15,6 +15,27 @@ pub struct Manifest {
     pub schema: u32,
     pub revision: u32,
     pub engines: Vec<Engine>,
+    /// Окружение Python для ComfyUI. Нет — картинки этой версией манифеста не ставятся.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<PythonSpec>,
+}
+
+/// Что поставить в свой Python для картинок (`pyenv.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PythonSpec {
+    /// Точная версия для `uv python install`: сам архив uv сверяет по своим хешам.
+    pub version: String,
+    /// Зависимости ComfyUI разрешаются на эту дату (`uv --exclude-newer`): в его
+    /// `requirements.txt` версии почти не закреплены, без даты у двух людей
+    /// в один день могли бы встать разные пакеты.
+    pub exclude_newer: String,
+    /// Пакеты из `requirements.txt` ComfyUI, которые не ставим: веб-интерфейс
+    /// и его шаблоны (~0,5 ГБ) — окно у нас своё.
+    #[serde(default)]
+    pub skip: Vec<String>,
+    /// Колёса torch, torchvision, torchaudio под сборку видеокарты: GTX 10xx — CUDA 12.6,
+    /// RTX — CUDA 13.0 (фаза 0). Качает наш загрузчик — в один поток uv тянул бы их ~40 минут.
+    pub torch: Vec<EngineBuild>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +95,13 @@ impl Manifest {
     }
 }
 
+impl PythonSpec {
+    /// Колёса torch под сборку этого ПК. Без NVIDIA (`Vulkan`) картинок нет — в MVP только CUDA.
+    pub fn torch_for(&self, hw: Build) -> Option<&EngineBuild> {
+        self.torch.iter().find(|b| b.build == hw)
+    }
+}
+
 impl Engine {
     /// Сборка для этого ПК: `wanted`, если она задана и пойдёт, иначе первая
     /// подходящая из `prefer`. `vulkan` — есть ли в системе `vulkan-1.dll`.
@@ -98,13 +126,13 @@ mod tests {
     fn bundled_is_valid() {
         let m = Manifest::bundled();
         assert!(m.engine("llama.cpp").is_some() && m.engine("whisper.cpp").is_some());
-        for e in &m.engines {
-            for b in &e.builds {
-                assert!(!b.files.is_empty());
-                for f in &b.files {
-                    assert_eq!(f.sha256.len(), 64, "{}", f.name);
-                    assert!(!f.urls.is_empty() && f.size > 0, "{}", f.name);
-                }
+        let py = m.python.as_ref().expect("окружение для картинок");
+        let torch = py.torch.iter().chain(m.engines.iter().flat_map(|e| &e.builds));
+        for b in torch {
+            assert!(!b.files.is_empty());
+            for f in &b.files {
+                assert_eq!(f.sha256.len(), 64, "{}", f.name);
+                assert!(!f.urls.is_empty() && f.size > 0, "{}", f.name);
             }
         }
     }
@@ -133,6 +161,19 @@ mod tests {
         // Нет Vulkan в системе — ставим CUDA; нет ни того, ни другого — нечего ставить.
         assert_eq!(llama.pick(Build::Cuda12, false, None).unwrap().build, Build::Cuda12);
         assert!(llama.pick(Build::Vulkan, false, None).is_none());
+    }
+
+    /// Картинкам нужна NVIDIA: GTX 10xx получает torch на CUDA 12.6, RTX — на 13.0.
+    #[test]
+    fn torch_by_hardware() {
+        let m = Manifest::bundled();
+        let py = m.python.as_ref().unwrap();
+        let cu12 = py.torch_for(Build::Cuda12).unwrap();
+        assert!(cu12.files.iter().all(|f| f.name.contains("+cu126-cp312")), "{:?}", cu12.files);
+        let cu13 = py.torch_for(Build::Cuda13).unwrap();
+        assert!(cu13.files.iter().all(|f| f.name.contains("+cu130-cp312")));
+        assert!(py.torch_for(Build::Vulkan).is_none());
+        assert!(py.version.starts_with("3.12."), "колёса torch собраны под cp312");
     }
 
     #[test]

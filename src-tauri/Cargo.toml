@@ -45,6 +45,8 @@ base64 = "0.22"
 ignore = "0.4.33"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
 sevenz-rust2 = { version = "0.23.0", default-features = false }
+# Ход генерации ComfyUI: только ws:// на 127.0.0.1, без TLS.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

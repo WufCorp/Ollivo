@@ -284,7 +284,7 @@ mod tests {
     }
 
     fn store(name: &str) -> Store {
-        let dir = std::env::temp_dir().join(format!("ollivo-chats-{}-{name}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("ollivo-chats-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         Store::new(dir)
     }

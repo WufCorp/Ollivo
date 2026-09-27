@@ -55,6 +55,12 @@ pub enum Stage {
     Download,
     Verify,
     Unpack,
+    /// Дальше — только у окружения для картинок (`pyenv.rs`): свой Python,
+    Python,
+    /// пакеты (сколько осталось, заранее не известно),
+    Packages,
+    /// подготовка ComfyUI к быстрому первому запуску.
+    Warmup,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +151,7 @@ pub async fn install(
     }
 
     on_progress(InstallProgress { stage: Stage::Unpack, done: total, total, speed: 0.0 });
-    let tmp = dir.with_extension("tmp");
+    let tmp = tmp_sibling(&dir);
     let (tmp2, archives2) = (tmp.clone(), archives.clone());
     let sums = tokio::task::spawn_blocking(move || {
         unpack_all(&archives2, &tmp2)?;
@@ -170,7 +176,7 @@ pub async fn install(
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
-    std::fs::rename(&tmp, &dir)?;
+    rename_dir(&tmp, &dir).await?;
     for (a, _) in &archives {
         let _ = std::fs::remove_file(a);
     }
@@ -224,6 +230,30 @@ pub async fn repair(
     }
     let installed = install(dl, root, engine, build, cancel, on_progress).await?;
     Ok(Repair { installed, broken, reinstalled: true })
+}
+
+/// `<папка>.tmp` рядом с папкой сборки. Не `with_extension`: у «0.37.0-cpu» он счёл бы
+/// расширением «0-cpu» и дал «0.37.tmp».
+pub fn tmp_sibling(dir: &Path) -> PathBuf {
+    let mut s = dir.as_os_str().to_owned();
+    s.push(".tmp");
+    PathBuf::from(s)
+}
+
+/// Переименование свежераспакованной папки с повторами: антивирус проверяет новые файлы
+/// и держит их открытыми, Windows отвечает «Отказано в доступе». Замер: окружение картинок
+/// (4,8 ГБ) не переименовалось сразу после установки, а через пару минут — без ошибок.
+pub async fn rename_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < 120 => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            r => return r,
+        }
+    }
 }
 
 /// Остатки оборванной распаковки: папки `…-<сборка>.tmp`.
@@ -354,7 +384,7 @@ mod tests {
     /// Папку программы перенесли — движок находится на новом месте.
     #[test]
     fn installed_survives_moving_data_dir() {
-        let root = std::env::temp_dir().join(format!("ollivo-moved-{}", std::process::id()));
+        let root = crate::testserver::tmp().join(format!("ollivo-moved-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("engines").join("llama.cpp").join("b1-vulkan");
         std::fs::create_dir_all(dir.join("bin")).unwrap();
@@ -417,7 +447,7 @@ mod tests {
 
     fn tmp_root(name: &str) -> PathBuf {
         // Кириллица и пробел — как в папке программы у человека по имени «Иван Петров».
-        let dir = std::env::temp_dir().join(format!("Иван Петров {}-{name}", std::process::id()));
+        let dir = crate::testserver::tmp().join(format!("Иван Петров {}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -452,6 +482,13 @@ mod tests {
         assert_eq!(std::fs::read(&got.exe).unwrap(), b"exe");
         assert!(got.dir.join("ff/LICENSE").is_file());
         assert!(!got.dir.join("ff/bin/ffplay.exe").exists());
+    }
+
+    #[test]
+    fn tmp_keeps_whole_version() {
+        let dir = Path::new(r"D:\Ollivo\engines\comfyui .37.0-cpu");
+        assert_eq!(tmp_sibling(dir), Path::new(r"D:\Ollivo\engines\comfyui .37.0-cpu.tmp"));
+        assert!(tmp_sibling(dir).extension().is_some_and(|e| e == "tmp"), "clean_leftovers ищет по расширению");
     }
 
     #[test]
@@ -512,7 +549,7 @@ mod tests {
 
         // Антивирус «съел» библиотеку, а распаковка оборвалась в прошлый раз.
         std::fs::write(got.dir.join("lib").join("ggml.dll"), b"XXX").unwrap();
-        let junk = got.dir.with_extension("tmp");
+        let junk = tmp_sibling(&got.dir);
         std::fs::create_dir_all(&junk).unwrap();
         let r = repair(&dl, &root, &e, &e.builds[0], &c, &|_| {}).await.unwrap();
         assert_eq!(r.broken, vec!["lib/ggml.dll".to_string()]);
