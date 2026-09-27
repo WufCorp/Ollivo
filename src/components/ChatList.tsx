@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { chatsList, chatsRemove, chatsSearch, type ChatHit } from "../api";
+import Icon from "./Icon";
 
 /** Пауза после последней буквы: поиск читает все разговоры, не надо на каждую букву. */
 const SEARCH_DELAY_MS = 250;
@@ -46,41 +47,63 @@ export default function ChatList({
   };
 
   const words = q.split(/\s+/).filter(Boolean);
+  // В поиске важнее совпадение, чем дата, — там без разбивки по дням.
+  const day = (c: ChatHit) => (q ? null : dayOf(c.updated));
 
   return (
     <div className="chats">
-      <button className="tab new" onClick={onNew}>
-        + Новый разговор
-      </button>
-      <input
-        className="chat-search"
-        type="search"
-        placeholder="Найти в разговорах"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-      />
+      <div className="chats-head">
+        <h2>Разговоры</h2>
+        <button className="icon-button accent" title="Новый разговор" onClick={onNew}>
+          <Icon name="plus" />
+        </button>
+      </div>
+      <label className="chat-search">
+        <Icon name="search" size={15} />
+        <input
+          type="search"
+          placeholder="Найти в разговорах"
+          aria-label="Найти в разговорах"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+        />
+      </label>
       {q && items.length === 0 && <p className="muted chat-none">Ничего не нашлось</p>}
-      {items.map((c) => (
-        <div key={c.id} className={c.id === current ? "chat-row active" : "chat-row"}>
-          <button className="tab" title={c.title} onClick={() => onPick(c.id)}>
-            <span className="chat-title">
-              <Marked text={c.title} words={words} />
-            </span>
-            {/* Вопрос и есть название — второй раз его не показываем. */}
-            {c.snippet && c.snippet !== c.title && (
-              <span className="chat-snippet">
-                <Marked text={c.snippet} words={words} />
+      {items.map((c, i) => (
+        <Fragment key={c.id}>
+          {day(c) && day(c) !== (i > 0 ? day(items[i - 1]) : null) && <p className="chat-day">{day(c)}</p>}
+          <div className={c.id === current ? "chat-row active" : "chat-row"}>
+            <button className="tab" title={c.title} onClick={() => onPick(c.id)}>
+              <span className="chat-title">
+                <Marked text={c.title} words={words} />
               </span>
-            )}
-          </button>
-          <button className="link forget" title="Удалить разговор" onClick={() => remove(c.id)}>
-            ✕
-          </button>
-        </div>
+              {/* Вопрос и есть название — второй раз его не показываем. */}
+              {c.snippet && c.snippet !== c.title && (
+                <span className="chat-snippet">
+                  <Marked text={c.snippet} words={words} />
+                </span>
+              )}
+            </button>
+            <button className="forget" title="Удалить разговор" onClick={() => remove(c.id)}>
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        </Fragment>
       ))}
     </div>
   );
+}
+
+/** «Сегодня», «Вчера», «На этой неделе», «Раньше» — как люди вспоминают разговоры. */
+function dayOf(updated: number): string {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const days = Math.floor((midnight.getTime() / 1000 - updated) / 86400) + 1;
+  if (updated * 1000 >= midnight.getTime()) return "Сегодня";
+  if (days <= 1) return "Вчера";
+  if (days < 7) return "На этой неделе";
+  return "Раньше";
 }
 
 /** Строчные и «е» вместо «ё», символ в символ — чтобы места совпадений годились для исходного текста. */

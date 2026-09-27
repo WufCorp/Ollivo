@@ -9,7 +9,7 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
  * Что досталось видеокарте. 999 — «сколько влезет», выбор оставлен движку;
  * больше, чем слоёв у модели, — тоже всё (ядро добавляет выходной слой).
  */
-const whoComputes = (onGpu: number | null, total: number | null) => {
+export const whoComputes = (onGpu: number | null, total: number | null) => {
   if (onGpu === null) return null;
   if (onGpu === 0) return "Считает процессор — ответы будут медленными";
   if (onGpu >= 900 || (total !== null && onGpu >= total)) return "Считает видеокарта";

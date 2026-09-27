@@ -110,7 +110,8 @@ export interface Settings {
   updates: UpdateSettings;
   models: ModelSettings;
   /** Оформление окна: `system` — как в Windows. */
-  theme: "system" | "light" | "dark";
+  /** Своя тема программы, от Windows не зависит; «system» из старых версий ядро читает как тёмную. */
+  theme: "light" | "dark";
 }
 
 export interface SettingsView {
@@ -374,6 +375,9 @@ export interface Verdict {
   details: string[];
   gpu_layers: number | null;
   ctx: number | null;
+  /** Сколько видеопамяти нужно и сколько свободно — для шкалы «влезет ли». Без видеокарты — `null`. */
+  need: number | null;
+  room: number | null;
 }
 
 export interface Model {

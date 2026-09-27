@@ -13,6 +13,15 @@ export function plural(n: number, one: string, few: string, many: string) {
   return many;
 }
 
+/** Сколько это страниц — числом, для «5 из 12 страниц». Округление то же, что у `memoryPages`,
+ *  иначе панель и строка состояния назовут разное число. Начатый разговор — не меньше страницы:
+ *  «0 из 12» после первого вопроса выглядит как ошибка. */
+export function pageCount(tokens: number): number {
+  if (tokens <= 0) return 0;
+  const p = Math.max(1, Math.floor(tokens / TOKENS_PER_PAGE));
+  return p > 20 ? Math.floor((p + 5) / 10) * 10 : p;
+}
+
 /** «около 12 страниц» — сколько разговора модель держит в памяти. */
 export function memoryPages(ctx: number): string {
   let p = Math.max(1, Math.floor(ctx / TOKENS_PER_PAGE));

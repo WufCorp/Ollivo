@@ -122,9 +122,8 @@ export default function Settings() {
             value={settings.theme}
             onChange={(e) => update({ theme: e.target.value as SettingsData["theme"] })}
           >
-            <option value="system">Как в Windows</option>
-            <option value="light">Светлое</option>
             <option value="dark">Тёмное</option>
+            <option value="light">Светлое</option>
           </select>
         </label>
       </div>

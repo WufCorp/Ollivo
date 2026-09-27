@@ -1,16 +1,65 @@
+/*
+ * Оформление «Приборы»: оливковая палитра сайта, тёмная тема по умолчанию,
+ * честные цифры (память, скорость) — всегда на виду. Шрифты только системные:
+ * Segoe UI Variable для текста, Bahnschrift для заголовков и чисел — оба есть
+ * в любой Windows 10/11, программа ничего не тянет из сети.
+ * Тема — своя, из настроек программы, а не из Windows: ядро ставит её окну
+ * (`set_theme`), WebView2 передаёт в prefers-color-scheme. По умолчанию тёмная.
+ */
 :root {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.5;
-  color: #1a1a1a;
-  background: #f7f7f5;
+  --bg: #0d0f09;
+  --rail: #090a06;
+  --panel: rgba(255, 255, 255, 0.035);
+  --panel-2: rgba(255, 255, 255, 0.065);
+  --dialog: #171a11;
+  --ink: #e5e8da;
+  --muted: #9a9f88;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --accent: #a8c64f;
+  --accent-hover: #b8d35f;
+  --accent-ink: #b9d468;
+  --accent-soft: rgba(168, 198, 79, 0.13);
+  --on-accent: #10130a;
+  --green: #95c95a;
+  --yellow: #e2b449;
+  --red: #e3765f;
+  --track: rgba(255, 255, 255, 0.08);
+  --mark: rgba(226, 180, 73, 0.35);
+  --num: "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  color-scheme: dark;
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    color: #eaeaea;
-    background: #1c1c1e;
+    --bg: #eef0e7;
+    --rail: #e2e5d8;
+    --panel: #ffffff;
+    --panel-2: #f5f6f0;
+    --dialog: #fbfcf8;
+    --ink: #141a0b;
+    --muted: #5d634f;
+    --line: rgba(20, 26, 11, 0.1);
+    --line-strong: rgba(20, 26, 11, 0.2);
+    --accent: #4d7414;
+    --accent-hover: #5a8419;
+    --accent-ink: #45690f;
+    --accent-soft: rgba(77, 116, 20, 0.1);
+    --on-accent: #f6f8ef;
+    --green: #4f8f2a;
+    --yellow: #b8841a;
+    --red: #b8483a;
+    --track: rgba(20, 26, 11, 0.09);
+    --mark: rgba(226, 180, 73, 0.4);
+    color-scheme: light;
   }
 }
 
@@ -24,31 +73,104 @@ body {
   margin: 0;
 }
 
-/* Окно целиком: слева меню, справа страница. */
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Тонкие полосы прокрутки: толстые серые из Windows на тёмном фоне смотрятся чужими. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Каркас окна: значки, разговоры, страница, строка состояния --- */
+
 .app {
   display: flex;
   height: 100%;
 }
 
-/* Шире, чем нужно меню: под ним список разговоров с кусками реплик из поиска. */
+.rail {
+  flex: none;
+  width: 72px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 0 10px;
+  background: var(--rail);
+}
+
+.rail > svg {
+  margin-bottom: 14px;
+}
+
+button.rail-tab {
+  width: 62px;
+  padding: 8px 0 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font: 11px var(--num);
+  letter-spacing: 0.01em;
+}
+
+button.rail-tab:hover:not(:disabled) {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+button.rail-tab.active {
+  background: var(--panel-2);
+  color: var(--accent-ink);
+}
+
+button.rail-tab.bottom {
+  margin-top: auto;
+}
+
+/* Колонка разговоров — только в чате. */
 .side {
   flex: none;
-  width: 240px;
+  width: 262px;
   box-sizing: border-box;
-  padding: 22px 12px;
-  border-right: 1px solid rgba(128, 128, 128, 0.2);
+  padding: 16px 12px;
+  border-right: 1px solid var(--line);
   overflow-y: auto;
 }
 
-.side h1 {
-  font-size: 20px;
-  padding: 0 10px;
-  margin-bottom: 18px;
+.work {
+  flex: 1;
+  min-width: 0;
+  container: work / inline-size;
+  display: flex;
+  flex-direction: column;
 }
 
 .main {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -60,23 +182,115 @@ body {
 }
 
 .content {
-  max-width: 680px;
+  width: 100%;
+  max-width: 780px;
+  box-sizing: border-box;
   margin: 0 auto;
-  padding: 28px 24px 32px;
+  padding: 24px 28px 32px;
 }
 
-/* Полоска обновления сверху, остальное место — странице. */
+/* Чат занимает всю область: ширину строки держит сам ответ, а не колонка посередине. */
 .main.chat .content {
   flex: 1;
   min-height: 0;
-  box-sizing: border-box;
+  max-width: none;
   display: flex;
   flex-direction: column;
-  padding-bottom: 20px;
+  padding: 0;
 }
 
-.content > h2:first-child {
-  margin-top: 0;
+.content > h2:first-child,
+.page-head h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 4px;
+}
+
+.page-head h2 {
+  margin: 0;
+}
+
+/* Строка состояния: какая модель, сколько памяти занято, сколько разговора помнит. */
+.status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-height: 38px;
+  padding: 0 18px;
+  border-top: 1px solid var(--line);
+  font: 12.5px var(--num);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status b {
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.status .status-model {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.status .right {
+  margin-left: auto;
+}
+
+/* Узко (в чате место занимает ещё и колонка разговоров): сначала уходит
+   второстепенное, модель и видеокарта остаются. */
+@container work (max-width: 1060px) {
+  .status .right {
+    display: none;
+  }
+}
+
+@container work (max-width: 780px) {
+  .status .memory {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .side {
+    width: 220px;
+  }
+}
+
+.blocks {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.blocks s {
+  width: 11px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.blocks s.on {
+  background: var(--accent);
+}
+
+.blocks.tight s.on {
+  background: var(--yellow);
 }
 
 /* Мастер первого запуска — одна колонка на весь экран. */
@@ -86,19 +300,52 @@ body {
   padding: 48px 24px;
 }
 
+header.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+/* --- Текст --- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--num);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
 h1 {
   margin: 0;
   font-size: 28px;
-  font-weight: 600;
+}
+
+h2 {
+  margin: 32px 0 12px;
+  font-size: 17px;
 }
 
 .muted {
-  opacity: 0.6;
+  color: var(--muted);
   margin-top: 4px;
 }
 
+.small {
+  font-size: 13px;
+}
+
 .error {
-  color: #c0392b;
+  color: var(--red);
+}
+
+.ok {
+  color: var(--green);
+}
+
+.hint {
+  font-style: italic;
 }
 
 .facts {
@@ -109,11 +356,12 @@ h1 {
 }
 
 .facts dt {
-  opacity: 0.6;
+  color: var(--muted);
 }
 
 .facts dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 header {
@@ -123,74 +371,209 @@ header {
   margin-bottom: 8px;
 }
 
-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-h2 {
-  margin: 32px 0 12px;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.small {
-  font-size: 13px;
-}
-
-.ok {
-  color: #2e8b57;
-}
+/* --- Кнопки --- */
 
 button {
   font: inherit;
-  padding: 7px 16px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: #4a5bdc;
-  color: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+  padding: 7px 15px;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
   cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    transform 0.1s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* Нажатие видно сразу — наведение есть только у мыши. */
+button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
-button.secondary,
-button.tab {
-  background: transparent;
-  color: inherit;
-  border-color: rgba(128, 128, 128, 0.35);
+button.secondary {
+  background: var(--panel-2);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
-button.tab {
-  border: none;
-  opacity: 0.7;
-  text-align: left;
-  padding: 8px 10px;
+button.secondary:hover:not(:disabled) {
+  background: var(--track);
 }
 
-button.tab.active {
-  opacity: 1;
-  background: rgba(128, 128, 128, 0.18);
+button.link {
+  background: none;
+  padding: 0;
+  font-weight: 400;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
+
+button.link:hover:not(:disabled) {
+  background: none;
+  color: var(--ink);
+}
+
+button.icon-button {
+  flex: none;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+button.icon-button:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+button.icon-button.on {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+button.icon-button.accent {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: none;
+}
+
+button.icon-button.wide {
+  padding: 0 12px;
+  font-weight: 400;
+  font-size: 13px;
+}
+
+/* Идёт запись с микрофона — кнопка красная, чтобы было видно, что слушаем. */
+button.icon-button.recording,
+button.icon-button.recording:hover:not(:disabled) {
+  display: inline-flex;
+  gap: 7px;
+  padding: 0 12px;
+  background: var(--red);
+  color: #fff;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.icon-svg {
+  flex: none;
+}
+
+/* Переключатель в несколько положений: «Подборка · Поиск», «Точнее · Обычно · Креативнее». */
+.seg {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.seg button {
+  background: none;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 13px;
+  padding: 4px 11px;
+  border-radius: 7px;
+}
+
+.seg button:hover:not(:disabled) {
+  background: none;
+  color: var(--ink);
+}
+
+.seg button.active,
+.seg button.active:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.actions.save {
+  margin-top: 24px;
+}
+
+.actions.center {
+  justify-content: center;
+}
+
+/* --- Карточки и формы --- */
 
 .card {
   padding: 16px 18px;
-  border-radius: 12px;
-  background: rgba(128, 128, 128, 0.09);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .card p {
   margin: 0 0 10px;
 }
 
+.card .apart {
+  margin-top: 22px;
+}
+
 progress {
+  appearance: none;
   width: 100%;
   height: 8px;
   margin-bottom: 10px;
+  border: none;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--track);
+  border-radius: 4px;
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 4px;
 }
 
 .form {
@@ -219,7 +602,7 @@ label.check {
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: 14.5px;
 }
 
 label.grow {
@@ -230,25 +613,72 @@ label.port {
   width: 90px;
 }
 
-input:not([type="checkbox"]),
-select {
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
   font: inherit;
-  font-size: 15px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: transparent;
+  font-size: 14.5px;
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: none;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: inherit;
 }
 
-select option {
-  color: #1a1a1a;
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+select option {
+  background: var(--dialog);
+  color: var(--ink);
+}
+
+/* Флажок-выключатель: «Показывать только то, что пойдёт на моём компьютере». */
+label.switch input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--track);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+label.switch input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition:
+    transform 0.15s,
+    background-color 0.15s;
+}
+
+label.switch input:checked {
+  background: var(--accent);
+}
+
+label.switch input:checked::after {
+  transform: translateX(14px);
+  background: var(--on-accent);
 }
 
 .checks {
@@ -260,9 +690,50 @@ select option {
   gap: 4px;
 }
 
-.actions.save {
-  margin-top: 24px;
+.grow-input {
+  flex: 1;
 }
+
+.grow-right {
+  margin-left: auto;
+}
+
+.badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+pre.log {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.update-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  width: min(724px, 100% - 56px);
+  box-sizing: border-box;
+  margin: 16px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.update-bar span {
+  flex: 1;
+}
+
+/* --- Мастер первого запуска --- */
 
 .steps {
   display: flex;
@@ -271,12 +742,14 @@ select option {
   padding: 0;
   margin: 16px 0 8px;
   counter-reset: step;
+  font-family: var(--num);
 }
 
 .steps li {
   counter-increment: step;
   font-size: 13px;
-  opacity: 0.45;
+  color: var(--muted);
+  opacity: 0.6;
 }
 
 .steps li::before {
@@ -290,11 +763,12 @@ select option {
 
 .steps li.active {
   opacity: 1;
+  color: var(--accent-ink);
   font-weight: 600;
 }
 
 .steps li.passed {
-  opacity: 0.75;
+  opacity: 1;
 }
 
 .wizard .actions {
@@ -323,13 +797,12 @@ select option {
 }
 
 .setup-checks li.ok .icon {
-  color: #2e8b57;
+  color: var(--green);
 }
 
 .setup-checks li.warn .icon {
-  color: #d68910;
+  color: var(--yellow);
 }
-
 
 .disks {
   display: flex;
@@ -342,41 +815,18 @@ label.disk {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  font-size: 15px;
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 14.5px;
   cursor: pointer;
 }
 
 label.disk.selected {
-  border-color: #4a5bdc;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-.badge {
-  margin-left: 8px;
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  background: rgba(74, 91, 220, 0.18);
-}
-
-.grow-input {
-  flex: 1;
-}
-
-.answer {
-  white-space: pre-wrap;
-  margin: 0;
-}
-
-pre.log {
-  font-family: Consolas, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-}
+/* --- Установка движков --- */
 
 .install-steps {
   list-style: none;
@@ -400,20 +850,20 @@ pre.log {
 }
 
 .install-steps li.done .icon {
-  color: #2e8b57;
+  color: var(--green);
 }
 
 .install-steps li.error .icon {
-  color: #c0392b;
+  color: var(--red);
 }
 
 .install-steps li.waiting {
-  opacity: 0.6;
+  color: var(--muted);
 }
 
 /* Живой кружок: шаг идёт, программа не зависла. */
 .install-steps li.active .icon {
-  border: 2px solid currentColor;
+  border: 2px solid var(--accent);
   border-right-color: transparent;
   border-radius: 50%;
   width: 14px;
@@ -436,91 +886,86 @@ pre.log {
   margin: 4px 0 0;
 }
 
-.hint {
-  font-style: italic;
-}
-
-button.link {
-  background: none;
-  border: none;
-  padding: 0;
-  color: inherit;
-  opacity: 0.6;
-  text-decoration: underline;
-}
-
-.update-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: none;
-  width: min(680px, 100%);
-  box-sizing: border-box;
-  margin: 16px auto 0;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(99, 102, 241, 0.12);
-}
-
-.update-bar span {
-  flex: 1;
-}
-
-/* --- Библиотека моделей --- */
+/* --- Библиотека и каталог моделей --- */
 
 .dropzone {
   padding: 22px 18px;
-  border: 2px dashed rgba(128, 128, 128, 0.4);
-  border-radius: 12px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 14px;
   text-align: center;
 }
 
 .dropzone.over {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .dropzone p {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 
 .dropzone p:last-child {
-  margin: 10px 0 0;
-}
-
-.actions.center {
-  justify-content: center;
+  margin: 12px 0 0;
 }
 
 .card.model,
+.card + .card,
 .dropzone ~ .card {
   margin-top: 14px;
 }
 
 .model-title {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  font-weight: 600;
+  gap: 10px;
+  align-items: center;
+  font: 600 18px var(--num);
   word-break: break-all;
 }
 
-.model-title .light {
-  font-size: 18px;
+/* Точка «светофора»: зелёная — влезет в видеокарту, жёлтая — медленнее, красная — не хватит. */
+.light {
+  flex: none;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
 }
 
-/* Строка варианта модели в каталоге: «светофор», описание, кнопка. */
+.light.green {
+  background: var(--green);
+}
+
+.light.yellow {
+  background: var(--yellow);
+}
+
+.light.red {
+  background: var(--red);
+}
+
+.light.none {
+  background: var(--track);
+}
+
+/* Файла нет на месте — кольцо, а не заливка: модели будто нет. */
+.light.missing {
+  background: none;
+  box-shadow: inset 0 0 0 2px var(--yellow);
+}
+
+/* Строка варианта модели в каталоге: «светофор», описание со шкалой, кнопка. */
 .variant {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 0 0;
-  border-top: 1px solid rgba(128, 128, 128, 0.2);
-  margin-top: 10px;
+  gap: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
 }
 
-.variant .light {
-  font-size: 18px;
+.variant > .light {
+  margin-top: 7px;
 }
 
 .variant-text {
@@ -528,8 +973,17 @@ button.link {
   min-width: 0;
 }
 
-.variant-text p {
+.variant-text p,
+.card .variant-text p {
   margin: 0 0 4px;
+}
+
+.variant-title b {
+  font-weight: 600;
+}
+
+.card .variant-headline {
+  margin: 4px 0;
 }
 
 .variant progress {
@@ -537,10 +991,161 @@ button.link {
 }
 
 label.check.filter {
-  margin: 12px 0 4px;
+  margin: 14px 0 6px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* Шкала «влезет ли»: полоса — сколько видеопамяти модель займёт из свободной. */
+.gauge {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 8px;
+}
+
+.gauge-label {
+  font: 12.5px var(--num);
+  color: var(--muted);
+}
+
+.bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  transform-origin: left;
+  background: var(--accent);
+  animation: fill 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.bar i.green {
+  background: var(--green);
+}
+
+.bar i.yellow {
+  background: var(--yellow);
+}
+
+.bar i.red {
+  background: var(--red);
+}
+
+@keyframes fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar i,
+  .rec-dot,
+  .chat-panel {
+    animation: none;
+  }
 }
 
 /* --- Чат --- */
+
+/* Разговор и панель справа. Узко — панель выезжает поверх чата, а не сжимает его. */
+.chat-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  container: chatpage / inline-size;
+}
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-empty {
+  width: 100%;
+  max-width: 780px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 24px 28px;
+}
+
+.chat-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 14px 0 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-head h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, #000 90%, transparent);
+}
+
+button.folder-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-weight: 400;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+button.folder-chip .icon-svg {
+  color: var(--accent-ink);
+}
+
+button.folder-chip:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.chat-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+button.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  font-weight: 400;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+button.tool:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+button.tool.on,
+button.tool.on:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
 
 .talk {
   flex: 1;
@@ -548,24 +1153,54 @@ label.check.filter {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px 0 16px;
+  gap: 6px;
+  padding: 18px 28px 16px;
 }
 
+/* Свои вопросы — справа, ответы — слева, как в мессенджере: так место не пустует.
+   Строку ответа держим около 80 знаков — длиннее глаз теряет начало следующей. */
 .line {
-  padding: 12px 14px;
-  border-radius: 12px;
-  max-width: 85%;
+  padding: 6px 0;
 }
 
-.line.you {
-  align-self: flex-end;
-  background: rgba(99, 102, 241, 0.14);
+.line .who {
+  display: block;
+  margin-bottom: 4px;
+  font: 11px var(--num);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+.line .body {
+  min-width: 0;
 }
 
 .line.bot {
-  align-self: flex-start;
-  background: rgba(128, 128, 128, 0.09);
+  max-width: 82ch;
+}
+
+.line.you {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.line.you .who {
+  display: none;
+}
+
+.line.you .body {
+  max-width: min(70%, 80ch);
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--panel-2);
+}
+
+.answer {
+  white-space: pre-wrap;
+  margin: 0;
 }
 
 /* Разметка в ответе модели: заголовки, списки, таблицы, код. */
@@ -588,9 +1223,8 @@ label.check.filter {
 .md h2,
 .md h3,
 .md h4 {
-  margin: 14px 0 6px;
+  margin: 16px 0 6px;
   font-size: 16px;
-  font-weight: 600;
 }
 
 .md ul,
@@ -599,29 +1233,24 @@ label.check.filter {
 }
 
 .md li + li {
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .md a {
-  color: #4a5bdc;
-}
-
-@media (prefers-color-scheme: dark) {
-  .md a {
-    color: #93a1ff;
-  }
+  color: var(--accent-ink);
 }
 
 .md blockquote {
-  border-left: 3px solid rgba(128, 128, 128, 0.35);
-  padding-left: 10px;
-  opacity: 0.85;
+  margin-left: 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
 }
 
 .md code {
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
   font-size: 13px;
-  background: rgba(128, 128, 128, 0.16);
+  background: var(--panel-2);
   border-radius: 4px;
   padding: 1px 5px;
 }
@@ -629,27 +1258,33 @@ label.check.filter {
 .md table {
   border-collapse: collapse;
   margin: 8px 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .md th,
 .md td {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 5px 12px 5px 0;
   text-align: left;
+}
+
+.md th {
+  border-bottom-color: var(--line-strong);
+  font-weight: 600;
 }
 
 .md hr {
   border: none;
-  border-top: 1px solid rgba(128, 128, 128, 0.3);
+  border-top: 1px solid var(--line);
 }
 
 /* Код блоком: шапка с языком и «Копировать», длинные строки прокручиваются. */
 .code {
   margin: 10px 0;
-  border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .code-top {
@@ -657,17 +1292,17 @@ label.check.filter {
   align-items: center;
   gap: 10px;
   padding: 4px 6px 4px 12px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
-  font-size: 12px;
-  opacity: 0.7;
+  border-bottom: 1px solid var(--line);
+  font: 12px var(--num);
+  color: var(--muted);
 }
 
 .code-top button.copy {
   margin-left: auto;
   background: none;
-  border: none;
   padding: 2px 6px;
   color: inherit;
+  font-weight: 400;
   font-size: 12px;
   text-decoration: underline;
 }
@@ -686,7 +1321,7 @@ label.check.filter {
 /* Под последним ответом: «Копировать» и «Ответить заново». */
 .after {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   margin-top: 8px;
   font-size: 13px;
 }
@@ -695,7 +1330,7 @@ label.check.filter {
 .thought {
   margin-bottom: 6px;
   font-size: 13px;
-  opacity: 0.75;
+  color: var(--muted);
 }
 
 .thought summary {
@@ -705,8 +1340,8 @@ label.check.filter {
 .thought p {
   white-space: pre-wrap;
   margin: 6px 0 0;
-  padding-left: 10px;
-  border-left: 2px solid rgba(128, 128, 128, 0.35);
+  padding-left: 12px;
+  border-left: 2px solid var(--line-strong);
 }
 
 /* Приложенные документы: плашки над полем ввода и в реплике. */
@@ -720,15 +1355,20 @@ label.check.filter {
 .files .file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.14);
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-size: 13px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files .file .icon-svg {
+  color: var(--accent-ink);
 }
 
 .files .file.image {
@@ -742,28 +1382,21 @@ label.check.filter {
   border-radius: 6px;
 }
 
-/* Папка проекта над перепиской: имя, сколько файлов, «Сменить», «Убрать». */
-.folder-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  padding: 0 0 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
-  font-size: 14px;
+button.forget {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
 }
 
-.folder-bar .folder-name {
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.folder-bar .hint {
-  flex-basis: 100%;
+button.forget:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
 }
 
 /* Список файлов по «@» — над полем ввода, как подсказки в поиске. */
@@ -774,27 +1407,27 @@ label.check.filter {
   overflow-y: auto;
   margin-bottom: 6px;
   padding: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.3);
   border-radius: 10px;
+  background: var(--dialog);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 .mentions button {
   text-align: left;
   background: none;
   color: inherit;
-  border: none;
   border-radius: 6px;
   padding: 5px 8px;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
+  font-weight: 400;
   font-size: 13px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mentions button.active,
-.mentions button:hover {
-  background: rgba(99, 102, 241, 0.16);
+.mentions button:hover:not(:disabled) {
+  background: var(--accent-soft);
 }
 
 /* Что модель делала с файлами: мелко, над ответом. */
@@ -803,11 +1436,16 @@ label.check.filter {
   margin: 0 0 8px;
   padding: 0;
   font-size: 13px;
-  opacity: 0.85;
+  color: var(--muted);
 }
 
 .file-steps li + li {
-  margin-top: 2px;
+  margin-top: 3px;
+}
+
+.file-steps .icon-svg {
+  margin-right: 6px;
+  vertical-align: -2px;
 }
 
 .file-steps li.failed {
@@ -821,33 +1459,18 @@ label.check.filter {
 
 /* Модель говорит об изменениях, которых не было. */
 p.warn {
-  color: #b7791f;
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  color: var(--yellow);
 }
 
-@media (prefers-color-scheme: dark) {
-  p.warn {
-    color: #f0b44c;
-  }
+p.warn .icon-svg {
+  margin-top: 2px;
 }
 
 .write-ask {
   margin-top: 10px;
-}
-
-.write-ask pre.before {
-  background: rgba(217, 56, 56, 0.1);
-}
-
-.write-ask pre.after {
-  background: rgba(46, 160, 67, 0.12);
-}
-
-.write-ask details p {
-  margin: 8px 0 0;
-}
-
-.folder-bar .seg {
-  margin-left: auto;
 }
 
 .write-ask pre {
@@ -856,15 +1479,289 @@ p.warn {
   margin: 8px 0 0;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(128, 128, 128, 0.1);
-  font-family: Consolas, monospace;
+  background: var(--panel-2);
+  font-family: var(--mono);
   font-size: 13px;
 }
 
-/* Идёт запись с микрофона — кнопка красная, чтобы было видно, что слушаем. */
-button.recording {
-  background: #d93838;
-  color: #fff;
+.write-ask pre.before {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.write-ask pre.after {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+
+.write-ask details p {
+  margin: 8px 0 0;
+}
+
+.ask {
+  flex: none;
+  margin: 0 28px 16px;
+}
+
+/* --- Панель справа от чата: «Разговор» и «Файлы» --- */
+
+.chat-panel {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  animation: panel-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@container chatpage (max-width: 860px) {
+  .chat-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    max-width: 90%;
+    background: var(--dialog);
+    box-shadow: -24px 0 48px -24px rgba(0, 0, 0, 0.6);
+  }
+}
+
+.panel-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.panel-block h4 {
+  margin: 0 0 8px;
+  font: 11px var(--num);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.panel-block p {
+  margin: 6px 0;
+}
+
+.panel-block .actions {
+  margin-top: 10px;
+  gap: 6px;
+}
+
+.panel-big {
+  font: 600 26px/1.1 var(--num);
+}
+
+.panel-big small {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.panel-block .bar {
+  margin: 8px 0 6px;
+}
+
+.panel-facts {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.panel-facts dt {
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+
+.panel-facts dt:first-child {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.panel-facts dd {
+  margin: 0;
+  font-family: var(--num);
+  text-align: right;
+}
+
+.roles {
+  display: grid;
+  gap: 6px;
+}
+
+button.role-card {
+  display: grid;
+  gap: 1px;
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 400;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+button.role-card:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+button.role-card b {
+  font-weight: 600;
+}
+
+button.role-card span {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+button.role-card.active,
+button.role-card.active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.panel-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  font-size: 13px;
+}
+
+.panel-files li,
+.panel-files button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panel-files li {
+  padding: 5px 8px;
+  border-radius: 8px;
+}
+
+.panel-files li.hot {
+  background: var(--panel);
+}
+
+.panel-files.tree li {
+  padding: 0;
+}
+
+.panel-files button {
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 8px;
+  text-align: left;
+  font-weight: 400;
+  font-size: 13px;
+  background: none;
+  color: var(--ink);
+}
+
+.panel-files button:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+/* Уже приложенный файл не нажимается, но виден обычным, а не блёклым. */
+.panel-files button:disabled {
+  opacity: 1;
+}
+
+.panel-files .icon-svg {
+  color: var(--muted);
+}
+
+.panel-files .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+
+.panel-files .tag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font: 11px var(--num);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.panel-files .tag.quiet {
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.panel-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+}
+
+.panel-folder .icon-svg {
+  color: var(--accent-ink);
+}
+
+.panel-folder b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.panel-block .seg {
+  margin-bottom: 4px;
+}
+
+.chat-panel label.panel-search {
+  margin: 10px 0 6px;
+}
+
+.chat-panel label.panel-search input[type="search"],
+.chat-panel label.panel-search input[type="search"]:focus {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  font-size: 13px;
+  background: none;
+  box-shadow: none;
 }
 
 .ask .notice progress {
@@ -875,95 +1772,133 @@ button.recording {
   margin-bottom: 8px;
 }
 
-/* Файл тащат над чатом — поле ввода подсвечивается: сюда и упадёт. */
-.ask.over textarea {
-  border-color: #4c8bf5;
-  box-shadow: 0 0 0 2px rgba(76, 139, 245, 0.3);
+/* Поле ввода одним блоком: текст сверху, кнопки снизу. */
+.composer {
+  padding: 12px 12px 10px 16px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: box-shadow 0.15s;
 }
 
-.ask textarea {
+.composer:focus-within {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* Файл тащат над чатом — поле ввода подсвечивается: сюда и упадёт. */
+.ask.over .composer {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  background: var(--accent-soft);
+}
+
+.composer textarea,
+.composer textarea:focus {
+  display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  padding: 0;
+  border: none;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  resize: vertical;
+  box-shadow: none;
+  resize: none;
+  min-height: 44px;
 }
 
-/* Отправить, роль, манера и имя модели: на узком окне переносятся, а не обрезаются. */
+.composer textarea::placeholder {
+  color: var(--muted);
+}
+
+/* Отправить, роль, манера: на узком окне переносятся, а не обрезаются. */
 .ask .actions {
-  margin-top: 10px;
-  flex-wrap: wrap;
+  margin-top: 8px;
+  gap: 6px;
 }
 
-.ask .model-name {
-  min-width: 0;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+select.role {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: 9px;
+  background: var(--panel);
+  cursor: pointer;
 }
 
-.grow-right {
+button.send {
   margin-left: auto;
+  height: 34px;
+  padding: 0 16px;
 }
 
-/* --- Разговоры в меню --- */
+button.send.stop,
+button.send.stop:hover:not(:disabled) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.stop-mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* --- Разговоры в колонке --- */
 
 .chats {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(128, 128, 128, 0.2);
 }
 
-.chats button.new {
-  opacity: 0.85;
-  margin-bottom: 4px;
-}
-
-.chat-row {
+.chats-head {
   display: flex;
   align-items: center;
-  border-radius: 8px;
+  justify-content: space-between;
+  padding: 0 4px 12px 6px;
 }
 
-.chat-row button.tab {
+.chats-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+label.chat-search {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--muted);
+}
+
+label.chat-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Длинный селектор — чтобы перебить общее оформление полей ввода. */
+.chats label.chat-search input[type="search"],
+.chats label.chat-search input[type="search"]:focus {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  padding: 8px 0;
   font-size: 13px;
+  background: none;
+  box-shadow: none;
 }
 
-.chat-title,
-.chat-snippet {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Кусок реплики под названием — только когда что-то ищут. */
-.chat-snippet {
-  font-size: 12px;
-  opacity: 0.75;
-}
-
-.chats mark {
-  background: rgba(250, 200, 60, 0.45);
-  color: inherit;
-  border-radius: 2px;
-}
-
-input.chat-search {
-  font-size: 13px;
-  margin-bottom: 6px;
+.chat-day {
+  margin: 12px 0 4px;
+  padding: 0 10px;
+  font: 11px var(--num);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .chat-none {
@@ -972,57 +1907,67 @@ input.chat-search {
   margin: 0;
 }
 
-.chat-row.active {
-  background: rgba(128, 128, 128, 0.18);
+.chat-row {
+  display: flex;
+  align-items: center;
+  border-radius: 9px;
 }
 
-.chat-row.active button.tab {
-  opacity: 1;
+.chat-row:hover {
+  background: var(--panel);
+}
+
+.chat-row.active {
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.chat-row button.tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 4px 7px 10px;
+  background: none;
+  color: var(--ink);
+  font-weight: 400;
+  font-size: 13px;
+  text-align: left;
+}
+
+.chat-row.active .chat-title {
+  font-weight: 600;
+}
+
+/* Длинное название растворяется, а не обрывается на многоточии. */
+.chat-title,
+.chat-snippet {
+  white-space: nowrap;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, #000 85%, transparent);
+}
+
+/* Кусок реплики под названием — только когда что-то ищут. */
+.chat-snippet {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chats mark {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
 }
 
 .chat-row button.forget {
   visibility: hidden;
-  padding: 0 8px;
-  text-decoration: none;
+  margin-right: 4px;
 }
 
-.chat-row:hover button.forget {
+.chat-row:hover button.forget,
+.chat-row button.forget:focus-visible {
   visibility: visible;
-}
-
-/* --- Роль и манера ответа под полем ввода --- */
-
-select.role {
-  font-size: 13px;
-  padding: 5px 8px;
-}
-
-/* Переключатель в три положения: слева точнее, справа креативнее. */
-.seg {
-  flex: none;
-  display: inline-flex;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.seg button {
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 0;
-  font-size: 13px;
-  padding: 5px 10px;
-  opacity: 0.7;
-}
-
-.seg button + button {
-  border-left: 1px solid rgba(128, 128, 128, 0.35);
-}
-
-.seg button.active {
-  background: rgba(128, 128, 128, 0.22);
-  opacity: 1;
 }
 
 /* --- Понятная ошибка с кнопками --- */
@@ -1039,6 +1984,10 @@ select.role {
   cursor: pointer;
 }
 
+.problem button.link {
+  margin-top: 6px;
+}
+
 /* --- Окно поверх программы: «Сообщить о проблеме» --- */
 
 .overlay {
@@ -1049,7 +1998,7 @@ select.role {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.55);
 }
 
 .dialog {
@@ -1061,13 +2010,10 @@ select.role {
   overflow-y: auto;
   box-sizing: border-box;
   /* У .card фон полупрозрачный — поверх затемнения нужен сплошной. */
-  background: #f7f7f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  .dialog {
-    background: #26262a;
-  }
+  background: var(--dialog);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 30px 80px -20px rgba(0, 0, 0, 0.6);
 }
 
 .dialog h2 {
@@ -1085,12 +2031,6 @@ select.role {
 .dialog textarea {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: transparent;
-  color: inherit;
-  font: inherit;
   resize: vertical;
 }
 
@@ -1098,15 +2038,6 @@ pre.log.report {
   max-height: 260px;
   overflow: auto;
   margin: 0;
-}
-
-.problem button.link {
-  margin-top: 6px;
-}
-
-/* Второй блок в той же карточке: отделён воздухом, а не рамкой. */
-.card .apart {
-  margin-top: 22px;
 }
 
 /* Сколько занято: название слева, размер справа. */

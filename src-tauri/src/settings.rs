@@ -23,25 +23,25 @@ pub struct Settings {
 
 /// Оформление окна. Меняется темой самого окна, а WebView2 подхватывает её
 /// в `prefers-color-scheme` — стили для тёмной темы остаются одни.
+/// Своя, а не как в Windows: оформление задумано тёмным, светлое — по желанию
+/// в настройках программы (решение 2026-09-27).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     Light,
-    Dark,
-    /// Как в Windows. Незнакомое значение (файл от будущей версии) — тоже сюда:
-    /// иначе из-за одного поля сбросились бы все настройки.
+    /// Сюда же «system» из версий до 0.2 и незнакомое значение (файл от будущей
+    /// версии): иначе из-за одного поля сбросились бы все настройки.
     #[default]
     #[serde(other)]
-    System,
+    Dark,
 }
 
 impl Theme {
     pub fn tauri(self) -> Option<tauri::Theme> {
-        match self {
-            Theme::System => None,
-            Theme::Light => Some(tauri::Theme::Light),
-            Theme::Dark => Some(tauri::Theme::Dark),
-        }
+        Some(match self {
+            Theme::Light => tauri::Theme::Light,
+            Theme::Dark => tauri::Theme::Dark,
+        })
     }
 }
 
@@ -146,26 +146,30 @@ mod tests {
         // Файл от старой версии, где выгрузки ещё не было, — выгружать через 10 минут.
         std::fs::write(&path, br#"{"setup_done":true}"#).unwrap();
         assert_eq!(Store::open(path.clone()).get().models.unload_after, 10);
-        assert_eq!(Store::open(path.clone()).get().theme, Theme::System);
+        assert_eq!(Store::open(path.clone()).get().theme, Theme::Dark);
+
+        // «Как в Windows» из прошлых версий — теперь тёмная.
+        std::fs::write(&path, br#"{"setup_done":true,"theme":"system"}"#).unwrap();
+        assert_eq!(Store::open(path.clone()).get().theme, Theme::Dark);
 
         // Тема из будущей версии не сбрасывает остальное.
         std::fs::write(&path, br#"{"setup_done":true,"theme":"sepia"}"#).unwrap();
         let s = Store::open(path).get();
         assert!(s.setup_done);
-        assert_eq!(s.theme, Theme::System);
+        assert_eq!(s.theme, Theme::Dark);
     }
 
     #[test]
     fn reset_keeps_data_dir() {
         let mut s = Settings { data_dir: Some(r"E:\Ollivo".into()), setup_done: true, ..Settings::default() };
         s.proxy.enabled = true;
-        s.theme = Theme::Dark;
+        s.theme = Theme::Light;
         s.models.unload_after = 0;
         let r = reset(&s);
         assert_eq!(r.data_dir, s.data_dir);
         assert!(r.setup_done);
         assert!(!r.proxy.enabled);
-        assert_eq!((r.theme, r.models.unload_after), (Theme::System, 10));
+        assert_eq!((r.theme, r.models.unload_after), (Theme::Dark, 10));
     }
 
     #[test]

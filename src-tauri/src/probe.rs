@@ -659,10 +659,24 @@ pub struct Verdict {
     /// Для llama.cpp: слоёв на видеокарту и размер контекста.
     pub gpu_layers: Option<u64>,
     pub ctx: Option<u64>,
+    /// Сколько видеопамяти нужно модели и сколько её свободно — окно рисует по ним шкалу
+    /// «влезет ли». Те же числа, что во фразе «нужно ~…, свободно …», только не словами.
+    /// Нет видеокарты — нет и шкалы.
+    pub need: Option<u64>,
+    pub room: Option<u64>,
 }
 
 fn verdict(light: Light, headline: impl Into<String>) -> Verdict {
-    Verdict { light, headline: headline.into(), details: vec![], gpu_layers: None, ctx: None }
+    Verdict { light, headline: headline.into(), details: vec![], gpu_layers: None, ctx: None, need: None, room: None }
+}
+
+impl Verdict {
+    fn fill(&mut self, need: u64, room: u64, hw: &Hardware) {
+        if hw.gpu.is_some() {
+            self.need = Some(need);
+            self.room = Some(room);
+        }
+    }
 }
 
 pub fn assess(m: &ModelInfo, hw: &Hardware) -> Verdict {
@@ -723,11 +737,10 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
         } else {
             format!("модель помнит {} разговора", memory_pages(want_ctx))
         };
-        v.details.push(format!(
-            "занято будет ~{} из {} свободных; {memory}",
-            fmt_bytes(full(want_ctx)),
-            fmt_bytes(vram_free)
-        ));
+        // Отдельными строками: первая — подпись под шкалой памяти, вторая — сама по себе.
+        v.details.push(format!("занято будет ~{} из {} свободных", fmt_bytes(full(want_ctx)), fmt_bytes(vram_free)));
+        v.details.push(memory);
+        v.fill(full(want_ctx), vram_free, hw);
         if let Some(tps) = speed(weights, 0, hw) {
             v.details.push(speed_words(tps));
         }
@@ -746,6 +759,7 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     let total_need = weights + kv_per_tok * ctx + overhead;
     if total_need > hw.ram_avail + budget {
         let mut v = verdict(Light::Red, "не хватит памяти");
+        v.fill(total_need, budget, hw);
         v.details.push(format!(
             "нужно ~{}, доступно {} ОЗУ + {} видеопамяти. Возьмите версию поменьше (Q4 или меньше параметров)",
             fmt_bytes(total_need),
@@ -765,6 +779,7 @@ fn llm(m: &ModelInfo, hw: &Hardware) -> Verdict {
     };
     v.gpu_layers = Some(gpu_layers);
     v.ctx = Some(ctx);
+    v.fill(total_need, budget, hw);
     if let Some(tps) = speed(on_gpu, weights - on_gpu, hw) {
         v.details.push(speed_words(tps));
     }
@@ -813,6 +828,7 @@ pub fn rough(weights: u64, active_bytes: u64, hw: &Hardware) -> Verdict {
         fmt_bytes(budget),
         fmt_bytes(hw.ram_avail)
     ));
+    v.fill(need, budget, hw);
     v
 }
 
@@ -870,6 +886,7 @@ fn diffusion(m: &ModelInfo, hw: &Hardware) -> Verdict {
         verdict(Light::Red, "не хватит памяти — возьмите версию поменьше (GGUF Q4 / fp8)")
     };
     v.details.push(format!("нужно ~{}, свободно {}", fmt_bytes(need), fmt_bytes(budget)));
+    v.fill(need, budget, hw);
     v.details.extend(notes);
     v
 }

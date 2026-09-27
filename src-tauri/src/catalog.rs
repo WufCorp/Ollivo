@@ -488,6 +488,22 @@ mod tests {
         assert!(c.models.iter().any(|m| !m.vision));
     }
 
+    /// Шкала «влезет ли» в окне не должна спорить со «светофором»: зелёная помещается
+    /// в свободное, не помещающаяся — не зелёная, без видеокарты шкалы нет.
+    #[test]
+    fn gauge_agrees_with_light() {
+        const GIB: u64 = 1 << 30;
+        let gtx1080 = hw(Some(8), 16);
+        let small = probe::rough(GIB, GIB, &gtx1080);
+        assert_eq!(small.light, Light::Green);
+        assert!(small.need.unwrap() <= small.room.unwrap());
+        let big = probe::rough(20 * GIB, 20 * GIB, &gtx1080);
+        assert_ne!(big.light, Light::Green);
+        assert!(big.need.unwrap() > big.room.unwrap());
+        let no_gpu = probe::rough(GIB, GIB, &hw(None, 16));
+        assert_eq!((no_gpu.need, no_gpu.room), (None, None));
+    }
+
     /// «Светофор» подборки на сегодняшнем железе.
     /// `cargo test catalog::tests::real_picks -- --ignored --nocapture`
     #[test]

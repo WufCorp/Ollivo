@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { type FileMode, type Step, type WriteAsk } from "../api";
 import { plural } from "../words";
+import Icon, { type IconName } from "./Icon";
 
 const lines = (n: number) => `${n} ${plural(n, "строка", "строки", "строк")}`;
 
@@ -97,21 +98,33 @@ export function Mentions({
   );
 }
 
+/** Значок шага: свой, а не эмодзи — эмодзи Windows рисует цветными картинками. */
+const STEP_ICONS: Record<Step["kind"], IconName> = {
+  read: "doc",
+  list: "folder",
+  search: "search",
+  write: "doc",
+  edit: "doc",
+  delete: "close",
+  plan: "warn",
+  unknown: "warn",
+};
+
 function stepText(s: Step): string {
   const where = s.path || "папку проекта";
   switch (s.kind) {
     case "read":
-      return s.ok ? `📄 Прочитала ${s.path}` : `📄 Не прочитала ${s.path}`;
+      return s.ok ? `Прочитала ${s.path}` : `Не прочитала ${s.path}`;
     case "list":
-      return `📂 Посмотрела ${s.path ? `папку ${s.path}` : where}`;
+      return `Посмотрела ${s.path ? `папку ${s.path}` : where}`;
     case "search":
-      return `🔍 Искала «${s.path}»`;
+      return `Искала «${s.path}»`;
     case "write":
-      return s.ok ? `💾 Сохранила ${s.path}` : `💾 Не сохранила ${s.path}`;
+      return s.ok ? `Сохранила ${s.path}` : `Не сохранила ${s.path}`;
     case "edit":
-      return s.ok ? `✏️ Поправила ${s.path}` : `✏️ Не поправила ${s.path}`;
+      return s.ok ? `Поправила ${s.path}` : `Не поправила ${s.path}`;
     case "delete":
-      return s.ok ? `🗑 Удалила ${s.path}` : `🗑 Не удалила ${s.path}`;
+      return s.ok ? `Удалила ${s.path}` : `Не удалила ${s.path}`;
     case "plan":
       return `Хотела изменить ${s.path}`;
     default:
@@ -166,6 +179,7 @@ export function Steps({ steps, onUndo }: { steps: Step[]; onUndo?: (i: number) =
     <ul className="file-steps">
       {grouped(steps).map(({ step: s, index: i, times }) => (
         <li key={i} className={s.ok ? "" : "failed"}>
+          <Icon name={STEP_ICONS[s.kind] ?? "warn"} size={14} />
           {stepText(s)}
           {times > 1 && <span className="muted"> ×{times}</span>}
           {s.note && <span className="muted"> — {s.note}</span>}

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { settingsGet, updateCheck, type UpdateAvailable } from "./api";
 import ChatList from "./components/ChatList";
-import { ReportHost } from "./components/Report";
+import Icon, { Logo, type IconName } from "./components/Icon";
+import { ReportHost, openReport } from "./components/Report";
+import StatusBar from "./components/StatusBar";
 import Catalog from "./pages/Catalog";
 import Chat from "./pages/Chat";
 import Computer from "./pages/Computer";
@@ -18,6 +20,14 @@ const TABS = {
   settings: "Настройки",
 } as const;
 type Tab = keyof typeof TABS;
+
+const TAB_ICONS: Record<Tab, IconName> = {
+  chat: "chat",
+  catalog: "catalog",
+  models: "models",
+  computer: "computer",
+  settings: "settings",
+};
 
 export default function App() {
   const [setupDone, setSetupDone] = useState<boolean | null>(null);
@@ -44,7 +54,8 @@ export default function App() {
   if (!setupDone) {
     return (
       <main className="page">
-        <header>
+        <header className="brand">
+          <Logo size={40} />
           <h1>Ollivo</h1>
         </header>
         <Wizard onDone={() => setSetupDone(true)} />
@@ -55,16 +66,28 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="side">
-        <h1>Ollivo</h1>
-        <nav>
-          {(Object.keys(TABS) as Tab[]).map((t) => (
-            <button key={t} className={t === tab ? "tab active" : "tab"} onClick={() => setTab(t)}>
-              {TABS[t]}
-            </button>
-          ))}
-        </nav>
-        {tab === "chat" && (
+      {/* Узкая панель значков: разделы всегда под рукой и не отнимают место у разговора. */}
+      <nav className="rail">
+        <Logo size={32} />
+        {(Object.keys(TABS) as Tab[]).map((t) => (
+          <button
+            key={t}
+            className={t === tab ? "rail-tab active" : "rail-tab"}
+            aria-current={t === tab ? "page" : undefined}
+            onClick={() => setTab(t)}
+          >
+            <Icon name={TAB_ICONS[t]} size={20} />
+            {TABS[t]}
+          </button>
+        ))}
+        <button className="rail-tab bottom" title="Сообщить о проблеме" onClick={() => openReport()}>
+          <Icon name="report" size={20} />
+          Отчёт
+        </button>
+      </nav>
+
+      {tab === "chat" && (
+        <aside className="side">
           <ChatList
             current={chatId}
             refresh={chatsKey}
@@ -72,9 +95,10 @@ export default function App() {
             onNew={() => setChatId(null)}
             onRemoved={(id) => id === chatId && setChatId(null)}
           />
-        )}
-      </aside>
+        </aside>
+      )}
 
+      <div className="work">
       {/* Чат занимает всё окно: лента прокручивается сама, ввод прибит к низу. */}
       <main className={tab === "chat" ? "main chat" : "main"}>
         {update && (
@@ -116,6 +140,8 @@ export default function App() {
           )}
         </div>
       </main>
+      <StatusBar />
+      </div>
       <ReportHost />
     </div>
   );

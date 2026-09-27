@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
+import Fit, { Light } from "../components/Fit";
 import License from "../components/License";
 import {
-  LIGHTS,
   catalogDownload,
   catalogFiles,
   catalogPicks,
@@ -60,19 +60,15 @@ function Variant({
 
   return (
     <div className="variant">
-      <span className="light">{LIGHTS[v.verdict.light]}</span>
+      <Light light={v.verdict.light} />
       <div className="variant-text">
         {/* Крупно — смысл сжатия словами; код («Q4_K_M») — мелко, для тех, кто его знает,
             и чтобы различить варианты с одинаковым описанием. */}
-        <p>
-          <b>{capitalize(v.quality)}</b> · {formatBytes(v.size)} — {v.verdict.headline}
+        <p className="variant-title">
+          <b>{capitalize(v.quality)}</b> <span className="muted">· {formatBytes(v.size)} · вариант {v.quant}</span>
         </p>
-        <p className="muted small">вариант {v.quant}</p>
-        {v.verdict.details.map((d) => (
-          <p key={d} className="muted small">
-            {d}
-          </p>
-        ))}
+        <p className="variant-headline">{v.verdict.headline}</p>
+        <Fit verdict={v.verdict} />
         {going && p && (
           <>
             <progress value={p!.done} max={p!.total ?? undefined} />
@@ -194,18 +190,19 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
 
   return (
     <>
-      <h2>Каталог</h2>
-
-      <div className="actions">
-        <button className={mode === "picks" ? "" : "secondary"} onClick={() => setMode("picks")}>
-          Подборка
-        </button>
-        <button className={mode === "search" ? "" : "secondary"} onClick={() => setMode("search")}>
-          Поиск по HuggingFace
-        </button>
+      <div className="page-head">
+        <h2>Каталог</h2>
+        <div className="seg" role="radiogroup" aria-label="Что показать">
+          <button role="radio" aria-checked={mode === "picks"} className={mode === "picks" ? "active" : ""} onClick={() => setMode("picks")}>
+            Подборка
+          </button>
+          <button role="radio" aria-checked={mode === "search"} className={mode === "search" ? "active" : ""} onClick={() => setMode("search")}>
+            Поиск по HuggingFace
+          </button>
+        </div>
       </div>
 
-      <label className="check filter">
+      <label className="check filter switch">
         <input type="checkbox" checked={onlyFits} onChange={(e) => setOnlyFits(e.target.checked)} />
         Показывать только то, что пойдёт на моём компьютере
       </label>
@@ -214,7 +211,8 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
         <>
           <p className="muted small">
             Проверенные модели для переписки. Размер выбирайте по «светофору»: зелёный — поместится в
-            видеокарту целиком, жёлтый — будет работать, но медленнее.
+            видеокарту целиком, жёлтый — будет работать, но медленнее. Полоса — сколько видеопамяти
+            модель займёт из свободной.
           </p>
           {picks?.map((m) => {
             const variants = m.variants.filter(fits);
@@ -222,7 +220,7 @@ export default function Catalog({ onGoToChat }: { onGoToChat: () => void }) {
             return (
               <div className="card model" key={m.id}>
                 <p className="model-title">
-                  <span className="light">{LIGHTS[variants[0].verdict.light]}</span>
+                  <Light light={variants[0].verdict.light} />
                   {m.title}
                 </p>
                 <p className="muted small">

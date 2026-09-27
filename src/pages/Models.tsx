@@ -2,7 +2,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import {
-  LIGHTS,
   formatBytes,
   llmStart,
   llmStatus,
@@ -16,6 +15,7 @@ import {
   type Model,
   type ScanReport,
 } from "../api";
+import Fit, { Light } from "../components/Fit";
 import License from "../components/License";
 import RunningModel from "../components/RunningModel";
 
@@ -173,7 +173,7 @@ export default function Models({
         return (
           <div className="card model" key={m.path} title={m.path}>
             <p className="model-title">
-              <span className="light">{m.missing ? "⚠️" : LIGHTS[m.verdict?.light ?? "none"]}</span>
+              <Light light={m.missing ? "missing" : (m.verdict?.light ?? "none")} />
               {m.title ?? m.file}
             </p>
             <p className="muted small">{summary(m)}</p>
@@ -182,12 +182,8 @@ export default function Models({
               <p className="error">Файла нет на месте — его переместили или диск отключён.</p>
             ) : (
               <>
-                <p>{m.verdict?.headline}</p>
-                {m.verdict?.details.map((d) => (
-                  <p key={d} className="muted small">
-                    {d}
-                  </p>
-                ))}
+                <p className="variant-headline">{m.verdict?.headline}</p>
+                {m.verdict && <Fit verdict={m.verdict} />}
               </>
             )}
             {m.info.notes.map((n) => (

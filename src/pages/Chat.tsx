@@ -30,6 +30,7 @@ import {
   llmChatStop,
   llmStart,
   llmStatus,
+  llmStop,
   onLlmAnswer,
   onLlmState,
   onLlmThought,
@@ -52,14 +53,34 @@ import {
   type Problem,
 } from "../api";
 import Answer, { copyText } from "../components/Answer";
+import ChatPanel, { PANEL_TABS, type PanelTab } from "../components/ChatPanel";
+import Icon from "../components/Icon";
 import ProblemCard from "../components/ProblemCard";
 import PartsSetup from "../components/PartsSetup";
-import { Mentions, ModeSwitch, Steps, WriteCard, claimsChanges, matchFiles, mentionAt } from "../components/Project";
+import { Mentions, Steps, WriteCard, claimsChanges, matchFiles, mentionAt } from "../components/Project";
 import { record, type Recording } from "../recorder";
 import { crashActions } from "../components/RunningModel";
-import { memoryPages, plural, wordsPerSecond } from "../words";
+import { memoryPages, wordsPerSecond } from "../words";
 
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+/** Открытая вкладка панели справа помнится между запусками: кто её открыл, тот ею пользуется. */
+const PANEL_KEY = "ollivo.chat-panel";
+const savedPanel = (): PanelTab | null => {
+  try {
+    const v = localStorage.getItem(PANEL_KEY);
+    return v === "talk" || v === "files" ? v : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Сколько памяти модели занимает разговор: реплики прикидкой по буквам (2,7 знака на токен,
+ *  как в ядре), документы — их точным числом. */
+const usedTokens = (lines: Line[], pending: Attachment[]) => {
+  const tokens = (fs?: Attachment[]) => (fs ?? []).reduce((n, f) => n + f.tokens, 0);
+  return lines.reduce((n, l) => n + l.content.length / 2.7 + tokens(l.files), 0) + tokens(pending);
+};
 
 /** Картинка из папки программы; пропала — вместо неё имя файла. */
 function Thumb({ file }: { file: Attachment }) {
@@ -67,7 +88,7 @@ function Thumb({ file }: { file: Attachment }) {
   useEffect(() => {
     if (file.path) attachPreview(file.path).then(setSrc, () => setSrc(null));
   }, [file.path]);
-  return src ? <img className="thumb" src={src} alt={file.name} title={file.name} /> : <>🖼 {file.name}</>;
+  return src ? <img className="thumb" src={src} alt={file.name} title={file.name} /> : <>{file.name}</>;
 }
 
 /** Плашки приложенных документов и картинок; `onRemove` — у ещё не отправленных. */
@@ -80,13 +101,17 @@ function Files({ files, onRemove }: { files: Attachment[]; onRemove?: (i: number
             <Thumb file={f} />
           ) : (
             <>
-              {f.kind === "audio" ? "🎧" : "📄"} {f.name} · {f.trimmed ? "только начало, " : ""}
-              {memoryPages(f.tokens)}
+              <Icon name={f.kind === "audio" ? "mic" : "doc"} size={15} />
+              {f.name}
+              <span className="muted">
+                {f.trimmed ? "только начало, " : ""}
+                {memoryPages(f.tokens)}
+              </span>
             </>
           )}
           {onRemove && (
-            <button className="link" title="Убрать" onClick={() => onRemove(i)}>
-              ✕
+            <button className="forget" title="Убрать" onClick={() => onRemove(i)}>
+              <Icon name="close" size={14} />
             </button>
           )}
         </span>
@@ -272,6 +297,16 @@ export default function Chat({
   folderRef.current = folder;
   /** Как модель обращается с файлами: «Вручную», «Авто», «План». Новый разговор наследует. */
   const [mode, setMode] = useState<FileMode>("ask");
+  const [panel, setPanelState] = useState<PanelTab | null>(savedPanel);
+  const setPanel = (t: PanelTab | null) => {
+    setPanelState(t);
+    try {
+      if (t) localStorage.setItem(PANEL_KEY, t);
+      else localStorage.removeItem(PANEL_KEY);
+    } catch {
+      // Без памяти панели программа работает — просто откроется закрытой.
+    }
+  };
   /** Рабочий режим до «Плана» — в нём «Выполнить план». */
   const working = useRef<FileMode>("ask");
   const pickMode = (m: FileMode) => {
@@ -520,16 +555,12 @@ export default function Chat({
     ask([...lines, { role: "user", content: text, files: files.length ? files : undefined }]);
   };
 
-  /** Сколько памяти модели свободно под документ. Разговор меряем прикидкой по буквам
-   *  (2,7 знака на токен, как в ядре), документы — их точным числом. Четверть памяти
-   *  оставляем на вопрос и ответ: без неё модель прочтёт документ, но ответить не сможет. */
+  /** Сколько памяти модели свободно под документ. Четверть памяти оставляем на вопрос
+   *  и ответ: без неё модель прочтёт документ, но ответить не сможет. */
   const room = (pending: Attachment[]) => {
     const ctx = llmRef.current?.ctx;
     if (!ctx) return Infinity;
-    const tokens = (fs?: Attachment[]) => (fs ?? []).reduce((n, f) => n + f.tokens, 0);
-    const used =
-      linesRef.current.reduce((n, l) => n + l.content.length / 2.7 + tokens(l.files), 0) + tokens(pending);
-    return Math.max(0, Math.floor(ctx * 0.75 - used));
+    return Math.max(0, Math.floor(ctx * 0.75 - usedTokens(linesRef.current, pending)));
   };
 
   /** Читает файлы по одному; не поместившийся останавливает очередь и спрашивает, что делать. */
@@ -688,7 +719,20 @@ export default function Chat({
 
   const pickFolder = async () => {
     const picked = await open({ directory: true, title: "Папка проекта" });
-    if (typeof picked === "string") setFolder(picked);
+    if (typeof picked === "string") {
+      setFolder(picked);
+      // Файлы папки видны в панели — туда и смотрят сразу после выбора.
+      setPanel("files");
+    }
+  };
+
+  /** Файл из панели — как выбор после «@»: ссылка в тексте и сам файл к вопросу. */
+  const attachFromPanel = (path: string) => {
+    if (!folder) return;
+    const glue = draft && !/\s$/.test(draft) ? " " : "";
+    setDraft(`${draft}${glue}@${path} `);
+    input.current?.focus();
+    if (!files.some((f) => f.name === path)) attach([fullPath(folder, path)]);
   };
 
   /** Файл из списка по «@»: в тексте остаётся ссылка, а сам файл прикладывается — модель
@@ -823,43 +867,48 @@ export default function Chat({
 
   if (waiting && lines.length === 0) {
     return (
-      <>
+      <div className="chat-empty">
         <h2>Чат</h2>
         <div className="card">{waiting}</div>
-      </>
+      </div>
     );
   }
 
-  const folderBar = folder && (
-    <div className="folder-bar">
-      <span className="folder-name" title={folder}>
-        📁 {listing?.name ?? folder}
-      </span>
-      {listing && (
-        <span className="muted small">
-          {listing.truncated ? "больше " : ""}
-          {listing.files.length} {plural(listing.files.length, "файл", "файла", "файлов")}
-        </span>
-      )}
-      <button className="link" disabled={answering} onClick={pickFolder}>
-        Сменить
-      </button>
-      <button className="link" disabled={answering} onClick={() => setFolder(null)}>
-        Убрать
-      </button>
-      <ModeSwitch mode={mode} disabled={answering} onChange={pickMode} />
-      {folderError && <span className="error small">{folderError}</span>}
-      {listing && llm.state === "ready" && !llm.tools && (
-        <span className="muted small hint">
-          Эта модель сама файлы не открывает — прикладывайте нужные через @ в поле ввода.
-        </span>
-      )}
-    </div>
-  );
+  const sent = lines.flatMap((l) => (l.role === "user" ? (l.files ?? []) : []));
+  const lastStats = [...lines].reverse().find((l) => l.stats && l.stats.tokens > 0);
+  const lastSpeed = lastStats?.stats
+    ? wordsPerSecond(`${lastStats.thought ?? ""} ${lastStats.content}`, lastStats.stats.tokens, lastStats.stats.speed)
+    : null;
+  const togglePanel = (t: PanelTab) => setPanel(panel === t ? null : t);
+  const modeName = { ask: "Вручную", auto: "Авто", plan: "План" }[mode];
 
   return (
-    <>
-      {folderBar}
+    <div className="chat-page">
+      <div className="chat-main">
+      {/* Шапка: название разговора и кнопки панели. Папка — ярлычком, её настройки в панели «Файлы». */}
+      <header className="chat-head">
+        <h2 title={title}>{title || "Новый разговор"}</h2>
+        {folder && (
+          <button className="folder-chip" title={folder} onClick={() => setPanel("files")}>
+            <Icon name="folder" size={15} />
+            {listing?.name ?? fileName(folder)}
+            <span className="muted">· {modeName}</span>
+          </button>
+        )}
+        <div className="chat-tools">
+          {PANEL_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={panel === t.id ? "tool on" : "tool"}
+              aria-pressed={panel === t.id}
+              onClick={() => togglePanel(t.id)}
+            >
+              <Icon name={t.icon} size={16} />
+              {t.name}
+            </button>
+          ))}
+        </div>
+      </header>
       <div className="talk">
         {lines.length === 0 && (
           <p className="muted">
@@ -876,80 +925,83 @@ export default function Chat({
         )}
         {lines.map((l, i) => (
           <div key={i} className={l.role === "user" ? "line you" : "line bot"}>
-            {l.role === "user" ? (
-              <>
-                {l.files?.length ? <Files files={l.files} /> : null}
-                {l.content && <p className="answer">{l.content}</p>}
-              </>
-            ) : (
-              <>
-                {l.thought && (
-                  <details className="thought">
-                    <summary>
-                      {answering && i === lines.length - 1 && !l.content
-                        ? "Модель обдумывает ответ…"
-                        : "Как модель рассуждала"}
-                    </summary>
-                    <p>{l.thought}</p>
-                  </details>
-                )}
-                {l.steps?.length ? (
-                  <Steps steps={l.steps} onUndo={folder && !answering ? (k) => undoStep(i, k) : undefined} />
-                ) : null}
-                <Answer
-                  text={l.content || (answering && i === lines.length - 1 && !l.thought && !l.steps?.length ? "…" : "")}
+            <span className="who">{l.role === "user" ? "Вы" : "Модель"}</span>
+            <div className="body">
+              {l.role === "user" ? (
+                <>
+                  {l.files?.length ? <Files files={l.files} /> : null}
+                  {l.content && <p className="answer">{l.content}</p>}
+                </>
+              ) : (
+                <>
+                  {l.thought && (
+                    <details className="thought">
+                      <summary>
+                        {answering && i === lines.length - 1 && !l.content
+                          ? "Модель обдумывает ответ…"
+                          : "Как модель рассуждала"}
+                      </summary>
+                      <p>{l.thought}</p>
+                    </details>
+                  )}
+                  {l.steps?.length ? (
+                    <Steps steps={l.steps} onUndo={folder && !answering ? (k) => undoStep(i, k) : undefined} />
+                  ) : null}
+                  <Answer
+                    text={l.content || (answering && i === lines.length - 1 && !l.thought && !l.steps?.length ? "…" : "")}
+                  />
+                  {answering && i === lines.length - 1 && l.calling && !l.write && (
+                    <p className="muted small">
+                      {l.calling === "write_file" ? "Модель пишет файл…" : "Модель открывает файлы…"}
+                    </p>
+                  )}
+                  {l.write && <WriteCard ask={l.write} onAnswer={answerWrite} />}
+                  {folder && !(answering && i === lines.length - 1) && claimsChanges(l.content, l.steps) && (
+                    <p className="warn small">
+                      <Icon name="warn" size={15} /> Модель пишет, что меняла файлы, но ни одного файла не изменила — проверьте. Что она на
+                      самом деле делала, видно в строках над ответом.
+                    </p>
+                  )}
+                </>
+              )}
+              {l.problem && (
+                <ProblemCard
+                  problem={l.problem}
+                  on={{
+                    retry: again,
+                    restart: () => llm.model && llmStart(llm.model, { lighter: llm.lighter }),
+                    new_chat: onNewChat,
+                    models: onGoToModels,
+                  }}
                 />
-                {answering && i === lines.length - 1 && l.calling && !l.write && (
-                  <p className="muted small">
-                    {l.calling === "write_file" ? "Модель пишет файл…" : "Модель открывает файлы…"}
-                  </p>
-                )}
-                {l.write && <WriteCard ask={l.write} onAnswer={answerWrite} />}
-                {folder && !(answering && i === lines.length - 1) && claimsChanges(l.content, l.steps) && (
-                  <p className="warn small">
-                    ⚠ Модель пишет, что меняла файлы, но ни одного файла не изменила — проверьте. Что она на
-                    самом деле делала, видно в строках над ответом.
-                  </p>
-                )}
-              </>
-            )}
-            {l.problem && (
-              <ProblemCard
-                problem={l.problem}
-                on={{
-                  retry: again,
-                  restart: () => llm.model && llmStart(llm.model, { lighter: llm.lighter }),
-                  new_chat: onNewChat,
-                  models: onGoToModels,
-                }}
-              />
-            )}
-            {l.stats && l.stats.tokens > 0 && (
-              <p className="muted small">
-                {/* Токены ответа включают и рассуждения — слова считаем там же. */}
-                {wordsPerSecond(`${l.thought ?? ""} ${l.content}`, l.stats.tokens, l.stats.speed)}
-              </p>
-            )}
-            {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
-            {l.role === "assistant" && !answering && !waiting && i === lines.length - 1 && l.content.trim() && (
-              <div className="after">
-                <button className="link" onClick={() => copyText(l.content)}>
-                  Копировать
-                </button>
-                <button className="link" onClick={again}>
-                  Ответить заново
-                </button>
-                {folder && mode === "plan" && (
-                  <button
-                    className="link"
-                    title={working.current === "auto" ? "Модель выполнит план сама" : "Каждое изменение — с вашего разрешения"}
-                    onClick={runPlan}
-                  >
-                    Выполнить план
+              )}
+              {l.stats && l.stats.tokens > 0 && (
+                <p className="muted small">
+                  {/* Токены ответа включают и рассуждения — слова считаем там же. */}
+                  {wordsPerSecond(`${l.thought ?? ""} ${l.content}`, l.stats.tokens, l.stats.speed)}
+                </p>
+              )}
+              {/* Кнопки — только у последнего ответа: у каждой реплики они бы мешали читать. */}
+              {l.role === "assistant" && !answering && !waiting && i === lines.length - 1 && l.content.trim() && (
+                <div className="after">
+                  <button className="link" onClick={() => copyText(l.content)}>
+                    Копировать
                   </button>
-                )}
-              </div>
-            )}
+                  <button className="link" onClick={again}>
+                    Ответить заново
+                  </button>
+                  {folder && mode === "plan" && (
+                    <button
+                      className="link"
+                      title={working.current === "auto" ? "Модель выполнит план сама" : "Каждое изменение — с вашего разрешения"}
+                      onClick={runPlan}
+                    >
+                      Выполнить план
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ))}
         <div ref={bottom} />
@@ -1033,95 +1085,133 @@ export default function Chat({
           {mention && listing && <Mentions files={found} active={mention.active} onPick={pickMention} />}
           {reading && <p className="muted small">Читаю файл…</p>}
           {fileError && <p className="error small">{fileError}</p>}
-          <textarea
-            ref={input}
-            rows={3}
-            value={draft}
-            placeholder={
-              files.length
-                ? ASK_ABOUT[files.every((f) => f.kind === files[0].kind) ? files[0].kind : "document"]
-                : folder
-                  ? "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка."
-                  : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
-            }
-            onChange={typed}
-            onKeyDown={keys}
-            onBlur={() => setMention(null)}
-          />
-          <div className="actions">
-            {answering ? (
-              <button onClick={() => llmChatStop()}>Остановить</button>
-            ) : (
-              <button onClick={send} disabled={(!draft.trim() && !files.length) || reading}>
-                Отправить
-              </button>
-            )}
-            <button
-              className="secondary"
-              title="Приложить документ или картинку: PDF, Word, текст, код, фото. Файл можно и перетащить в окно."
-              disabled={answering || reading || !!eyes?.task}
-              onClick={pickFiles}
-            >
-              📎
-            </button>
-            <button
-              className={folder ? "" : "secondary"}
-              title={
-                folder
-                  ? `Папка проекта: ${folder}. Нажмите, чтобы выбрать другую.`
-                  : "Работать с папкой: модель увидит её файлы, сможет их читать, а с вашего разрешения — создавать и менять."
+          <div className="composer">
+            <textarea
+              ref={input}
+              rows={3}
+              value={draft}
+              placeholder={
+                files.length
+                  ? ASK_ABOUT[files.every((f) => f.kind === files[0].kind) ? files[0].kind : "document"]
+                  : folder
+                    ? "Вопрос про проект. @ — сослаться на файл. Enter — отправить, Shift+Enter — новая строка."
+                    : "Ваш вопрос. Enter — отправить, Shift+Enter — новая строка."
               }
-              disabled={answering}
-              onClick={pickFolder}
-            >
-              📁
-            </button>
-            <button
-              className={rec ? "recording" : "secondary"}
-              title={rec ? "Закончить и распознать" : "Надиктовать вопрос"}
-              disabled={answering || hearing || reading}
-              onClick={mic}
-            >
-              {rec
-                ? `⏹ ${Math.floor(recSec / 60)}:${String(Math.floor(recSec % 60)).padStart(2, "0")}`
-                : hearing
-                  ? "Распознаю…"
-                  : "🎤"}
-            </button>
-            <select
-              className="role"
-              value={role}
-              title={roleNow?.hint}
-              disabled={answering}
-              onChange={(e) => pickRole(e.target.value)}
-            >
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-            <div className="seg" role="radiogroup" aria-label="Как отвечать">
-              {styles.map((s) => (
-                <button
-                  key={s.id}
-                  role="radio"
-                  aria-checked={s.id === style}
-                  className={s.id === style ? "active" : ""}
-                  title={s.hint}
-                  disabled={answering}
-                  onClick={() => setStyle(s.id)}
-                >
-                  {s.name}
+              onChange={typed}
+              onKeyDown={keys}
+              onBlur={() => setMention(null)}
+            />
+            <div className="actions">
+              <button
+                className="icon-button"
+                title="Приложить документ или картинку: PDF, Word, текст, код, фото. Файл можно и перетащить в окно."
+                disabled={answering || reading || !!eyes?.task}
+                onClick={pickFiles}
+              >
+                <Icon name="clip" />
+              </button>
+              <button
+                className={folder ? "icon-button on" : "icon-button"}
+                title={
+                  folder
+                    ? `Папка проекта: ${folder}. Нажмите, чтобы выбрать другую.`
+                    : "Работать с папкой: модель увидит её файлы, сможет их читать, а с вашего разрешения — создавать и менять."
+                }
+                disabled={answering}
+                onClick={pickFolder}
+              >
+                <Icon name="folder" />
+              </button>
+              <button
+                className={rec ? "icon-button recording" : hearing ? "icon-button wide" : "icon-button"}
+                title={rec ? "Закончить и распознать" : "Надиктовать вопрос"}
+                disabled={answering || hearing || reading}
+                onClick={mic}
+              >
+                {rec ? (
+                  <>
+                    <i className="rec-dot" />
+                    {Math.floor(recSec / 60)}:{String(Math.floor(recSec % 60)).padStart(2, "0")}
+                  </>
+                ) : hearing ? (
+                  "Распознаю…"
+                ) : (
+                  <Icon name="mic" />
+                )}
+              </button>
+              {panel !== "talk" && (
+              <select
+                className="role"
+                value={role}
+                title={roleNow?.hint}
+                disabled={answering}
+                onChange={(e) => pickRole(e.target.value)}
+              >
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+              )}
+              <div className="seg" role="radiogroup" aria-label="Как отвечать">
+                {styles.map((s) => (
+                  <button
+                    key={s.id}
+                    role="radio"
+                    aria-checked={s.id === style}
+                    className={s.id === style ? "active" : ""}
+                    title={s.hint}
+                    disabled={answering}
+                    onClick={() => setStyle(s.id)}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+              {/* Имя модели — в строке состояния внизу окна; здесь только отправить. */}
+              {answering ? (
+                <button className="send stop" onClick={() => llmChatStop()}>
+                  <i className="stop-mark" />
+                  Остановить
                 </button>
-              ))}
+              ) : (
+                <button className="send" onClick={send} disabled={(!draft.trim() && !files.length) || reading}>
+                  Отправить
+                </button>
+              )}
             </div>
-            <span className="muted small grow-right model-name" title={llm.model ?? ""}>
-              {fileName(llm.model ?? "")}
-            </span>
           </div>
         </div>
       )}
-    </>
+      </div>
+      {panel && (
+        <ChatPanel
+          tab={panel}
+          onClose={() => setPanel(null)}
+          llm={llm}
+          used={usedTokens(lines, files)}
+          lastSpeed={lastSpeed}
+          roles={roles}
+          role={role}
+          onRole={pickRole}
+          onGoToModels={onGoToModels}
+          onStop={() => llmStop()}
+          answering={answering}
+          sent={sent}
+          pending={files}
+          folder={folder}
+          listing={listing}
+          folderError={folderError}
+          mode={mode}
+          onMode={pickMode}
+          onPickFolder={pickFolder}
+          onDropFolder={() => setFolder(null)}
+          steps={lines.flatMap((l, i) => (l.steps?.length ? [{ line: i, steps: l.steps }] : []))}
+          onUndo={undoStep}
+          onAttach={attachFromPanel}
+        />
+      )}
+    </div>
   );
 }
