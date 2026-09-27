@@ -416,7 +416,8 @@ mod tests {
     }
 
     fn tmp_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ollivo-eng-{}-{name}", std::process::id()));
+        // Кириллица и пробел — как в папке программы у человека по имени «Иван Петров».
+        let dir = std::env::temp_dir().join(format!("Иван Петров {}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

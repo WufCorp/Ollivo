@@ -47,7 +47,8 @@ fn audio_ctx(seconds: f64) -> Option<u32> {
 fn args(model: &Path, audio: &Path, seconds: Option<f64>) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-m".into(),
-        model.display().to_string(),
+        // Только имя: whisper запускается из папки модели (см. `transcribe`).
+        model.file_name().unwrap_or_default().to_string_lossy().into_owned(),
         "-f".into(),
         audio.display().to_string(),
         // Интерфейс русский — и говорят в нём по-русски. «auto» на коротких фразах
@@ -84,6 +85,13 @@ pub async fn transcribe(
 ) -> Result<String, String> {
     crate::vcrt::prepare(exe)?;
     let mut cmd = tokio::process::Command::new(exe);
+    // whisper.cpp открывает модель через `fopen` с ANSI-путём, и кириллица в пути его роняет
+    // (0xC0000409) — а папку программы человек может перенести в «D:\Мои программы».
+    // Имя файла модели всегда латиницей, поэтому запускаем из её папки и передаём только имя.
+    // Запись он читает через miniaudio с широкими путями — ей кириллица не мешает (проверено).
+    if let Some(dir) = model.parent() {
+        cmd.current_dir(dir);
+    }
     cmd.args(args(model, audio, seconds))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -171,8 +179,9 @@ mod tests {
 
     #[test]
     fn args_are_russian_text_only() {
-        let a = args(Path::new("m.bin"), Path::new("a.wav"), Some(10.0)).join(" ");
+        let a = args(Path::new(r"D:\Мои программы\Ollivo\m.bin"), Path::new("a.wav"), Some(10.0)).join(" ");
         assert!(a.contains("-l ru") && a.contains("-nt") && a.contains("-ac 640"), "{a}");
+        assert!(a.starts_with("-m m.bin "), "модель — только именем: {a}");
         assert!(!args(Path::new("m.bin"), Path::new("a.mp3"), None).join(" ").contains("-ac"));
     }
 
@@ -181,6 +190,43 @@ mod tests {
         assert_eq!(progress_of("whisper_print_progress_callback: progress =  45%"), Some(45));
         assert_eq!(progress_of("whisper_init: loading model"), None);
         assert_eq!(tidy(" Первая часть.\n\n [МУЗЫКА]\n Вторая часть.\n"), "Первая часть. Вторая часть.");
+    }
+
+    /// Голос у человека по имени «Иван Петров»: ffmpeg, whisper, модель и запись — в папках
+    /// с кириллицей и пробелами, запись называется как в «Загрузках», VC++ — наши копии.
+    /// `cargo test speech::tests::real_human_paths -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_human_paths() {
+        let root = Path::new(r"D:\Ollivo");
+        let base = crate::testserver::human_dir("голос");
+        let moved = |id: &str, to: &str| {
+            let src = crate::engines::installed(root, id).pop().unwrap_or_else(|| panic!("{id} не установлен"));
+            let dir = base.join(to);
+            crate::testserver::link_tree(&src.dir, &dir);
+            dir.join(src.exe.strip_prefix(&src.dir).unwrap())
+        };
+        let whisper = moved("whisper.cpp", "распознавание речи");
+        let ffmpeg = moved("ffmpeg", "звук и видео");
+        let no_system = base.join("пустая System32");
+        std::fs::create_dir_all(&no_system).unwrap();
+        crate::vcrt::ensure_in(whisper.parent().unwrap(), &no_system).unwrap();
+        std::fs::remove_file(whisper.parent().unwrap().join(crate::vcrt::MARKER)).unwrap();
+
+        let model = base.join("модели речи").join("ggml-small.bin");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::hard_link(model_path(root), &model).unwrap();
+        let audio = base.join("Загрузки").join("Запись встречи №1.mp3");
+        std::fs::create_dir_all(audio.parent().unwrap()).unwrap();
+        std::fs::hard_link(root.join(r"lab\whisper\ch00.mp3"), &audio).unwrap();
+
+        // Путь, которым идут M4A и голосовые Telegram: ffmpeg → WAV → whisper.
+        let wav = base.join("временное").join("запись встречи.wav");
+        std::fs::create_dir_all(wav.parent().unwrap()).unwrap();
+        crate::media::to_wav(&ffmpeg, &audio, &wav, &CancellationToken::new()).await.unwrap();
+        let text = transcribe(&whisper, &model, &wav, None, &CancellationToken::new(), |_| {}).await.unwrap();
+        println!("{text}");
+        assert!(text.contains("Человек в футляре") || text.contains("Чехова"), "{text}");
     }
 
     /// Настоящий whisper.cpp из D:\Ollivo: минута Чехова (LibriVox) и фраза с окном по длине.

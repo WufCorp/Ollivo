@@ -22,7 +22,7 @@ const FILES: &[(&str, &[u8])] = &[
 ];
 
 /// Какие из библиотек положили мы (а не архив движка): только их можно убрать.
-const MARKER: &str = "ollivo.vcrt";
+pub(crate) const MARKER: &str = "ollivo.vcrt";
 
 /// Готовит библиотеки для движка перед запуском. Зовётся перед каждым запуском — так
 /// библиотеки появятся и у движков, поставленных прежними версиями Ollivo, вернутся,
@@ -39,7 +39,7 @@ pub fn prepare(exe: &Path) -> Result<(), String> {
     }
 }
 
-fn ensure_in(dir: &Path, system: &Path) -> std::io::Result<()> {
+pub(crate) fn ensure_in(dir: &Path, system: &Path) -> std::io::Result<()> {
     let marker = dir.join(MARKER);
     let ours: Vec<String> = std::fs::read_to_string(&marker)
         .map(|s| s.lines().map(str::to_owned).collect())
@@ -101,7 +101,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("ollivo-vcrt-{name}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("Иван Петров vcrt-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

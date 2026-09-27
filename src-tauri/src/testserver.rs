@@ -73,3 +73,35 @@ pub fn body(len: usize) -> Vec<u8> {
 pub fn sha(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
+
+/// Папка «как у человека по имени Иван Петров»: кириллица и пробелы в каждом звене пути.
+/// На диске D:, рядом с моделями, — чтобы жёсткие ссылки работали без копирования гигабайт.
+pub fn human_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(r"D:\Ollivo\lab\Иван Петров\Ollivo данные").join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Жёсткие ссылки на все файлы папки: движок «переезжает» мгновенно и без лишнего места.
+pub fn link_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            link_tree(&e.path(), &dest);
+        } else {
+            std::fs::hard_link(e.path(), &dest).unwrap();
+        }
+    }
+}
+
+/// Откуда процесс на самом деле загрузил библиотеку (`msvcp140` и т.п.).
+pub fn loaded_from(pid: u32, module: &str) -> String {
+    let script = format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+         (Get-Process -Id {pid}).Modules | Where-Object ModuleName -eq '{module}' | ForEach-Object FileName"
+    );
+    let out = std::process::Command::new("powershell").args(["-NoProfile", "-Command", &script]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}

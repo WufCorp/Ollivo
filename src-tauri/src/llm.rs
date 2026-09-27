@@ -545,6 +545,52 @@ mod tests {
     }
 
     /// Стриминг на настоящем движке: куски приходят по ходу, «Остановить» обрывает ответ.
+    /// ПК, где имя пользователя «Иван Петров» и VC++ никогда не ставили: движок и модель
+    /// в папках с кириллицей и пробелами, библиотеки VC++ — только наши копии рядом с движком.
+    /// `cargo test llm::tests::real_human_paths -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_human_paths() {
+        let root = PathBuf::from(r"D:\Ollivo");
+        let src = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
+        let base = crate::testserver::human_dir("чат");
+        let engine_dir = base.join("движок чата");
+        crate::testserver::link_tree(&src.dir, &engine_dir);
+        // Системы без VC++ нет под рукой — кладём копии как для неё (пустая «System32»), а метку
+        // убираем, иначе `start` увидит новый VC++ в настоящей System32 и уберёт копии обратно.
+        let no_system = base.join("пустая System32");
+        std::fs::create_dir_all(&no_system).unwrap();
+        crate::vcrt::ensure_in(&engine_dir, &no_system).unwrap();
+        std::fs::remove_file(engine_dir.join(crate::vcrt::MARKER)).unwrap();
+
+        let model = base.join("мои модели").join("Qwen маленькая.gguf");
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        std::fs::hard_link(root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), &model).unwrap();
+
+        let engine = Installed { exe: engine_dir.join(src.exe.strip_prefix(&src.dir).unwrap()), dir: engine_dir.clone(), ..src };
+        let cfg = Config { model, ctx: 2048, gpu_layers: 999, mmproj: None };
+        let sup = Supervisor::new();
+        let llm = start(&sup, &engine, &cfg, &base.join("журналы"), &CancellationToken::new()).await.unwrap();
+        for dll in ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"] {
+            let from = crate::testserver::loaded_from(llm.handle.pid, dll);
+            println!("{dll}: {from}");
+            assert!(from.contains("Иван Петров") && from.contains("движок чата"), "{dll} загружена из {from:?}");
+        }
+        let msgs = vec![Msg::new("user", "Напиши числа от 1 до 5 через запятую.".into())];
+        let text = std::sync::Mutex::new(String::new());
+        chat(llm.port, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| {
+            if let Event::Text(t) = e {
+                text.lock().unwrap().push_str(t)
+            }
+        })
+        .await
+        .unwrap();
+        let text = text.into_inner().unwrap();
+        println!("ответ: {text}");
+        assert!(text.contains('3'), "{text}");
+        llm.handle.stop().await;
+    }
+
     /// `cargo test llm::tests::real_chat_stream -- --ignored --nocapture`
     #[tokio::test]
     #[ignore]
