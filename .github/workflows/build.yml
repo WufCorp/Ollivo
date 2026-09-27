@@ -3,10 +3,13 @@
 name: build
 
 on:
+  # Правка одного сайта не повод 17 минут собирать установщик: сайт выкладывает pages.yml.
   push:
     branches: [main]
+    paths-ignore: ["site/**", ".github/workflows/pages.yml"]
   pull_request:
     branches: [main]
+    paths-ignore: ["site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 concurrency:

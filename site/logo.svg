@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Оливка с листом: название Ollivo, цвета сайта. -->
+  <path d="M37 12c6-7 16-8 21-6-2 7-9 13-18 12" fill="#8fae3a"/>
+  <path d="M38 17c4-4 10-7 16-9" stroke="#5c7420" stroke-width="2" stroke-linecap="round" fill="none"/>
+  <ellipse cx="28" cy="38" rx="17" ry="21" transform="rotate(-28 28 38)" fill="#5f7d1c"/>
+  <ellipse cx="22" cy="31" rx="5" ry="8" transform="rotate(-28 22 31)" fill="#b5d05a" opacity=".6"/>
+</svg>
