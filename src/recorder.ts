@@ -1,19 +1,10 @@
 // Запись с микрофона для диктовки: сразу 16 кГц, моно — так её ждёт whisper.
 // MediaRecorder не годится: он пишет webm/opus, а whisper.cpp читает только wav, mp3, ogg, flac.
 
-const RATE = 16000;
+// no-inline: маленький файл Vite иначе вклеил бы как data:-адрес, а его CSP не пропустит.
+import tapUrl from "./tap-worklet.js?url&no-inline";
 
-// Обработчик звука живёт в отдельном потоке браузера и отдаёт куски в основной.
-const WORKLET = `
-class Tap extends AudioWorkletProcessor {
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (ch) this.port.postMessage(ch.slice(0));
-    return true;
-  }
-}
-registerProcessor("tap", Tap);
-`;
+const RATE = 16000;
 
 export interface Recording {
   /** Сколько секунд уже записано. */
@@ -31,9 +22,7 @@ export async function record(): Promise<Recording> {
   });
   // Частоту 16 кГц задаём самому AudioContext — пересчёт делает браузер.
   const ctx = new AudioContext({ sampleRate: RATE });
-  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
-  await ctx.audioWorklet.addModule(url);
-  URL.revokeObjectURL(url);
+  await ctx.audioWorklet.addModule(tapUrl);
   const source = ctx.createMediaStreamSource(stream);
   const tap = new AudioWorkletNode(ctx, "tap");
   const chunks: Float32Array[] = [];
