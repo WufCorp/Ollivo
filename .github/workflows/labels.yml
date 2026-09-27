@@ -1,0 +1,29 @@
+# Метки для issues — из .github/labels.tsv (имя, цвет, описание через табуляцию).
+# Их проставляют шаблоны форм и кнопка «Сообщить о проблеме»; метки, которой нет
+# в репозитории, GitHub молча не ставит. Встроенный токен — ключи владельца не нужны.
+name: labels
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/labels.tsv", ".github/workflows/labels.yml"]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Создать или обновить метки
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while IFS=$'\t' read -r name color desc; do
+            [ -n "$name" ] || continue
+            gh label create "$name" --color "$color" --description "$desc" --force --repo "$GITHUB_REPOSITORY"
+          done < .github/labels.tsv
+          gh label list --repo "$GITHUB_REPOSITORY"

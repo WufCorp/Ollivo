@@ -6,10 +6,10 @@ on:
   # Правка одного сайта не повод 17 минут собирать установщик: сайт выкладывает pages.yml.
   push:
     branches: [main]
-    paths-ignore: ["site/**", ".github/workflows/pages.yml"]
+    paths-ignore: ["site/**", ".github/workflows/pages.yml", ".github/labels.tsv", ".github/workflows/labels.yml"]
   pull_request:
     branches: [main]
-    paths-ignore: ["site/**", ".github/workflows/pages.yml"]
+    paths-ignore: ["site/**", ".github/workflows/pages.yml", ".github/labels.tsv", ".github/workflows/labels.yml"]
   workflow_dispatch:
 
 concurrency:

@@ -1,0 +1,46 @@
+# Выпуск на GitHub по тегу v<версия>. Установщик не собирается здесь заново, а берётся
+# из S3 — тот самый, подписанный ключом обновлений на машине владельца и уже выложенный
+# `publish-update`: на странице выпусков и в автообновлении должен быть один и тот же файл.
+# Текст — release-notes/<версия>.md, ниже дописываются SHA256 и как пройти SmartScreen.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установщик из S3
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          exe="Ollivo_${ver}_x64-setup.exe"
+          curl -sSfL -o "$exe" "https://s3.twcstorage.ru/prisma-prava/ollivo/updates/$exe"
+          test -s "release-notes/$ver.md" || { echo "нет release-notes/$ver.md"; exit 1; }
+          sha=$(sha256sum "$exe" | cut -d' ' -f1)
+          {
+            cat "release-notes/$ver.md"
+            echo
+            echo "---"
+            echo
+            echo "**Если Windows предупредит.** Подписи Microsoft у программы пока нет, поэтому при первой установке"
+            echo "может появиться синее окно «Windows защитил ваш компьютер». Нажмите «Подробнее», затем «Выполнить в любом случае»."
+            echo
+            echo "SHA256 \`$exe\`:"
+            echo
+            echo "\`$sha\`"
+          } > notes.md
+          echo "EXE=$exe" >> "$GITHUB_ENV"
+          echo "VER=$ver" >> "$GITHUB_ENV"
+
+      - name: Выпуск
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$EXE" --title "Ollivo $VER" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
