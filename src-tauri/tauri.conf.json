@@ -62,7 +62,8 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://s3.twcstorage.ru/prisma-prava/ollivo/updates/latest.json"
+        "https://s3.twcstorage.ru/prisma-prava/ollivo/updates/latest.json",
+        "https://github.com/WufCorp/Ollivo/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE0MTU3QjlFMTU2Qzk0RTUKUldUbGxHd1ZubnNWRk8yakxFSEFLZWtRQXp1Y3JkczFrMWxRZ0t5YlFxVUt0b01UdXUxRlFvM0EK",
       "windows": {

@@ -199,7 +199,7 @@ export const hfCheckToken = (hf: HfSettings, token?: string) =>
 
 // --- Мастер первого запуска ---
 
-export type CheckStatus = "ok" | "warn" | "fail";
+export type CheckStatus = "ok" | "warn";
 
 export interface SetupCheck {
   id: string;

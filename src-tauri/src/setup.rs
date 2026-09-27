@@ -16,10 +16,11 @@ const VC_DLLS: &[&str] = &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.d
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+/// «Не пройдено, дальше нельзя» больше не бывает: единственным таким был VC++, а его
+/// теперь кладём рядом с движком сами. Всё остальное — предупреждения.
 pub enum Status {
     Ok,
     Warn,
-    Fail,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -3,6 +3,8 @@
 //! Файл с описанием новой версии и установщик лежат в S3 (Timeweb), подписаны
 //! ключом обновлений (`~/.tauri/ollivo.key`, публичная половина — в `tauri.conf.json`).
 //! Канал `beta` — отдельный файл `latest-beta.json` в том же месте.
+//! Запасной адрес стабильного канала — выпуск на GitHub (`release.yml` кладёт туда тот же
+//! установщик и `latest.json`): S3 не ответил — программа спросит GitHub.
 //!
 //! Проверка выключается в настройках: тогда программа не делает ни одного запроса сама.
 
@@ -10,10 +12,19 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-/// Адрес описания версии для канала.
-pub fn endpoint(channel: &str) -> String {
-    let file = if channel == "beta" { "latest-beta.json" } else { "latest.json" };
-    format!("https://s3.twcstorage.ru/prisma-prava/ollivo/updates/{file}")
+/// Адреса описания версии для канала — по порядку, плагин берёт первый ответивший.
+/// Сначала S3: он в России и отдаёт быстро, а раздача файлов GitHub у нас бывает медленной.
+/// GitHub — на случай, если S3 недоступен. У беты запасного нет: «последний выпуск» GitHub
+/// ранние версии не показывает, а бета — для тех, кто и так следит за программой.
+pub fn endpoints(channel: &str) -> Vec<String> {
+    const S3: &str = "https://s3.twcstorage.ru/prisma-prava/ollivo/updates";
+    if channel == "beta" {
+        return vec![format!("{S3}/latest-beta.json")];
+    }
+    vec![
+        format!("{S3}/latest.json"),
+        "https://github.com/WufCorp/Ollivo/releases/latest/download/latest.json".into(),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,10 +37,14 @@ pub struct Available {
 
 /// Ищет обновление в выбранном канале. `Ok(None)` — установлена свежая версия.
 pub async fn check(app: &AppHandle, channel: &str, proxy: Option<url::Url>) -> Result<Option<Update>, String> {
-    let url = endpoint(channel).parse().map_err(|e| format!("неверный адрес обновлений: {e}"))?;
+    let urls = endpoints(channel)
+        .iter()
+        .map(|u| u.parse())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("неверный адрес обновлений: {e}"))?;
     let mut builder = app
         .updater_builder()
-        .endpoints(vec![url])
+        .endpoints(urls)
         .map_err(|e| format!("неверный адрес обновлений: {e}"))?;
     if let Some(p) = proxy {
         builder = builder.proxy(p);
@@ -87,7 +102,7 @@ mod tests {
     #[ignore]
     async fn published_update_real() {
         use base64::Engine;
-        let manifest: serde_json::Value = reqwest::get(endpoint("beta")).await.unwrap().json().await.unwrap();
+        let manifest: serde_json::Value = reqwest::get(&endpoints("beta")[0]).await.unwrap().json().await.unwrap();
         let win = &manifest["platforms"]["windows-x86_64"];
         println!("версия {}, файл {}", manifest["version"], win["url"]);
 
@@ -115,9 +130,12 @@ mod tests {
 
     #[test]
     fn channel_picks_file() {
-        assert!(endpoint("stable").ends_with("/ollivo/updates/latest.json"));
-        assert!(endpoint("beta").ends_with("/ollivo/updates/latest-beta.json"));
+        let stable = endpoints("stable");
+        assert!(stable[0].ends_with("/ollivo/updates/latest.json"), "первым — S3: {stable:?}");
+        assert!(stable[1].starts_with("https://github.com/WufCorp/Ollivo/releases/latest/download/"), "{stable:?}");
+        assert_eq!(endpoints("beta").len(), 1);
+        assert!(endpoints("beta")[0].ends_with("/ollivo/updates/latest-beta.json"));
         // Неизвестный канал — как стабильный, а не ошибка.
-        assert_eq!(endpoint("что-то"), endpoint("stable"));
+        assert_eq!(endpoints("что-то"), stable);
     }
 }

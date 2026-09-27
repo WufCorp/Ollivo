@@ -330,13 +330,6 @@ select option {
   color: #d68910;
 }
 
-.setup-checks li.fail .icon {
-  color: #c0392b;
-}
-
-.setup-checks button {
-  margin-top: 6px;
-}
 
 .disks {
   display: flex;

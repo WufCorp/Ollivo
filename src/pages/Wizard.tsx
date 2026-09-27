@@ -18,7 +18,7 @@ import { useEngine } from "../useEngine";
 import ProxyForm, { CheckList } from "../components/ProxyForm";
 
 const STEPS = ["Проверка", "Папка", "Сеть", "Движок"] as const;
-const ICONS: Record<CheckStatus, string> = { ok: "✓", warn: "!", fail: "✗" };
+const ICONS: Record<CheckStatus, string> = { ok: "✓", warn: "!" };
 
 /** Мастер первого запуска: проверка ПК → папка → сеть → движок чата → «Всё готово». */
 export default function Wizard({ onDone }: { onDone: () => void }) {
@@ -69,7 +69,6 @@ function CheckStep({ next }: { next: () => void }) {
   }, []);
 
   if (!info) return <p className="muted">Смотрю, что за компьютер…</p>;
-  const blocked = info.checks.some((c) => c.status === "fail");
 
   return (
     <>
@@ -86,7 +85,7 @@ function CheckStep({ next }: { next: () => void }) {
       </ul>
       {error && <p className="error">{error}</p>}
       <div className="actions">
-        <button onClick={next} disabled={blocked}>
+        <button onClick={next}>
           Дальше
         </button>
       </div>

@@ -2,6 +2,8 @@
 # из S3 — тот самый, подписанный ключом обновлений на машине владельца и уже выложенный
 # `publish-update`: на странице выпусков и в автообновлении должен быть один и тот же файл.
 # Текст — release-notes/<версия>.md, ниже дописываются SHA256 и как пройти SmartScreen.
+# Рядом кладётся latest.json — запасной адрес автообновления (update.rs): та же подпись,
+# но ссылка на установщик здесь, на GitHub, чтобы обновление пришло и без S3.
 name: release
 
 on:
@@ -22,7 +24,13 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           exe="Ollivo_${ver}_x64-setup.exe"
-          curl -sSfL -o "$exe" "https://s3.twcstorage.ru/prisma-prava/ollivo/updates/$exe"
+          s3="https://s3.twcstorage.ru/prisma-prava/ollivo/updates"
+          curl -sSfL -o "$exe" "$s3/$exe"
+          # Описание стабильной версии из S3 — только если оно про эту же версию.
+          curl -sSfL "$s3/latest.json" -o s3-latest.json
+          test "$(jq -r .version s3-latest.json)" = "$ver" || { echo "в S3 latest.json не $ver — сначала publish-update в stable"; exit 1; }
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$exe"
+          jq --arg url "$url" '.platforms["windows-x86_64"].url = $url' s3-latest.json > latest.json
           test -s "release-notes/$ver.md" || { echo "нет release-notes/$ver.md"; exit 1; }
           sha=$(sha256sum "$exe" | cut -d' ' -f1)
           {
@@ -43,4 +51,4 @@ jobs:
       - name: Выпуск
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "$EXE" --title "Ollivo $VER" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
+        run: gh release create "$GITHUB_REF_NAME" "$EXE" latest.json --title "Ollivo $VER" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
