@@ -19,6 +19,48 @@ use tokio_util::sync::CancellationToken;
 const MIB: u64 = 1 << 20;
 const RETRIES: u32 = 5;
 
+/// Предел скорости всех загрузок вместе, байт/с; 0 — без предела. Один на всю программу:
+/// восемь соединений одной загрузки и две загрузки сразу делят его между собой, а смена
+/// в настройках сразу действует и на идущие (issue #2: модель забирала весь домашний интернет).
+static LIMIT: AtomicU64 = AtomicU64::new(0);
+/// Когда последний раз брали байты и сколько ещё можно взять (меньше нуля — долг).
+static BUCKET: Mutex<Option<(Instant, f64)>> = Mutex::new(None);
+
+pub fn set_limit(bytes_per_sec: u64) {
+    LIMIT.store(bytes_per_sec, Ordering::Relaxed);
+    *BUCKET.lock().unwrap() = None;
+}
+
+/// Сколько подождать после `n` полученных байт, чтобы держаться предела.
+fn pace(n: u64) -> Option<Duration> {
+    let rate = LIMIT.load(Ordering::Relaxed) as f64;
+    if rate == 0.0 {
+        return None;
+    }
+    let mut bucket = BUCKET.lock().unwrap();
+    let (next, wait) = bucket_take(rate, *bucket, Instant::now(), n);
+    *bucket = Some(next);
+    wait
+}
+
+fn bucket_take(rate: f64, prev: Option<(Instant, f64)>, now: Instant, n: u64) -> ((Instant, f64), Option<Duration>) {
+    let (last, credit) = prev.unwrap_or((now, 0.0));
+    // Запас — не больше полсекунды: после затишья загрузка не должна рвануть на всю ширину канала.
+    let credit = (credit + now.duration_since(last).as_secs_f64() * rate).min(rate / 2.0) - n as f64;
+    ((now, credit), (credit < 0.0).then(|| Duration::from_secs_f64(-credit / rate)))
+}
+
+/// Пауза под предел скорости; «Пауза» в окне прерывает и её.
+async fn throttle(n: usize, cancel: &CancellationToken) -> Result<(), Error> {
+    if let Some(wait) = pace(n as u64) {
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = cancel.cancelled() => return Err(Error::Cancelled),
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
     /// Основной адрес и зеркала — пробуются по порядку.
@@ -428,6 +470,7 @@ impl Downloader {
             file.write_all(&bytes).await?;
             *written += bytes.len() as u64;
             counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+            throttle(bytes.len(), cancel).await?;
         }
         if *written != end - start + 1 {
             return Err(Error::Other(t!("кусок оборвался", "a chunk was cut off").into()));
@@ -463,6 +506,7 @@ impl Downloader {
                 let bytes = bytes?;
                 file.write_all(&bytes).await?;
                 counter.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                throttle(bytes.len(), cancel).await?;
             }
             file.flush().await?;
             Ok(())
@@ -550,6 +594,25 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Предел скорости: долг отсыпается, запас после затишья — не больше полсекунды.
+    #[test]
+    fn speed_limit_paces() {
+        let t0 = Instant::now();
+        let secs = |s: f64| t0 + Duration::from_secs_f64(s);
+        let (b, wait) = bucket_take(1000.0, None, t0, 1000);
+        assert_eq!(wait, Some(Duration::from_secs(1)));
+        // Проспали секунду — следующая тысяча снова секунда, а не ноль.
+        let (b, wait) = bucket_take(1000.0, Some(b), secs(1.0), 1000);
+        assert_eq!(wait, Some(Duration::from_secs(1)));
+        // Два соединения взяли сразу — второе ждёт за двоих.
+        let (b, _) = bucket_take(1000.0, Some(b), secs(2.0), 500);
+        let (b, wait) = bucket_take(1000.0, Some(b), secs(2.0), 500);
+        assert_eq!(wait, Some(Duration::from_secs(1)));
+        // После десяти секунд затишья — запас на полсекунды, не на десять.
+        let (_, wait) = bucket_take(1000.0, Some(b), secs(13.0), 1500);
+        assert_eq!(wait, Some(Duration::from_secs(1)));
+    }
     use crate::testserver::{body, serve, sha};
 
     fn request(urls: Vec<String>, dest: PathBuf, sha256: Option<String>) -> Request {
@@ -582,6 +645,27 @@ mod tests {
         let req = request(vec![srv.url], dest.clone(), Some(sha(&data)));
         Downloader::new().download(&req, &CancellationToken::new(), &|_| {}).await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), data);
+    }
+
+    /// Предел скорости на настоящей загрузке: 1 МБ кусками по 8 соединениям при пределе
+    /// 250 КБ/с — не быстрее ~4 с. `#[ignore]`: предел общий на процесс и замедлил бы
+    /// соседние тесты. `cargo test download::tests::speed_limit_real -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn speed_limit_real() {
+        let data = body(1_000_000);
+        let srv = serve(data.clone(), true, 0);
+        let dest = tmp("limit");
+        let mut req = request(vec![srv.url], dest.clone(), None);
+        req.chunk_size = 100_000;
+        set_limit(250_000);
+        let t = Instant::now();
+        Downloader::new().download(&req, &CancellationToken::new(), &|_| {}).await.unwrap();
+        let secs = t.elapsed().as_secs_f64();
+        set_limit(0);
+        println!("1 МБ за {secs:.1} с");
+        assert_eq!(std::fs::read(&dest).unwrap(), data);
+        assert!((3.5..6.0).contains(&secs), "{secs}");
     }
 
     #[tokio::test]

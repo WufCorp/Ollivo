@@ -12,6 +12,7 @@ import HfForm from "../components/HfForm";
 import ProxyForm from "../components/ProxyForm";
 import UpdateCard from "../components/UpdateCard";
 import StorageCard from "../components/StorageCard";
+import SharePanel from "../components/SharePanel";
 import { openReport } from "../components/Report";
 import { openSupport } from "../support";
 import { setLang, t, type Lang } from "../i18n";
@@ -23,6 +24,15 @@ const unload = (): [number, string][] => [
   [30, t("через полчаса", "after half an hour")],
   [60, t("через час", "after an hour")],
   [0, t("никогда", "never")],
+];
+
+/** Предел скорости загрузок, байт/с. Тарифы пишут в мегабитах — их и показываем рядом. */
+const speeds = (): [number, string][] => [
+  [0, t("без ограничения", "no limit")],
+  ...[1, 2, 5, 10, 25].map((mb): [number, string] => [
+    mb * 1_000_000,
+    t(`${mb} МБ/с (≈ ${mb * 8} Мбит/с)`, `${mb} MB/s (≈ ${mb * 8} Mbit/s)`),
+  ]),
 ];
 
 /** Названия языков — каждый на своём языке: выбравший по ошибке чужой найдёт дорогу назад. */
@@ -139,6 +149,31 @@ export default function Settings() {
           onPassword={setPassword}
           hasPassword={hasPassword}
         />
+        <label>
+          {t("Скорость загрузок", "Download speed")}
+          <select
+            value={settings.downloads.limit}
+            onChange={(e) => update({ downloads: { limit: Number(e.target.value) } })}
+          >
+            {/* Значение из файла, которого нет в списке, не теряем — показываем как есть. */}
+            {!speeds().some(([v]) => v === settings.downloads.limit) && (
+              <option value={settings.downloads.limit}>
+                {(settings.downloads.limit / 1_000_000).toFixed(1)} {t("МБ/с", "MB/s")}
+              </option>
+            )}
+            {speeds().map(([v, text]) => (
+              <option key={v} value={v}>
+                {text}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">
+          {t(
+            "Чтобы загрузка модели не забирала весь интернет у остальных в доме. После «Сохранить» действует и на уже идущие загрузки.",
+            "So that a model download doesn't take all the internet from everyone else at home. After “Save” it also applies to downloads already running.",
+          )}
+        </p>
       </div>
 
       <h2>HuggingFace</h2>
@@ -188,6 +223,9 @@ export default function Settings() {
           )}
         </p>
       </div>
+
+      <h2>{t("Для других программ", "For other programs")}</h2>
+      <SharePanel share={settings.share} onChange={(share) => setSettings({ ...settings, share })} />
 
       <h2>{t("Обновления Ollivo", "Ollivo updates")}</h2>
       <UpdateCard settings={settings.updates} onChange={(updates) => update({ updates })} />
@@ -246,7 +284,7 @@ export default function Settings() {
           <>
             <p className="apart">
               {t(
-                "Сеть, HuggingFace, оформление, видеокарта и обновления вернутся к исходным. Пароль прокси и токен HuggingFace удалятся. Модели, разговоры и папка программы останутся.",
+                "Сеть (прокси и скорость загрузок), HuggingFace, оформление, видеокарта и обновления вернутся к исходным. Пароль прокси и токен HuggingFace удалятся. Модели, разговоры и папка программы останутся.",
                 "Network, HuggingFace, appearance, graphics card and updates go back to defaults. The proxy password and HuggingFace token are deleted. Models, conversations, the program folder and the language stay.",
               )}
             </p>

@@ -276,15 +276,19 @@ const asProblem = (e: unknown): Problem =>
     : { text: t("Не получилось получить ответ.", "Couldn't get an answer."), hint: null, actions: ["retry"], details: String(e) };
 
 export default function Chat({
+  active,
   chatId,
   onSaved,
   onGoToModels,
   onGo,
   onNewChat,
 }: {
+  /** Чат на экране. Скрытый он продолжает принимать ответ модели — поэтому и не размонтируется. */
+  active: boolean;
   /** Открытый разговор; `null` — новый, ещё не сохранённый. */
   chatId: string | null;
-  onSaved: (chat: Talk) => void;
+  /** `open` — разговор всё ещё открыт; нет — его успели сменить, пока шла запись. */
+  onSaved: (chat: Talk, open: boolean) => void;
   onGoToModels: () => void;
   onGo: (tab: "catalog" | "computer") => void;
   onNewChat: () => void;
@@ -354,6 +358,12 @@ export default function Chat({
   const llmRef = useRef<LlmState | null>(null);
   llmRef.current = llm;
   const wasAnswering = useRef(false);
+  const answeringRef = useRef(false);
+  answeringRef.current = answering;
+  /** Разговор сменили посреди ответа: хвост того ответа сюда не пишем, ждём его конца. */
+  const ignoreStream = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   /** Меняет последний ответ модели — туда идут куски текста, шаги и вопросы о записи. */
   const setLast = (change: (l: Line) => Line) =>
     setLines((prev) => {
@@ -363,6 +373,11 @@ export default function Chat({
     });
   /** Разговор, который мы сами только что записали, — перечитывать его не надо. */
   const savedId = useRef<string | null>(null);
+  /** Записи идут цепочкой и отдают номер разговора: вопрос пишется сразу, ответ — следом,
+   *  и второй записи нужен номер, выданный первой, иначе новых разговоров получится два. */
+  const saving = useRef<Promise<string | null>>(Promise.resolve(chatId));
+  /** Растёт при смене разговора: запись, закончившаяся после смены, экран не трогает. */
+  const epoch = useRef(0);
 
   useEffect(() => {
     llmStatus().then(setLlm);
@@ -372,6 +387,8 @@ export default function Chat({
     });
     // Файл, перетащенный в окно чата, — то же, что скрепка.
     const drop = getCurrentWebview().onDragDropEvent((e) => {
+      // Файл бросили на другой вкладке (например, модель в «Модели») — это не вложение в чат.
+      if (!activeRef.current) return;
       if (e.payload.type === "over") setOver(true);
       else if (e.payload.type === "drop") {
         setOver(false);
@@ -409,6 +426,7 @@ export default function Chat({
       // Модель могли запустить или остановить на вкладке «Модели».
       onLlmState(setLlm),
       onLlmThought((text) =>
+        !ignoreStream.current &&
         setLines((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== "assistant") return prev;
@@ -416,21 +434,27 @@ export default function Chat({
         }),
       ),
       onLlmToken((text) =>
+        !ignoreStream.current &&
         setLines((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== "assistant") return prev;
           return [...prev.slice(0, -1), { ...last, content: last.content + text }];
         }),
       ),
-      onLlmCalling((name) => setLast((l) => ({ ...l, calling: name }))),
-      onLlmWrite((w) => setLast((l) => ({ ...l, write: w }))),
+      onLlmCalling((name) => !ignoreStream.current && setLast((l) => ({ ...l, calling: name }))),
+      onLlmWrite((w) => !ignoreStream.current && setLast((l) => ({ ...l, write: w }))),
       onLlmStep((step) => {
+        if (ignoreStream.current) return;
         setLast((l) => ({ ...l, calling: null, write: null, steps: [...(l.steps ?? []), step] }));
         // Модель создала или удалила файл — список по «@» и счёт над разговором должны это знать.
         const changed = step.kind === "write" || step.kind === "edit" || step.kind === "delete";
         if (changed && step.ok && folderRef.current) projectOpen(folderRef.current).then(setListing, () => {});
       }),
       onLlmAnswer((d) => {
+        if (ignoreStream.current) {
+          ignoreStream.current = false;
+          return;
+        }
         setAnswering(false);
         setLast((l) => ({ ...l, stats: d.stats, problem: d.problem, calling: null, write: null }));
       }),
@@ -484,7 +508,18 @@ export default function Chat({
     // Номер пришёл из нашего же сохранения — на экране уже то, что надо.
     // У нового разговора номера нет: `null === null` не повод оставить старую переписку.
     if (chatId !== null && chatId === savedId.current) return;
+    // Ушли из разговора посреди ответа: недописанное — в тот разговор, модель останавливаем,
+    // хвост ответа отбрасываем. Иначе он допишется к последней реплике другого разговора.
+    if (answeringRef.current) {
+      persist(linesRef.current);
+      ignoreStream.current = true;
+      wasAnswering.current = false;
+      setAnswering(false);
+      llmChatStop();
+    }
     savedId.current = null;
+    epoch.current += 1;
+    saving.current = Promise.resolve(chatId);
     if (!chatId) {
       setLines([]);
       setTitle("");
@@ -507,22 +542,23 @@ export default function Chat({
       .filter((l) => l.content.trim() || l.files?.length || l.steps?.length)
       .map(({ role, content, files, steps }) => ({ role, content, files, steps }));
     if (!messages.length) return;
-    chatsSave({
-      id: chatId ?? "",
-      title,
-      created: 0,
-      updated: 0,
-      model: llm?.model ?? null,
-      role,
-      style,
-      folder,
-      mode,
-      messages,
-    }).then((saved) => {
-      savedId.current = saved.id;
-      setTitle(saved.title);
-      onSaved(saved);
-    });
+    const rest = { title, created: 0, updated: 0, model: llm?.model ?? null, role, style, folder, mode, messages };
+    const mine = epoch.current;
+    saving.current = saving.current.then((id) =>
+      chatsSave({ ...rest, id: id ?? "" }).then(
+        (saved) => {
+          const open = mine === epoch.current;
+          if (open) {
+            savedId.current = saved.id;
+            setTitle(saved.title);
+          }
+          onSaved(saved, open);
+          return saved.id;
+        },
+        // Не записалось — следующая запись попробует под тем же номером.
+        () => id,
+      ),
+    );
   };
 
   // Ответ дописан (или его оборвали) — сохраняем разговор целиком.
@@ -541,6 +577,9 @@ export default function Chat({
 
   /** Спрашивает модель по всему разговору; ответ придёт кусками в `onLlmToken`. */
   const ask = async (talk: Line[], how: FileMode = mode) => {
+    ignoreStream.current = false;
+    // Вопрос — на диск сразу: закроют программу или она упадёт посреди ответа, он не пропадёт.
+    persist(talk);
     // Вопрос виден сразу, пока модель просыпается после простоя.
     if (llmRef.current?.state === "sleeping") {
       setLines(talk);
@@ -962,8 +1001,8 @@ export default function Chat({
                   )
                 : mode === "auto"
                   ? t(
-                      "Режим «Авто»: модель сама создаёт, меняет и удаляет файлы в папке. Любое изменение можно вернуть.",
-                      "“Auto” mode: the model creates, changes and deletes files in the folder by itself. Any change can be undone.",
+                      "Режим «Авто»: модель сама создаёт и меняет файлы в папке, а удалить — спрашивает. Любое изменение можно вернуть.",
+                      "“Auto” mode: the model creates and changes files in the folder by itself, and asks before deleting. Any change can be undone.",
                     )
                   : t(
                       "Спросите про файлы папки: модель откроет нужные сама, а менять их будет только с вашего разрешения.",

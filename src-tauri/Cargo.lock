@@ -3000,12 +3000,13 @@ dependencies = [
 
 [[package]]
 name = "ollivo"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "encoding_rs",
  "futures-util",
+ "getrandom 0.3.4",
  "hex",
  "ignore",
  "image",

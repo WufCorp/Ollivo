@@ -6,6 +6,7 @@ import {
   onEngineFinished,
   onEngineProgress,
   taskPause,
+  type Build,
   type EngineProgress,
   type EngineStatus,
 } from "./api";
@@ -65,12 +66,14 @@ export function useEngine(id: string) {
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [id]);
 
-  const install = () => {
+  /** `build` — не та сборка, что по умолчанию (запасная CUDA). */
+  const install = (build?: Build) => {
     setError(null);
     setErrorKind(null);
     setPaused(false);
-    setProgress({ id, stage: "download", done: 0, total: status?.size ?? 0, speed: 0 });
-    engineInstall(id).catch((e) => {
+    const total = build && build === status?.cuda ? status.cuda_size : (status?.size ?? 0);
+    setProgress({ id, stage: "download", done: 0, total, speed: 0 });
+    engineInstall(id, build).catch((e) => {
       setProgress(null);
       setError(String(e));
     });
@@ -89,7 +92,7 @@ export function useEngine(id: string) {
 
   const pause = () => taskPause(`engine:${id}`);
 
-  const installed = status?.installed.find((i) => i.version === status.version) ?? null;
+  const installed = status?.active ?? null;
 
   return { status, installed, progress, last, paused, error, errorKind, repaired, install, repair, pause };
 }

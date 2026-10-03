@@ -10,7 +10,8 @@ const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
  * Что досталось видеокарте. 999 — «сколько влезет», выбор оставлен движку;
  * больше, чем слоёв у модели, — тоже всё (ядро добавляет выходной слой).
  */
-export const whoComputes = (onGpu: number | null, total: number | null) => {
+export const whoComputes = (onGpu: number | null, total: number | null, remote?: string | null) => {
+  if (remote) return t(`Считает сервер ${remote}, этот компьютер не нагружается`, `The server ${remote} computes, this computer isn't loaded`);
   if (onGpu === null) return null;
   if (onGpu === 0) return t("Считает процессор — ответы будут медленными", "The processor computes — answers will be slow");
   if (onGpu >= 900 || (total !== null && onGpu >= total)) return t("Считает видеокарта", "The graphics card computes");
@@ -53,13 +54,15 @@ export default function RunningModel({
         <>
           <p className="ok">
             ✓{" "}
-            {t(
-              `Готова к разговору: ${fileName(state.model ?? "")}, загрузилась за ${decimal(state.started_in ?? 0)} с`,
-              `Ready to talk: ${fileName(state.model ?? "")}, loaded in ${decimal(state.started_in ?? 0)} s`,
-            )}
+            {state.remote
+              ? t(`Готова к разговору: ${fileName(state.model ?? "")} на сервере ${state.remote}`, `Ready to talk: ${fileName(state.model ?? "")} on the server ${state.remote}`)
+              : t(
+                  `Готова к разговору: ${fileName(state.model ?? "")}, загрузилась за ${decimal(state.started_in ?? 0)} с`,
+                  `Ready to talk: ${fileName(state.model ?? "")}, loaded in ${decimal(state.started_in ?? 0)} s`,
+                )}
           </p>
           <p className="muted small">
-            {whoComputes(state.gpu_layers, state.layers)}.{" "}
+            {whoComputes(state.gpu_layers, state.layers, state.remote)}.{" "}
             {state.ctx !== null && t(`Помнит ${memoryPages(state.ctx)} разговора.`, `Remembers ${memoryPages(state.ctx)} of conversation.`)}
           </p>
         </>
@@ -102,7 +105,9 @@ export default function RunningModel({
               ? t("Отменить", "Cancel")
               : state.state === "sleeping"
                 ? t("Забыть", "Forget")
-                : t("Остановить", "Stop")}
+                : state.remote
+                  ? t("Отключить", "Disconnect")
+                  : t("Остановить", "Stop")}
           </button>
         </div>
       )}

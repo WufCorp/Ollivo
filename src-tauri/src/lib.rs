@@ -13,6 +13,7 @@ mod engines;
 mod gguf;
 mod hardware;
 mod hf;
+mod images;
 mod library;
 mod manifest;
 mod llm;
@@ -81,6 +82,20 @@ struct Core {
     /// Модель выгружена после простоя: какая и с какой ступенью «экономнее».
     /// Окно разбудит её само при следующем вопросе.
     llm_asleep: Mutex<Option<(PathBuf, u8)>>,
+    /// Запущенный ComfyUI: живёт между картинками, чтобы не ждать 30 с запуска каждый раз.
+    comfy: tokio::sync::Mutex<Option<ComfyRun>>,
+    /// Когда последний раз рисовали: после простоя ComfyUI закрывается, как модель чата.
+    images_used: Mutex<std::time::Instant>,
+    /// Куда кладутся картинки: «Изображения\Ollivo» — там человек их и будет искать.
+    gallery: PathBuf,
+}
+
+/// ComfyUI и что он знает: папки с моделями (их читает только при запуске)
+/// и какая модель сейчас в видеокарте — для честной оценки времени.
+struct ComfyRun {
+    comfy: comfy::Comfy,
+    dirs: Vec<PathBuf>,
+    loaded: Option<PathBuf>,
 }
 
 impl Core {
@@ -158,6 +173,15 @@ async fn idle_watch(app: AppHandle) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         let minutes = core.settings.get().models.unload_after;
+        // ComfyUI держит модель и в видеокарте, и в оперативной памяти — после простоя
+        // закрываем целиком. Посреди картинки слот занят, `try_lock` не пройдёт.
+        if idle_due(minutes, core.images_used.lock().unwrap().elapsed(), 0) {
+            if let Ok(mut slot) = core.comfy.try_lock() {
+                if let Some(run) = slot.take() {
+                    run.comfy.handle.stop().await;
+                }
+            }
+        }
         let idle = core.llm_used.lock().unwrap().elapsed();
         if !idle_due(minutes, idle, core.llm_busy.load(std::sync::atomic::Ordering::SeqCst)) {
             continue;
@@ -169,16 +193,23 @@ async fn idle_watch(app: AppHandle) {
         if !idle_due(minutes, idle, core.llm_busy.load(std::sync::atomic::Ordering::SeqCst)) {
             continue;
         }
+        // Чужой сервер видеокарту этого ПК не занимает. Модель, открытая для других программ,
+        // тоже не выгружается: чужих вопросов мы не видим, и простой был бы мнимым.
+        if slot.as_ref().is_none_or(|l| l.handle.is_none()) || core.settings.get().share.enabled {
+            continue;
+        }
         let Some(l) = slot.take() else { continue };
         drop(slot);
-        l.handle.stop().await;
+        l.stop().await;
         *core.llm_asleep.lock().unwrap() = Some((l.model.clone(), l.lighter));
         emit_llm(&app, LlmState::asleep(&l.model, l.lighter));
     }
 }
 
 /// Загрузчик по настройкам: прокси + токен HF (только для хоста HF/зеркала).
+/// Предел скорости — общий на всю программу, ставится здесь же.
 fn build_downloader(s: &settings::Settings) -> Result<download::Downloader, String> {
+    download::set_limit(s.downloads.limit);
     let proxy = s.proxy.reqwest(&net::load_password())?;
     Ok(download::Downloader::with_proxy(proxy).with_bearer(s.hf.token_hosts(), hf::load_token()))
 }
@@ -217,8 +248,9 @@ fn settings_get(core: CoreState<'_>) -> SettingsView {
 #[tauri::command]
 fn settings_reset(app: AppHandle, core: CoreState<'_>) -> Result<SettingsView, String> {
     let fresh = settings::reset(&core.settings.get());
-    net::secret::store(net::secret::PROXY_PASSWORD, "")?;
-    net::secret::store(net::secret::HF_TOKEN, "")?;
+    for name in [net::secret::PROXY_PASSWORD, net::secret::HF_TOKEN, net::secret::SHARE_KEY, net::secret::REMOTE_KEY] {
+        net::secret::store(name, "")?;
+    }
     let downloader = build_downloader(&fresh)?;
     apply_theme(&app, fresh.theme);
     i18n::set(fresh.language);
@@ -527,13 +559,15 @@ async fn storage_move(app: AppHandle, core: CoreState<'_>, picked: PathBuf) -> R
     core.llm_loading.lock().unwrap().cancel();
     let stopped = match core.llm.lock().await.take() {
         Some(l) => {
-            l.handle.stop().await;
+            l.stop().await;
             true
         }
         None => false,
     };
     *core.llm_asleep.lock().unwrap() = None;
     emit_llm(&app, LlmState::of("stopped"));
+    // ComfyUI запущен из папки движков — её и переносим.
+    stop_comfy(&core).await;
     let core = core.inner().clone();
     let target = new.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -585,20 +619,33 @@ struct EngineStatus {
     /// Сборка, которую поставим на этот ПК, и сколько качать.
     build: Option<hardware::Build>,
     size: u64,
+    /// Установленная сборка текущей версии, которая пойдёт на этом ПК (её и запускаем).
+    /// `None` при непустом `installed` — стоит только Vulkan, а карта его не видит.
+    active: Option<engines::Installed>,
+    /// Сборка CUDA, если она пойдёт, а по умолчанию ставится другая: запасной путь,
+    /// когда Vulkan падает на этой карте. `None` — предлагать нечего.
+    cuda: Option<hardware::Build>,
+    cuda_size: u64,
 }
 
 #[tauri::command]
 async fn engine_status(core: CoreState<'_>, id: String) -> Result<EngineStatus, String> {
     let engine = core.manifest.engine(&id).ok_or(t!("нет такого движка", "no such engine"))?;
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
-    let pick = engine.pick(hw.cuda_build, setup::has_vulkan(), None);
+    let pick = engine.pick(hw.cuda_build, hw.vulkan_ok(), None);
+    let cuda = engine.pick(hw.cuda_build, false, None).filter(|c| pick.is_some_and(|p| p.build != c.build));
+    let installed = engines::installed(&core.data_dir(), &id);
+    let current = installed.iter().filter(|i| i.version == engine.version).cloned().collect();
     Ok(EngineStatus {
         id: engine.id.clone(),
         title: engine.title.clone(),
         version: engine.version.clone(),
-        installed: engines::installed(&core.data_dir(), &id),
+        active: engines::best(current, hw.cuda_build, hw.vulkan_ok()),
+        installed,
         build: pick.map(|b| b.build),
         size: pick.map_or(0, |b| b.size()),
+        cuda: cuda.map(|b| b.build),
+        cuda_size: cuda.map_or(0, |b| b.size()),
     })
 }
 
@@ -621,7 +668,7 @@ async fn engine_install(
     let engine = core.manifest.engine(&id).ok_or(t!("нет такого движка", "no such engine"))?.clone();
     let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
     let chosen = engine
-        .pick(hw.cuda_build, setup::has_vulkan(), build)
+        .pick(hw.cuda_build, hw.vulkan_ok(), build)
         .ok_or(t!(
             "нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan",
             "no build for this PC: an NVIDIA graphics card or Vulkan is required"
@@ -657,7 +704,7 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
         None => {
             let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
             engine
-                .pick(hw.cuda_build, setup::has_vulkan(), None)
+                .pick(hw.cuda_build, hw.vulkan_ok(), None)
                 .ok_or(t!(
             "нет сборки для этого ПК: нужна видеокарта NVIDIA или Vulkan",
             "no build for this PC: an NVIDIA graphics card or Vulkan is required"
@@ -669,7 +716,7 @@ async fn engine_repair(app: AppHandle, core: CoreState<'_>, id: String) -> Resul
     if id == "llama.cpp" {
         core.llm_loading.lock().unwrap().cancel();
         if let Some(l) = core.llm.lock().await.take() {
-            l.handle.stop().await;
+            l.stop().await;
             emit_llm(&app, LlmState::of("stopped"));
         }
     }
@@ -725,6 +772,8 @@ async fn images_install(app: AppHandle, core: CoreState<'_>) -> Result<(), Strin
     let proxy = core.settings.get().proxy.url(&net::load_password())?;
     let task = "engine:images".to_string();
     let cancel = core.start(&task)?;
+    // Окружение могут пересобрать — запущенный из него ComfyUI держал бы файлы.
+    stop_comfy(&core).await;
     let core = core.inner().clone();
     tauri::async_runtime::spawn(async move {
         let progress_app = app.clone();
@@ -750,6 +799,440 @@ async fn images_install(app: AppHandle, core: CoreState<'_>) -> Result<(), Strin
     Ok(())
 }
 
+const DRAW_TASK: &str = "images:draw";
+
+async fn stop_comfy(core: &Core) {
+    if let Some(run) = core.comfy.lock().await.take() {
+        run.comfy.handle.stop().await;
+    }
+}
+
+/// Подборка моделей для картинок: пойдёт ли на этом ПК, сколько ждать картинку, скачана ли.
+/// Качается обычной `catalog_download` — с хешем и сразу в библиотеку.
+#[derive(serde::Serialize)]
+struct ImagePick {
+    id: &'static str,
+    title: &'static str,
+    why: &'static str,
+    repo: &'static str,
+    file: &'static str,
+    size: u64,
+    sha256: &'static str,
+    license: &'static str,
+    light: probe::Light,
+    fits: &'static str,
+    /// Сколько секунд одна квадратная картинка «обычно», когда движок уже запущен.
+    seconds: u64,
+    downloaded: Option<PathBuf>,
+}
+
+#[tauri::command]
+async fn images_picks(core: CoreState<'_>) -> Result<Vec<ImagePick>, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (hw, root) = (hardware::detect(), core.data_dir());
+        let measured = images::Speeds::new(&comfy::base_dir(&root)).read();
+        images::PICKS
+            .iter()
+            .map(|p| {
+                let plan = images::plan(p.family, images::Shape::Square, images::Quality::Normal);
+                let (light, fits) = images::fits(p.family, &hw);
+                let dest = model_dest(&root, p.repo, p.file).ok();
+                ImagePick {
+                    id: p.id,
+                    title: p.title(),
+                    why: p.why(),
+                    repo: p.repo,
+                    file: p.file,
+                    size: p.size,
+                    sha256: p.sha256,
+                    license: p.license,
+                    light,
+                    fits,
+                    seconds: images::estimate(p.family, &plan, 1, &hw, &measured, false, 0),
+                    // Скачан — если лежит на месте и есть в библиотеке: иначе генерация его не найдёт.
+                    downloaded: dest.filter(|d| d.is_file() && core.library.find(d).is_some()),
+                }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Модель для картинок в списке окна: умеем ли её запускать, а если нет — почему.
+#[derive(serde::Serialize)]
+struct ImageModel {
+    #[serde(flatten)]
+    model: library::Model,
+    family: Option<images::Family>,
+    /// Почему пока не умеем — словами для человека.
+    why: Option<String>,
+}
+
+#[tauri::command]
+async fn images_models(core: CoreState<'_>) -> Result<Vec<ImageModel>, String> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        core.library
+            .list(&hardware::detect())
+            .into_iter()
+            .filter(|m| m.entry.info.kind == probe::Kind::Image && !m.missing)
+            .map(|m| {
+                let fam = images::family(&m.entry.info);
+                ImageModel { family: fam.as_ref().ok().copied(), why: fam.err(), model: m }
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Что выбрал человек на экране «Картинки». Числа решает ядро (`images::plan`).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DrawRequest {
+    model: PathBuf,
+    prompt: String,
+    shape: images::Shape,
+    quality: images::Quality,
+    count: u32,
+}
+
+/// Оценка до старта: размер, шаги и сколько ждать — с запуском движка и чтением модели,
+/// если их ещё не было.
+#[derive(serde::Serialize)]
+struct DrawEstimate {
+    seconds: u64,
+    width: u32,
+    height: u32,
+    steps: u32,
+    /// Движок картинок ещё не запущен — первая картинка дольше.
+    cold: bool,
+    /// Оценка по прошлым картинкам на этом ПК, а не по железу.
+    measured: bool,
+    /// Описание на кириллице: модели SD понимают только английский.
+    cyrillic: bool,
+}
+
+fn draw_family(core: &Core, model: &std::path::Path) -> Result<(library::Entry, images::Family), String> {
+    let entry = core
+        .library
+        .find(model)
+        .ok_or(t!("модель не найдена — добавьте её заново", "model not found — add it again"))?;
+    let fam = images::family(&entry.info)?;
+    Ok((entry, fam))
+}
+
+#[tauri::command]
+async fn images_estimate(core: CoreState<'_>, req: DrawRequest) -> Result<DrawEstimate, String> {
+    let (cold, loaded) = match core.comfy.try_lock() {
+        Ok(slot) => (
+            slot.as_ref().is_none_or(|r| r.comfy.handle.exited().is_some()),
+            slot.as_ref().and_then(|r| r.loaded.clone()),
+        ),
+        // Занят — значит, сейчас рисует: движок запущен.
+        Err(_) => (false, None),
+    };
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (entry, fam) = draw_family(&core, &req.model)?;
+        let plan = images::plan(fam, req.shape, req.quality);
+        let measured = images::Speeds::new(&comfy::base_dir(&core.data_dir())).read();
+        let load = if loaded.as_deref() == Some(entry.path.as_path()) { 0 } else { entry.size };
+        let count = req.count.clamp(1, images::MAX_COUNT);
+        Ok(DrawEstimate {
+            seconds: images::estimate(fam, &plan, count, &hardware::detect(), &measured, cold, load),
+            width: plan.width,
+            height: plan.height,
+            steps: plan.steps,
+            cold,
+            measured: measured.rate(fam).is_some(),
+            cyrillic: images::has_cyrillic(&req.prompt),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Ход: `start` — запускается движок, `load` — читается модель, `draw` — шаги картинки
+/// `image` (с нуля) из `count`.
+#[derive(Clone, serde::Serialize)]
+struct DrawProgress {
+    stage: &'static str,
+    image: u32,
+    count: u32,
+    value: u32,
+    max: u32,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct DrawFinished {
+    /// Что успело нарисоваться — и при ошибке, и после «Остановить».
+    files: Vec<PathBuf>,
+    cancelled: bool,
+    problem: Option<trouble::Problem>,
+    seconds: f64,
+}
+
+/// Освобождает видеокарту для картинки: модель чата «засыпает», как после простоя,
+/// и окно разбудит её само на следующем вопросе.
+async fn sleep_llm(app: &AppHandle, core: &Core) -> Result<(), String> {
+    if core.llm_busy.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        return Err(t!(
+            "Модель в чате ещё отвечает — дождитесь ответа или остановите его.",
+            "The chat model is still answering — wait for the answer or stop it."
+        )
+        .into());
+    }
+    // Слот занят — модель загружается: отменяем загрузку, иначе ждали бы её конца.
+    let loading = core.llm.try_lock().is_err();
+    if loading {
+        core.llm_loading.lock().unwrap().cancel();
+    }
+    let taken = {
+        let mut slot = core.llm.lock().await;
+        // Модель на чужом сервере видеокарту этого ПК не занимает — пусть работает.
+        if slot.as_ref().is_some_and(|l| l.handle.is_none()) {
+            return Ok(());
+        }
+        slot.take()
+    };
+    match taken {
+        Some(l) => {
+            l.stop().await;
+            *core.llm_asleep.lock().unwrap() = Some((l.model.clone(), l.lighter));
+            emit_llm(app, LlmState::asleep(&l.model, l.lighter));
+        }
+        None if loading => emit_llm(app, LlmState::of("stopped")),
+        None => {}
+    }
+    Ok(())
+}
+
+/// Рисует картинки в фоне: `images://progress`, готовая картинка — `images://picture`,
+/// итог — `images://finished`. Одна генерация за раз; «Остановить» — `images_stop`.
+#[tauri::command]
+async fn images_draw(app: AppHandle, core: CoreState<'_>, req: DrawRequest) -> Result<(), String> {
+    let prompt = req.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err(t!("Опишите, что нарисовать.", "Describe what to draw.").into());
+    }
+    let (entry, fam) = draw_family(&core, &req.model)?;
+    let root = core.data_dir();
+    // Железо и список моделей читают диск и NVML — в стороне.
+    let (hw, dirs) = {
+        let core = core.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let hw = hardware::detect();
+            // Все папки с моделями для ComfyUI сразу: модель из другой папки потом
+            // не потребует перезапуска движка (папки он читает только при старте).
+            let dirs: Vec<PathBuf> = core
+                .library
+                .list(&hw)
+                .into_iter()
+                .filter(|m| m.entry.info.engine == probe::Engine::ComfyUi && !m.missing)
+                .filter_map(|m| m.entry.path.parent().map(PathBuf::from))
+                .collect();
+            (hw, dirs)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    let env = pyenv::ready(&root, &core.manifest, hw.cuda_build)
+        .ok_or(t!("Движок картинок не установлен.", "The image engine is not installed."))?;
+    let cancel = core.start(DRAW_TASK)?;
+    if let Err(e) = sleep_llm(&app, &core).await {
+        core.finish(DRAW_TASK);
+        return Err(e);
+    }
+    *core.images_used.lock().unwrap() = std::time::Instant::now();
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let started = std::time::Instant::now();
+        let job = Draw {
+            env: &env,
+            entry: &entry,
+            fam,
+            plan: images::plan(fam, req.shape, req.quality),
+            prompt: &prompt,
+            count: req.count.clamp(1, images::MAX_COUNT),
+            dirs,
+        };
+        let res = draw(&app, &core, job, &cancel).await;
+        core.finish(DRAW_TASK);
+        *core.images_used.lock().unwrap() = std::time::Instant::now();
+        let seconds = started.elapsed().as_secs_f64();
+        let done = match res {
+            Ok(files) => DrawFinished { files, cancelled: false, problem: None, seconds },
+            Err((files, comfy::Error::Cancelled)) => DrawFinished { files, cancelled: true, problem: None, seconds },
+            Err((files, e)) => {
+                let t = images::explain(&e);
+                core.note(t!("Картинки", "Images"), &t.text, &t.details);
+                let problem = trouble::Problem { text: t.text, hint: t.hint, actions: vec![], details: t.details };
+                DrawFinished { files, cancelled: false, problem: Some(problem), seconds }
+            }
+        };
+        let _ = app.emit("images://finished", done);
+    });
+    Ok(())
+}
+
+/// Одна генерация: что рисуем и чем.
+struct Draw<'a> {
+    env: &'a pyenv::Env,
+    entry: &'a library::Entry,
+    fam: images::Family,
+    plan: images::Plan,
+    prompt: &'a str,
+    count: u32,
+    /// Папки с моделями для ComfyUI, если его придётся запускать.
+    dirs: Vec<PathBuf>,
+}
+
+/// Сама генерация: запуск ComfyUI при надобности и картинки по одной — первая появится
+/// раньше, и на 8 ГБ не будет нехватки памяти, как с пачкой из четырёх SDXL.
+/// В ошибке — и то, что успело нарисоваться.
+async fn draw(app: &AppHandle, core: &Core, job: Draw<'_>, cancel: &CancellationToken) -> Result<Vec<PathBuf>, (Vec<PathBuf>, comfy::Error)> {
+    let Draw { env, entry, fam, plan, prompt, count, mut dirs } = job;
+    let progress = |stage, image, value, max| {
+        let _ = app.emit("images://progress", DrawProgress { stage, image, count, value, max });
+    };
+    let root = core.data_dir();
+    let dir = entry.path.parent().map(PathBuf::from).unwrap_or_default();
+    let file = entry.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+
+    let speeds = images::Speeds::new(&comfy::base_dir(&root));
+    let mut slot = core.comfy.lock().await;
+    // Упал сам или не знает папку этой модели — запускаем заново.
+    let stale = slot.as_ref().is_some_and(|r| r.comfy.handle.exited().is_some() || !r.dirs.contains(&dir));
+    if stale {
+        if let Some(r) = slot.take() {
+            r.comfy.handle.stop().await;
+        }
+    }
+    if slot.is_none() {
+        progress("start", 0, 0, 0);
+        dirs.push(dir.clone());
+        dirs.sort();
+        dirs.dedup();
+        let c = comfy::start(&core.supervisor, env, &root, &dirs, &core.gallery, cancel)
+            .await
+            .map_err(|e| (vec![], e))?;
+        speeds.record_start(c.started_in.as_secs_f64());
+        *slot = Some(ComfyRun { comfy: c, dirs, loaded: None });
+    }
+    let run = slot.as_mut().expect("запущен выше");
+    let mut files = vec![];
+    let (mut warm_secs, mut warm_count, mut cold_secs) = (0.0, 0, None);
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| (d.as_nanos() >> 8) as u64);
+    for i in 0..count {
+        let warm = run.loaded.as_deref() == Some(entry.path.as_path());
+        progress(if warm { "draw" } else { "load" }, i, 0, 0);
+        let wf = comfy::Txt2Img {
+            checkpoint: &file,
+            prompt,
+            negative: images::NEGATIVE,
+            width: plan.width,
+            height: plan.height,
+            steps: plan.steps,
+            cfg: plan.cfg,
+            // Разный seed на каждую: одинаковую задачу ComfyUI не считает, а отдаёт прошлую картинку.
+            seed: seed.wrapping_add(i as u64),
+            batch: 1,
+            sampler: plan.sampler,
+            scheduler: plan.scheduler,
+            prefix: "Ollivo",
+        }
+        .workflow();
+        let started = std::time::Instant::now();
+        let on = |p: comfy::Progress| {
+            if p.max == plan.steps {
+                progress("draw", i, p.value, p.max);
+            }
+        };
+        match run.comfy.run(&wf, cancel, &on).await {
+            Ok(out) => {
+                run.loaded = Some(entry.path.clone());
+                if warm {
+                    warm_secs += started.elapsed().as_secs_f64();
+                    warm_count += 1;
+                } else {
+                    cold_secs = Some(started.elapsed().as_secs_f64());
+                }
+                for f in out {
+                    let _ = app.emit("images://picture", &f);
+                    files.push(f);
+                }
+            }
+            Err(e) => {
+                // После ошибки не знаем, что осталось в видеокарте.
+                run.loaded = None;
+                return Err((files, e));
+            }
+        }
+    }
+    // Скорость — только по картинкам, где модель уже была в памяти: иначе в неё попало бы
+    // чтение с диска. А чтение — это то, на что первая картинка дольше остальных.
+    if warm_count > 0 {
+        speeds.record(fam, &plan, warm_count, warm_secs);
+    }
+    if let Some(secs) = cold_secs {
+        speeds.record_load(fam, &plan, entry.size, secs);
+    }
+    Ok(files)
+}
+
+#[tauri::command]
+fn images_stop(core: CoreState<'_>) {
+    if let Some(cancel) = core.running.lock().unwrap().get(DRAW_TASK) {
+        cancel.cancel();
+    }
+}
+
+#[tauri::command]
+async fn images_gallery(core: CoreState<'_>) -> Result<Vec<images::Picture>, String> {
+    let dir = core.gallery.clone();
+    tauri::async_runtime::spawn_blocking(move || images::gallery(&dir, 200)).await.map_err(|e| e.to_string())
+}
+
+/// Уменьшенная картинка для галереи; `side` — сторона в точках. Только из папки галереи.
+#[tauri::command]
+async fn images_thumb(core: CoreState<'_>, path: PathBuf, side: u32) -> Result<String, String> {
+    if !images::inside(&core.gallery, &path) {
+        return Err(t!("картинка потерялась", "the image is missing").into());
+    }
+    tauri::async_runtime::spawn_blocking(move || images::thumb(&path, side.clamp(64, 2048)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Открывает картинку в программе просмотра Windows.
+#[tauri::command]
+fn images_open(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !images::inside(&core.gallery, &path) {
+        return Err(t!("картинка потерялась", "the image is missing").into());
+    }
+    app.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// «Показать в папке»: проводник с выделенной картинкой.
+#[tauri::command]
+fn images_reveal(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !images::inside(&core.gallery, &path) {
+        return Err(t!("картинка потерялась", "the image is missing").into());
+    }
+    app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn images_open_folder(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    std::fs::create_dir_all(&core.gallery).map_err(|e| e.to_string())?;
+    app.opener().open_path(core.gallery.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
 #[derive(Clone, serde::Serialize)]
 struct LlmState {
     /// `starting` | `ready` | `stopped` | `crashed`.
@@ -771,6 +1254,8 @@ struct LlmState {
     vision: bool,
     /// Модель сама открывает файлы папки проекта (вызывает инструменты).
     tools: bool,
+    /// Модель на чужом сервере — его адрес; `None` — своя, в этом ПК.
+    remote: Option<String>,
 }
 
 impl LlmState {
@@ -787,6 +1272,7 @@ impl LlmState {
             problem: None,
             vision: false,
             tools: false,
+            remote: None,
         }
     }
 
@@ -806,15 +1292,17 @@ impl LlmState {
         Self {
             state: "ready",
             model: Some(l.model.clone()),
-            port: Some(l.port),
+            port: Some(l.port).filter(|p| *p != 0),
             started_in: Some(l.started_in.as_secs_f64()),
-            ctx: Some(l.ctx),
-            gpu_layers: Some(l.gpu_layers),
+            // Память и слои чужого сервера нам неизвестны — не выдумываем.
+            ctx: Some(l.ctx).filter(|_| l.remote.is_none()),
+            gpu_layers: Some(l.gpu_layers).filter(|_| l.remote.is_none()),
             layers: None,
             lighter: 0,
             problem: None,
             vision: l.vision,
             tools: l.tools,
+            remote: l.remote.clone(),
         }
     }
 }
@@ -844,7 +1332,9 @@ fn model_dest(root: &std::path::Path, repo: &str, name: &str) -> Result<PathBuf,
     let (author, model) = repo.split_once('/').ok_or(t!("непонятный репозиторий", "unrecognized repository"))?;
     // Файл может лежать в подпапке репозитория — берём только имя.
     let file = name.rsplit('/').next().unwrap_or(name);
-    if !plain(author) || !plain(model) || !plain(file) || !file.to_ascii_lowercase().ends_with(".gguf") {
+    // GGUF — модели чата, safetensors — модели картинок из подборки.
+    let ext_ok = [".gguf", ".safetensors"].iter().any(|x| file.to_ascii_lowercase().ends_with(x));
+    if !plain(author) || !plain(model) || !plain(file) || !ext_ok {
         return Err(t!("непонятное имя файла", "unrecognized file name").into());
     }
     Ok(root.join("models").join(author).join(model).join(file))
@@ -1278,10 +1768,10 @@ async fn speech_file(app: AppHandle, core: CoreState<'_>, path: PathBuf) -> Resu
         trimmed: false,
         path: None,
     };
-    let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    let ep = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.endpoint.clone()));
     core.touch_llm();
-    if let Some(n) = match port {
-        Some(port) => llm::count_tokens(port, &a.text).await,
+    if let Some(n) = match ep {
+        Some(ep) => llm::count_tokens(&ep, &a.text).await,
         None => None,
     } {
         a.tokens = n;
@@ -1332,8 +1822,10 @@ async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
             engines: core.manifest.engines.iter().map(|e| (e.id.clone(), ready_engine(&core, &e.id))).collect(),
             model,
             settings: serde_json::to_value(&settings).unwrap_or_default(),
-            logs: ["llama-server.log", "llama-server.prev.log"]
+            // Журналы картинок — только если есть: картинки ставят не все, «пусто» в отчёте — шум.
+            logs: ["llama-server.log", "llama-server.prev.log", "comfyui.log", "images-install.log"]
                 .iter()
+                .filter(|n| n.starts_with("llama") || logs.join(n).is_file())
                 .map(|n| (n.trim_end_matches(".log").replace(".prev", t!(", прошлый запуск", ", previous run")), logs.join(n)))
                 .collect(),
             problems: core.problems.clone(),
@@ -1345,21 +1837,43 @@ async fn report_make(core: CoreState<'_>) -> Result<report::Report, String> {
     .map_err(|e| e.to_string())
 }
 
-/// «Отправить»: файл отчёта — в «Загрузки» (Проводник покажет его), форма issue — в браузере.
-/// Отправляет человек сам, из своего аккаунта GitHub: сами мы ничего никуда не шлём.
+async fn gpu_name() -> String {
+    tauri::async_runtime::spawn_blocking(hardware::detect)
+        .await
+        .ok()
+        .and_then(|hw| hw.gpu.map(|g| g.name))
+        .unwrap_or_default()
+}
+
+/// Текст сообщения для Telegram и MAX. Отдельной командой: окно кладёт его в буфер обмена
+/// до `report_send` — потом фокус уйдёт в Проводник и мессенджер, а без фокуса окно
+/// в буфер обмена писать не может.
 #[tauri::command]
-async fn report_send(app: AppHandle, kind: report::Kind, what: String, report: report::Report) -> Result<PathBuf, String> {
+fn report_message(kind: report::Kind, what: String, summary: String) -> String {
+    report::message(kind, &what, &summary)
+}
+
+/// «Отправить»: файл отчёта — в «Загрузки» (Проводник покажет его), дальше — куда выбрал
+/// человек: форма issue на GitHub с заполненными полями, группа Ollivo в Telegram или в MAX.
+/// Отправляет человек сам, из своего аккаунта: сами мы ничего никуда не шлём.
+#[tauri::command]
+async fn report_send(
+    app: AppHandle,
+    kind: report::Kind,
+    what: String,
+    report: report::Report,
+    to: report::Channel,
+) -> Result<PathBuf, String> {
     use tauri_plugin_opener::OpenerExt;
     let now = std::time::SystemTime::now();
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
     let file = dir.join(report::file_name(now));
     std::fs::write(&file, report.full.replace('\n', "\r\n")).map_err(|e| tf!("не удалось сохранить отчёт: {e}", "could not save the report: {e}"))?;
-    let gpu = tauri::async_runtime::spawn_blocking(hardware::detect)
-        .await
-        .ok()
-        .and_then(|hw| hw.gpu.map(|g| g.name))
-        .unwrap_or_default();
-    let url = report::issue_url(kind, &what, &report.summary, env!("CARGO_PKG_VERSION"), &gpu);
+    let url = match to {
+        report::Channel::Github => report::issue_url(kind, &what, &report.summary, env!("CARGO_PKG_VERSION"), &gpu_name().await),
+        report::Channel::Telegram => report::TELEGRAM.into(),
+        report::Channel::Max => report::MAX.into(),
+    };
     let _ = app.opener().reveal_item_in_dir(&file);
     app.opener().open_url(url, None::<&str>).map_err(|e| tf!("не удалось открыть браузер: {e}", "could not open the browser: {e}"))?;
     Ok(file)
@@ -1477,8 +1991,15 @@ const LIGHTER_MIN_CTX: u32 = 2048;
 fn plan(core: &Core, req: &StartRequest) -> llm::Config {
     // Модели нет в библиотеке (запустили мимо списка) — пусть llama.cpp
     // подбирает слои сам, у него это тоже умеет (fit).
-    let mut cfg = llm::Config { model: req.model.clone(), ctx: 4096, gpu_layers: 999, mmproj: None };
+    let mut cfg = llm::Config { model: req.model.clone(), ctx: 4096, gpu_layers: 999, ..Default::default() };
     cfg.mmproj = vision::find_projector(&req.model);
+    // Открыта для других программ — постоянные адрес и ключ, иначе их настройки ломались бы
+    // при каждом запуске модели.
+    let share = core.settings.get().share;
+    if share.enabled {
+        cfg.port = Some(share.port);
+        cfg.key = share_key();
+    }
     if let Some(entry) = core.library.find(&req.model) {
         let mut hw = hardware::detect();
         // Зрение тоже живёт в видеокарте: веса дополнения плюс рабочий буфер на картинку.
@@ -1526,13 +2047,16 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
     let root = core.data_dir();
     let lighter = config.lighter.min(LIGHTER_MAX);
     let can_lighter = lighter < LIGHTER_MAX;
-    let engine = engines::installed(&root, "llama.cpp")
+    let current: Vec<_> = engines::installed(&root, "llama.cpp")
         .into_iter()
-        .find(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version));
+        .filter(|i| core.manifest.engine("llama.cpp").is_some_and(|e| e.version == i.version))
+        .collect();
+    let hw = tauri::async_runtime::spawn_blocking(hardware::detect).await.map_err(|e| e.to_string())?;
+    let had = !current.is_empty();
     // Без движка — не ошибка вызова, а состояние с кнопкой «Установить движок».
-    let Some(engine) = engine else {
-        let p = trouble::start(trouble::NO_ENGINE, can_lighter);
-        emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
+    let Some(engine) = engines::best(current, hw.cuda_build, hw.vulkan_ok()) else {
+        let raw = if had { trouble::NO_GPU_ENGINE } else { trouble::NO_ENGINE };
+        emit_llm(&app, LlmState::crashed(&config.model, lighter, trouble::start(raw, can_lighter)));
         return Ok(());
     };
     // Во время переноса папки программы модель запустилась бы из старой папки,
@@ -1547,8 +2071,30 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
         emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
         return Ok(());
     }
+    // Картинка занимает видеокарту целиком: модель чата рядом не поместится.
+    if core.running.lock().unwrap().contains_key(DRAW_TASK) {
+        let p = trouble::Problem {
+            text: t!("Сейчас рисуется картинка.", "A picture is being drawn right now.").into(),
+            hint: Some(
+                t!(
+                    "Модель запустится, когда картинка будет готова, — спросите ещё раз.",
+                    "The model will start once the picture is ready — ask again."
+                )
+                .into(),
+            ),
+            actions: vec![],
+            details: t!("видеокарта занята генерацией картинки", "the graphics card is busy generating a picture").into(),
+        };
+        emit_llm(&app, LlmState::crashed(&config.model, lighter, p));
+        return Ok(());
+    }
     let core = core.inner().clone();
     *core.llm_asleep.lock().unwrap() = None;
+    // ComfyUI отдаёт видеопамять модели чата, но остаётся запущенным.
+    if let Some(run) = core.comfy.lock().await.as_mut() {
+        run.comfy.free().await;
+        run.loaded = None;
+    }
     let cancel = CancellationToken::new();
     std::mem::replace(&mut *core.llm_loading.lock().unwrap(), cancel.clone()).cancel();
     tauri::async_runtime::spawn(async move {
@@ -1557,7 +2103,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
             return; // пока ждали, запустили другую модель или нажали «Остановить»
         }
         if let Some(old) = slot.take() {
-            old.handle.stop().await;
+            old.stop().await;
         }
         emit_llm(&app, LlmState { model: Some(config.model.clone()), lighter, ..LlmState::of("starting") });
         // Разбор заголовка и NVML блокируют поток — считаем настройки в стороне.
@@ -1582,7 +2128,8 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
                 let layers = model_layers(&core, &l.model);
                 emit_llm(&app, LlmState { lighter, layers, ..LlmState::ready(&l) });
                 // Сторож: движок упал сам — сообщаем с хвостом лога.
-                let (handle, app2, core2, model) = (l.handle.clone(), app.clone(), core.clone(), l.model.clone());
+                let handle = l.handle.clone().expect("свой движок");
+                let (app2, core2, model) = (app.clone(), core.clone(), l.model.clone());
                 *slot = Some(l);
                 tauri::async_runtime::spawn(async move {
                     let exit = handle.wait().await;
@@ -1590,7 +2137,7 @@ async fn llm_start(app: AppHandle, core: CoreState<'_>, config: StartRequest) ->
                         return;
                     }
                     let mut slot = core2.llm.lock().await;
-                    if slot.as_ref().is_some_and(|l| l.handle.pid == handle.pid) {
+                    if slot.as_ref().is_some_and(|l| l.handle.as_ref().is_some_and(|h| h.pid == handle.pid)) {
                         *slot = None;
                     }
                     let tail = process::log_tail(&handle.log, 15);
@@ -1612,9 +2159,111 @@ async fn llm_stop(app: AppHandle, core: CoreState<'_>) -> Result<(), String> {
     core.llm_loading.lock().unwrap().cancel();
     core.chat.lock().unwrap().cancel();
     if let Some(l) = core.llm.lock().await.take() {
-        l.handle.stop().await;
+        l.stop().await;
     }
     emit_llm(&app, LlmState::of("stopped"));
+    Ok(())
+}
+
+/// Постоянный ключ модели, открытой для других программ: нет — заводим.
+fn share_key() -> String {
+    let key = net::secret::load(net::secret::SHARE_KEY);
+    if !key.is_empty() {
+        return key;
+    }
+    let key = llm::new_key();
+    // Не сохранился — программы получат ключ до перезапуска модели; лучше, чем без ключа.
+    let _ = net::secret::store(net::secret::SHARE_KEY, &key);
+    key
+}
+
+/// Адрес и ключ для других программ: окно показывает их с кнопкой «Копировать».
+#[derive(serde::Serialize)]
+struct ShareInfo {
+    url: String,
+    key: String,
+    /// Запущенная модель уже слушает этот адрес; нет — подействует после перезапуска.
+    live: bool,
+}
+
+#[tauri::command]
+async fn share_info(core: CoreState<'_>) -> Result<ShareInfo, String> {
+    let port = core.settings.get().share.port;
+    let key = tauri::async_runtime::spawn_blocking(share_key).await.map_err(|e| e.to_string())?;
+    let live = core.llm.try_lock().ok().is_some_and(|s| s.as_ref().is_some_and(|l| l.port == port && l.endpoint.key == key));
+    Ok(ShareInfo { url: format!("http://127.0.0.1:{port}/v1"), key, live })
+}
+
+/// Открыть или закрыть модель для других программ — сразу, мимо «Сохранить»:
+/// человек тут же идёт вставлять адрес и ключ в другую программу.
+#[tauri::command]
+fn share_set(core: CoreState<'_>, enabled: bool, port: u16) -> Result<(), String> {
+    if port < 1024 {
+        return Err(t!("Порт — число от 1024 до 65535.", "The port is a number from 1024 to 65535.").into());
+    }
+    let mut s = core.settings.get();
+    s.share = settings::ShareSettings { enabled, port };
+    core.settings.set(s).map_err(|e| e.to_string())
+}
+
+/// «Новый ключ»: старый перестаёт работать после перезапуска модели.
+#[tauri::command]
+async fn share_new_key(core: CoreState<'_>) -> Result<ShareInfo, String> {
+    net::secret::store(net::secret::SHARE_KEY, &llm::new_key())?;
+    share_info(core).await
+}
+
+/// Чужой сервер, к которому подключались в последний раз.
+#[derive(serde::Serialize)]
+struct RemoteView {
+    url: String,
+    model: String,
+    has_key: bool,
+}
+
+#[tauri::command]
+fn remote_get(core: CoreState<'_>) -> RemoteView {
+    let r = core.settings.get().remote;
+    RemoteView { url: r.url, model: r.model, has_key: !net::secret::load(net::secret::REMOTE_KEY).is_empty() }
+}
+
+#[derive(serde::Serialize)]
+struct RemoteModels {
+    /// Адрес API, к которому привели введённый.
+    url: String,
+    models: Vec<String>,
+}
+
+/// «Проверить»: модели на сервере. `key: None` — сохранённый ключ.
+#[tauri::command]
+async fn remote_models(url: String, key: Option<String>) -> Result<RemoteModels, String> {
+    let url = llm::api_url(&url)?;
+    let key = key.unwrap_or_else(|| net::secret::load(net::secret::REMOTE_KEY));
+    let models = llm::remote_models(&url, key.trim()).await?;
+    Ok(RemoteModels { url, models })
+}
+
+/// Подключает модель с чужого сервера вместо своей; своя останавливается.
+/// Адрес и модель запоминаются в настройках, ключ — в диспетчере учётных данных.
+#[tauri::command]
+async fn remote_connect(app: AppHandle, core: CoreState<'_>, url: String, key: Option<String>, model: String) -> Result<(), String> {
+    let url = llm::api_url(&url)?;
+    let key = key.map(|k| k.trim().to_string()).unwrap_or_else(|| net::secret::load(net::secret::REMOTE_KEY));
+    let l = llm::connect(&url, &key, &model).await?;
+    net::secret::store(net::secret::REMOTE_KEY, &key)?;
+    let mut s = core.settings.get();
+    s.remote = settings::RemoteSettings { url, model };
+    core.settings.set(s).map_err(|e| e.to_string())?;
+    core.llm_loading.lock().unwrap().cancel();
+    core.chat.lock().unwrap().cancel();
+    let mut slot = core.llm.lock().await;
+    if let Some(old) = slot.take() {
+        old.stop().await;
+    }
+    *core.llm_asleep.lock().unwrap() = None;
+    core.touch_llm();
+    emit_llm(&app, LlmState::ready(&l));
+    *slot = Some(l);
     Ok(())
 }
 
@@ -1682,10 +2331,10 @@ async fn llm_chat(
     // «Занята» — раньше, чем берём порт: сторож простоя проверяет это под тем же замком
     // и не выгрузит модель, которой уже задали вопрос.
     let busy = Busy::new(core.inner().clone());
-    let (port, vision, can_call, ctx) = match core.llm.try_lock() {
+    let (endpoint, vision, can_call, ctx, remote) = match core.llm.try_lock() {
         Ok(slot) => slot
             .as_ref()
-            .map(|l| (l.port, l.vision, l.tools, l.ctx))
+            .map(|l| (l.endpoint.clone(), l.vision, l.tools, l.ctx, l.remote.is_some()))
             .ok_or_else(|| trouble::chat(t!("модель не запущена", "the model is not running")))?,
         Err(_) => return Err(trouble::chat(t!("модель ещё загружается", "the model is still loading"))),
     };
@@ -1712,7 +2361,7 @@ async fn llm_chat(
     tauri::async_runtime::spawn(async move {
         let _busy = busy;
         let res = llm::chat(
-            port,
+            &endpoint,
             vision,
             &messages,
             presets::role(&role),
@@ -1732,7 +2381,7 @@ async fn llm_chat(
         let payload = match res {
             Ok(stats) => ChatDone { stats: Some(stats), problem: None },
             Err(e) => {
-                let p = trouble::chat(&e);
+                let p = if remote { trouble::remote_chat(&e) } else { trouble::chat(&e) };
                 app.state::<Arc<Core>>().note(t!("Ответ в чате", "Chat answer"), &p.text, &p.details);
                 ChatDone { stats: None, problem: Some(p) }
             }
@@ -1801,10 +2450,10 @@ async fn attach_file(core: CoreState<'_>, path: PathBuf) -> Result<attach::Attac
     let mut a = tauri::async_runtime::spawn_blocking(move || attach::read(&path, &images, ffmpeg.as_deref()))
         .await
         .map_err(|e| e.to_string())??;
-    let port = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.port));
+    let ep = core.llm.try_lock().ok().and_then(|slot| slot.as_ref().map(|l| l.endpoint.clone()));
     core.touch_llm();
-    if let (Some(port), "document") = (port, a.kind.as_str()) {
-        if let Some(n) = llm::count_tokens(port, &a.text).await {
+    if let (Some(ep), "document") = (ep, a.kind.as_str()) {
+        if let Some(n) = llm::count_tokens(&ep, &a.text).await {
             a.tokens = n;
         }
     }
@@ -1938,6 +2587,13 @@ pub fn run() {
                 llm_used: Mutex::new(std::time::Instant::now()),
                 llm_busy: Default::default(),
                 llm_asleep: Mutex::new(None),
+                comfy: tokio::sync::Mutex::new(None),
+                images_used: Mutex::new(std::time::Instant::now()),
+                gallery: app
+                    .path()
+                    .picture_dir()
+                    .map(|d| d.join("Ollivo"))
+                    .unwrap_or_else(|_| config_dir.join("images")),
             }));
             tauri::async_runtime::spawn(idle_watch(app.handle().clone()));
             apply_theme(app.handle(), app.state::<Arc<Core>>().settings.get().theme);
@@ -1970,6 +2626,16 @@ pub fn run() {
             engine_repair,
             images_status,
             images_install,
+            images_models,
+            images_picks,
+            images_estimate,
+            images_draw,
+            images_stop,
+            images_gallery,
+            images_thumb,
+            images_open,
+            images_reveal,
+            images_open_folder,
             catalog_picks,
             catalog_search,
             catalog_files,
@@ -1981,6 +2647,12 @@ pub fn run() {
             llm_status,
             llm_start,
             llm_stop,
+            share_info,
+            share_set,
+            share_new_key,
+            remote_get,
+            remote_models,
+            remote_connect,
             chats_list,
             chats_search,
             chat_presets,
@@ -2000,6 +2672,7 @@ pub fn run() {
             parts_status,
             attach_needs,
             report_make,
+            report_message,
             report_send,
             speech_model_download,
             speech_dictate,
@@ -2040,7 +2713,7 @@ mod tests {
         let logs = crate::testserver::tmp().join("ollivo-oom-test");
         let model = root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf");
         // 262144 токенов памяти разговора у 3B — ~9 ГБ сверх весов: на 8 ГБ не влезет.
-        let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999, mmproj: None };
+        let cfg = llm::Config { model, ctx: 262_144, gpu_layers: 999, ..Default::default() };
         let err = llm::start(&sup, &engine, &cfg, &logs, &CancellationToken::new()).await.err().expect("должно не хватить");
         let p = trouble::start(&err, true);
         println!("{}
@@ -2051,12 +2724,12 @@ mod tests {
         let cfg = lighter(cfg, 1, Some(36));
         println!("экономнее: память разговора {}, слоёв {}", cfg.ctx, cfg.gpu_layers);
         let l = llm::start(&sup, &engine, &cfg, &logs, &CancellationToken::new()).await.expect("экономнее должно влезть");
-        l.handle.stop().await;
+        l.stop().await;
     }
 
     #[test]
     fn lighter_steps() {
-        let cfg = llm::Config { model: PathBuf::new(), ctx: 16384, gpu_layers: 999, mmproj: None };
+        let cfg = llm::Config { model: PathBuf::new(), ctx: 16384, gpu_layers: 999, ..Default::default() };
         let at = |steps, layers| {
             let c = lighter(cfg.clone(), steps, layers);
             (c.ctx, c.gpu_layers)
@@ -2078,6 +2751,7 @@ mod tests {
     #[test]
     fn download_path_stays_inside_models_folder() {
         let root = std::path::Path::new(r"D:\Ollivo");
+        assert!(model_dest(root, "Lykon/DreamShaper", "DreamShaper_8_pruned.safetensors").is_ok());
         let ok = model_dest(root, "unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf").unwrap();
         assert_eq!(ok, root.join("models").join("unsloth").join("Qwen3.5-9B-GGUF").join("Qwen3.5-9B-Q4_K_M.gguf"));
         // Всё, что похоже на путь, схлопывается до имени файла и остаётся в своей папке.
@@ -2094,6 +2768,7 @@ mod tests {
             ("a/b", r"C:\Windows\evil.gguf"),
             ("a/b", ".hidden.gguf"),
             ("a/b", "notes.txt"),
+            ("a/b", "model.ckpt"),
             ("no-slash", "model-Q4_K_M.gguf"),
         ] {
             assert!(model_dest(root, repo, name).is_err(), "{repo} {name}");

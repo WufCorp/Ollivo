@@ -131,7 +131,7 @@ function Talk(p: Parameters<typeof ChatPanel>[0]) {
           <p className="muted small">{t("Модель не запущена.", "The model is not running.")}</p>
         )}
         {llm.state === "ready" && (
-          <p className="muted small">{whoComputes(llm.gpu_layers, llm.layers)}.</p>
+          <p className="muted small">{whoComputes(llm.gpu_layers, llm.layers, llm.remote)}.</p>
         )}
         <div className="actions">
           <button className="secondary" onClick={p.onGoToModels}>
@@ -139,7 +139,7 @@ function Talk(p: Parameters<typeof ChatPanel>[0]) {
           </button>
           {llm.state === "ready" && (
             <button className="secondary" disabled={p.answering} onClick={p.onStop}>
-              {t("Выгрузить", "Unload")}
+              {llm.remote ? t("Отключить", "Disconnect") : t("Выгрузить", "Unload")}
             </button>
           )}
         </div>

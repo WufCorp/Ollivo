@@ -15,6 +15,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Куда идут отчёты.
 pub const REPO: &str = "https://github.com/WufCorp/Ollivo";
+/// Группы поддержки Ollivo в Telegram и MAX: аккаунт GitHub есть не у всех,
+/// а мессенджер — почти у каждого.
+pub const TELEGRAM: &str = "https://t.me/ollivo_support";
+pub const MAX: &str = "https://max.ru/join/vLWwbSCYaXnZYv-JFM3gVDuKnVC81BieJoCMCuZ8nVc";
+
+/// Куда человек отправляет отчёт.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    Github,
+    Telegram,
+    Max,
+}
 /// Сколько строк журнала движка брать: хватает, чтобы увидеть запуск и падение.
 const LOG_LINES: usize = 120;
 /// Сколько последних ошибок программы брать.
@@ -101,6 +114,10 @@ pub fn build(f: &Facts, now: SystemTime) -> Report {
                 g.cc.0,
                 g.cc.1
             );
+            // Без этой пометки отчёт с Tesla выглядел как обычный — а Vulkan карту не видел.
+            if g.compute_only {
+                gpu_line += t!(", без графики (TCC) — Vulkan её не видит", ", no graphics (TCC) — Vulkan can't see it");
+            }
         }
         driver_line = tf!(
             "{}, CUDA {}.{} (по драйверу подходит сборка {})",
@@ -281,6 +298,15 @@ pub fn issue_url(kind: Kind, what: &str, summary: &str, version: &str, gpu: &str
     url.into()
 }
 
+/// Сообщение для мессенджера: что случилось словами человека и сводка о компьютере.
+/// Ссылку с готовым текстом в группу ни Telegram, ни MAX не передают — текст человек
+/// вставляет сам, окно кладёт его в буфер обмена. Полный отчёт — файлом, как на GitHub.
+/// Видеокарта, Windows и версия уже есть в сводке — отдельно не повторяем.
+pub fn message(kind: Kind, what: &str, summary: &str) -> String {
+    let what: String = what.trim().chars().take(1500).collect();
+    format!("Ollivo — {}\n\n{what}\n\n{}\n", kind.title(), summary.trim())
+}
+
 /// Имя файла отчёта: по времени, чтобы второй отчёт не затёр первый.
 pub fn file_name(now: SystemTime) -> String {
     format!("Ollivo-{}-{}.txt", t!("отчёт", "report"), stamp(now).replace([' ', ':'], "-"))
@@ -435,5 +461,14 @@ c:/users/иван петров/AppData | owner: Иван Петров";
         assert_eq!(q["title"], "Модель не запускается: Не запускается Qwen");
         assert_eq!(q["gpu"], "GTX 1080");
         assert!(u.len() < 8000);
+    }
+
+    #[test]
+    fn messenger_text_has_words_and_summary() {
+        let m = message(Kind::Model, "  Модель молчит  ", "Ollivo 0.4.0, GTX 1080, ОЗУ 32 ГБ");
+        assert!(m.starts_with("Ollivo — "), "{m}");
+        assert!(m.contains("\n\nМодель молчит\n\n") && m.ends_with("ОЗУ 32 ГБ\n"), "{m}");
+        // Длинное описание обрезается: сообщение Telegram — до 4096 знаков.
+        assert!(message(Kind::Other, &"а".repeat(9000), "").chars().count() < 1600);
     }
 }

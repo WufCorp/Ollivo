@@ -11,6 +11,8 @@ export interface Gpu {
   vram_free: number;
   cc: [number, number];
   vram_bw: number;
+  /** Карта без графики (Tesla в режиме TCC): Vulkan её не видит, нужна сборка CUDA. */
+  compute_only: boolean;
 }
 
 export interface Disk {
@@ -110,10 +112,30 @@ export interface Settings {
   setup_done: boolean;
   updates: UpdateSettings;
   models: ModelSettings;
+  downloads: DownloadSettings;
+  share: ShareSettings;
+  remote: RemoteSettings;
   /** Своя тема программы, от Windows не зависит; «system» из старых версий ядро читает как тёмную. */
   theme: "light" | "dark";
   /** Язык окна и ядра. Нет в файле — ядро само решает: прежним — русский, новым — как в Windows. */
   language: Lang;
+}
+
+export interface DownloadSettings {
+  /** Предел скорости всех загрузок вместе, байт/с; 0 — без предела. */
+  limit: number;
+}
+
+/** Модель открыта для других программ: постоянные адрес на 127.0.0.1 и ключ. */
+export interface ShareSettings {
+  enabled: boolean;
+  port: number;
+}
+
+/** Чужой сервер, к которому подключались в последний раз; ключ — в диспетчере учётных данных. */
+export interface RemoteSettings {
+  url: string;
+  model: string;
 }
 
 export interface SettingsView {
@@ -256,6 +278,12 @@ export interface EngineStatus {
   installed: InstalledEngine[];
   build: Build | null;
   size: number;
+  /** Установленная сборка, которая пойдёт на этом ПК; `null` при непустом `installed` —
+   *  стоит только Vulkan, а карта его не видит. */
+  active: InstalledEngine | null;
+  /** Запасная сборка CUDA, если по умолчанию ставится другая. */
+  cuda: Build | null;
+  cuda_size: number;
 }
 
 export interface EngineProgress {
@@ -303,6 +331,106 @@ export const imagesStatus = () => invoke<ImagesStatus>("images_status");
 
 /** Прогресс и итог — `engine://progress` / `engine://finished` с id `images`. */
 export const imagesInstall = () => invoke<void>("images_install");
+
+/** Модели картинок, которые умеем запускать (модели-чекпойнты Stable Diffusion). */
+export type ImageFamily = "sd15" | "sd2" | "sdxl";
+export type ImageShape = "square" | "portrait" | "landscape";
+export type ImageQuality = "fast" | "normal" | "best";
+
+/** Модель картинок из библиотеки: `why` — почему пока не умеем её запускать. */
+export interface ImageModel extends Model {
+  family: ImageFamily | null;
+  why: string | null;
+}
+
+export const imagesModels = () => invoke<ImageModel[]>("images_models");
+
+/** Модель из подборки для картинок; качается `catalogDownload`. */
+export interface ImagePick {
+  id: string;
+  title: string;
+  why: string;
+  repo: string;
+  file: string;
+  size: number;
+  sha256: string;
+  license: string;
+  light: Verdict["light"];
+  fits: string;
+  /** Секунд на одну квадратную картинку «обычно», движок уже запущен. */
+  seconds: number;
+  downloaded: string | null;
+}
+
+export const imagesPicks = () => invoke<ImagePick[]>("images_picks");
+
+/** Что нарисовать. Размер, шаги и прочие числа решает ядро. */
+export interface DrawRequest {
+  model: string;
+  prompt: string;
+  shape: ImageShape;
+  quality: ImageQuality;
+  count: number;
+}
+
+export interface DrawEstimate {
+  seconds: number;
+  width: number;
+  height: number;
+  steps: number;
+  /** Движок картинок ещё не запущен — первая картинка дольше. */
+  cold: boolean;
+  /** Оценка по прошлым картинкам на этом ПК, а не по железу. */
+  measured: boolean;
+  /** Описание на кириллице: модели понимают только английский. */
+  cyrillic: boolean;
+}
+
+export const imagesEstimate = (req: DrawRequest) => invoke<DrawEstimate>("images_estimate", { req });
+
+/** `start` — запускается движок, `load` — читается модель, `draw` — шаги картинки `image` (с нуля). */
+export interface DrawProgress {
+  stage: "start" | "load" | "draw";
+  image: number;
+  count: number;
+  value: number;
+  max: number;
+}
+
+export interface DrawFinished {
+  /** Что успело нарисоваться — и при ошибке, и после «Остановить». */
+  files: string[];
+  cancelled: boolean;
+  problem: Problem | null;
+  seconds: number;
+}
+
+export const DRAW_TASK = "images:draw";
+
+/** Рисует в фоне: `images://progress`, `images://picture`, итог — `images://finished`. */
+export const imagesDraw = (req: DrawRequest) => invoke<void>("images_draw", { req });
+export const imagesStop = () => invoke<void>("images_stop");
+
+export const onDrawProgress = (cb: (p: DrawProgress) => void): Promise<UnlistenFn> =>
+  listen<DrawProgress>("images://progress", (e) => cb(e.payload));
+export const onDrawPicture = (cb: (path: string) => void): Promise<UnlistenFn> =>
+  listen<string>("images://picture", (e) => cb(e.payload));
+export const onDrawFinished = (cb: (f: DrawFinished) => void): Promise<UnlistenFn> =>
+  listen<DrawFinished>("images://finished", (e) => cb(e.payload));
+
+/** Картинка в галерее («Изображения\Ollivo»). */
+export interface Picture {
+  path: string;
+  /** Когда нарисована, unix-секунды. */
+  mtime: number;
+}
+
+export const imagesGallery = () => invoke<Picture[]>("images_gallery");
+/** Уменьшенная копия data:-адресом; `side` — сторона в точках. */
+export const imagesThumb = (path: string, side: number) => invoke<string>("images_thumb", { path, side });
+export const imagesOpen = (path: string) => invoke<void>("images_open", { path });
+export const imagesReveal = (path: string) => invoke<void>("images_reveal", { path });
+export const imagesOpenFolder = () => invoke<void>("images_open_folder");
 
 export const onEngineProgress = (cb: (p: EngineProgress) => void): Promise<UnlistenFn> =>
   listen<EngineProgress>("engine://progress", (e) => cb(e.payload));
@@ -521,6 +649,8 @@ export interface LlmState {
   vision: boolean;
   /** Модель сама открывает файлы папки проекта (вызывает инструменты). */
   tools: boolean;
+  /** Модель на чужом сервере — его адрес; `null` — своя, в этом ПК. */
+  remote: string | null;
 }
 
 // --- Понятные ошибки ---
@@ -559,8 +689,16 @@ export interface Report {
 export const reportMake = () => invoke<Report>("report_make");
 
 /** Сохраняет файл в «Загрузки», показывает его и открывает форму issue; итог — путь к файлу. */
-export const reportSend = (kind: ReportKind, what: string, report: Report) =>
-  invoke<string>("report_send", { kind, what, report });
+/** Куда человек отправляет отчёт. */
+export type ReportChannel = "telegram" | "max" | "github";
+
+/** Текст сообщения для мессенджера — окно кладёт его в буфер обмена до `reportSend`. */
+export const reportMessage = (kind: ReportKind, what: string, summary: string) =>
+  invoke<string>("report_message", { kind, what, summary });
+
+/** Сохраняет файл отчёта в «Загрузки» и открывает выбранное место; возвращает путь к файлу. */
+export const reportSend = (kind: ReportKind, what: string, report: Report, to: ReportChannel) =>
+  invoke<string>("report_send", { kind, what, report, to });
 
 /** Реплика разговора. Роли как у OpenAI. */
 export interface Msg {
@@ -838,6 +976,33 @@ export const llmStatus = () => invoke<LlmState>("llm_status");
 export const llmStart = (model: string, manual?: { ctx?: number; gpu_layers?: number; lighter?: number }) =>
   invoke<void>("llm_start", { config: { model, ...manual } });
 export const llmStop = () => invoke<void>("llm_stop");
+
+// --- Модель для других программ и модель на чужом сервере ---
+
+export interface ShareInfo {
+  /** Адрес OpenAI-совместимого API: `http://127.0.0.1:11500/v1`. */
+  url: string;
+  key: string;
+  /** Запущенная модель уже слушает этот адрес с этим ключом. */
+  live: boolean;
+}
+
+export const shareInfo = () => invoke<ShareInfo>("share_info");
+export const shareNewKey = () => invoke<ShareInfo>("share_new_key");
+export const shareSet = (enabled: boolean, port: number) => invoke<void>("share_set", { enabled, port });
+
+export interface RemoteView {
+  url: string;
+  model: string;
+  has_key: boolean;
+}
+
+export const remoteGet = () => invoke<RemoteView>("remote_get");
+/** `key: undefined` — сохранённый ключ. Ошибка — уже понятной фразой. */
+export const remoteModels = (url: string, key?: string) =>
+  invoke<{ url: string; models: string[] }>("remote_models", { url, key: key ?? null });
+export const remoteConnect = (url: string, model: string, key?: string) =>
+  invoke<void>("remote_connect", { url, model, key: key ?? null });
 
 export const onLlmState = (cb: (s: LlmState) => void): Promise<UnlistenFn> =>
   listen<LlmState>("llm://state", (e) => cb(e.payload));

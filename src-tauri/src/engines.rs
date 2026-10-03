@@ -132,6 +132,17 @@ pub fn installed(root: &Path, id: &str) -> Vec<Installed> {
     .collect()
 }
 
+/// Какую из установленных сборок запускать. CUDA — первой: её ставят нарочно, как ускоритель
+/// или потому что Vulkan на этой карте не справился. Vulkan — только если видит карту (`vulkan`).
+/// `None` — ни одна не пойдёт.
+pub fn best(installed: Vec<Installed>, hw: Build, vulkan: bool) -> Option<Installed> {
+    let rank = |b: Build| [Build::Cuda13, Build::Cuda12, Build::Vulkan, Build::Cpu].iter().position(|x| *x == b);
+    installed
+        .into_iter()
+        .filter(|i| i.build.runs_on(hw) && (i.build != Build::Vulkan || vulkan))
+        .min_by_key(|i| rank(i.build))
+}
+
 impl Installed {
     /// Пометка хранит полные пути на момент установки, а папку программы могут
     /// перенести на другой диск. Пути считаем от того места, где сборка лежит сейчас.
@@ -515,9 +526,22 @@ mod tests {
     }
 
     #[test]
+    fn best_build_to_run() {
+        let at = |b: Build| Installed { id: "llama.cpp".into(), version: "b1".into(), build: b, dir: PathBuf::new(), exe: PathBuf::new() };
+        let both = || vec![at(Build::Vulkan), at(Build::Cuda12)];
+        // CUDA поставили нарочно — она и идёт.
+        assert_eq!(best(both(), Build::Cuda12, true).unwrap().build, Build::Cuda12);
+        // Драйвер обновили назад, CUDA больше не пойдёт — остаётся Vulkan.
+        assert_eq!(best(both(), Build::Vulkan, true).unwrap().build, Build::Vulkan);
+        // Tesla в режиме TCC: Vulkan карту не видит, а другой сборки нет.
+        assert!(best(vec![at(Build::Vulkan)], Build::Cuda12, false).is_none());
+        assert!(best(vec![], Build::Cuda12, true).is_none());
+    }
+
+    #[test]
     fn tmp_keeps_whole_version() {
-        let dir = Path::new(r"D:\Ollivo\engines\comfyui .37.0-cpu");
-        assert_eq!(tmp_sibling(dir), Path::new(r"D:\Ollivo\engines\comfyui .37.0-cpu.tmp"));
+        let dir = Path::new(r"D:\Ollivo\engines\comfyui\0.37.0-cpu");
+        assert_eq!(tmp_sibling(dir), Path::new(r"D:\Ollivo\engines\comfyui\0.37.0-cpu.tmp"));
         assert!(tmp_sibling(dir).extension().is_some_and(|e| e == "tmp"), "clean_leftovers ищет по расширению");
     }
 

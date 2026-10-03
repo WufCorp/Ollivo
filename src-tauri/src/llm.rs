@@ -1,6 +1,10 @@
 //! Текстовая модель через llama-server: запуск, готовность, прогрев, вопрос.
+//! Или чужой OpenAI-совместимый сервер (`connect`): Ollivo тогда — только окно к нему.
 //!
-//! llama-server слушает только 127.0.0.1 на свободном порту, веб-интерфейс выключен.
+//! llama-server слушает только 127.0.0.1, веб-интерфейс выключен, и всегда с ключом API:
+//! без него к модели мог бы обратиться любой процесс на этом ПК (отзыв, 2026-10-03).
+//! Ключ — случайный на каждый запуск; открыли модель для других программ — постоянный,
+//! на постоянном порту (`Config::key`, `Config::port`).
 //! После загрузки модели делаем прогревочный запрос: у Vulkan первые 1–2 ответа
 //! медленные из-за компиляции шейдеров (замер фазы 0: ~1,4 с до первого токена).
 
@@ -18,7 +22,7 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Настройки запуска. Подбираются заранее под свободную видеопамять
 /// (`plan` в `lib.rs`), здесь уже готовые числа.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub model: PathBuf,
     /// Память разговора в токенах: сколько модель помнит.
@@ -27,11 +31,55 @@ pub struct Config {
     pub gpu_layers: u32,
     /// Дополнение «зрение» (`vision::find_projector`); без него модель картинок не видит.
     pub mmproj: Option<PathBuf>,
+    /// Ключ API; пусто — случайный на этот запуск.
+    pub key: String,
+    /// Постоянный порт (модель открыта для других программ); `None` — любой свободный.
+    pub port: Option<u16>,
+}
+
+/// Куда слать запросы модели: свой llama-server или чужой сервер.
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    /// Адрес OpenAI-совместимого API без «/» в конце: `http://127.0.0.1:5000/v1`.
+    pub api: String,
+    /// Ключ — заголовком `Authorization: Bearer`; пусто — без ключа.
+    pub key: String,
+    /// Имя модели в запросе. llama-server его не смотрит, чужому серверу оно обязательно.
+    pub model: String,
+    /// Корень своего llama-server — для его собственных адресов (`/tokenize`, `/props`)
+    /// и полей запроса, которых чужой сервер не знает. У чужого — `None`.
+    pub llama: Option<String>,
+}
+
+impl Endpoint {
+    fn local(port: u16, key: &str) -> Self {
+        let root = format!("http://127.0.0.1:{port}");
+        Endpoint { api: format!("{root}/v1"), key: key.into(), model: "ollivo".into(), llama: Some(root) }
+    }
+
+    fn post(&self, client: &reqwest::Client, url: String) -> reqwest::RequestBuilder {
+        self.auth(client.post(url).header("content-type", "application/json"))
+    }
+
+    fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.key.is_empty() { req } else { req.bearer_auth(&self.key) }
+    }
+}
+
+/// Случайный ключ: 32 байта из генератора Windows, в hex.
+pub fn new_key() -> String {
+    let mut b = [0u8; 32];
+    getrandom::fill(&mut b).expect("генератор случайных чисел");
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 pub struct Llm {
-    pub handle: Handle,
+    /// Процесс llama-server; у чужого сервера — `None`.
+    pub handle: Option<Handle>,
     pub port: u16,
+    pub endpoint: Endpoint,
+    /// Чужой сервер: его адрес — для окна.
+    pub remote: Option<String>,
     pub model: PathBuf,
     /// С чем запустили: окно показывает это в карточке модели.
     pub ctx: u32,
@@ -59,7 +107,7 @@ pub struct Answer {
     pub prompt_ms: f64,
 }
 
-fn args(cfg: &Config, port: u16) -> Vec<String> {
+fn args(cfg: &Config, port: u16, key: &str) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-m".into(),
         cfg.model.display().to_string(),
@@ -70,6 +118,8 @@ fn args(cfg: &Config, port: u16) -> Vec<String> {
         "-c".into(),
         cfg.ctx.to_string(),
         "--no-webui".into(),
+        "--api-key".into(),
+        key.into(),
     ];
     // Сколько слоёв уйдёт на видеокарту, посчитано заранее по свободной памяти.
     a.extend(["-ngl".into(), cfg.gpu_layers.to_string()]);
@@ -99,10 +149,19 @@ pub async fn start(
         return Err(tf!("файл модели не найден: {}", "model file not found: {}", cfg.model.display()));
     }
     crate::vcrt::prepare(&engine.exe)?;
-    let port = process::free_port().map_err(|e| e.to_string())?;
+    let port = match cfg.port {
+        // Постоянный порт занят другой программой — сказать сразу, а не ждать, пока движок упадёт.
+        Some(p) => {
+            std::net::TcpListener::bind(("127.0.0.1", p)).map_err(|_| tf!("порт {p} занят", "port {p} is busy"))?;
+            p
+        }
+        None => process::free_port().map_err(|e| e.to_string())?,
+    };
+    let key = if cfg.key.is_empty() { new_key() } else { cfg.key.clone() };
+    let endpoint = Endpoint::local(port, &key);
     let spec = process::Spec {
         exe: engine.exe.clone(),
-        args: args(cfg, port),
+        args: args(cfg, port, &key),
         log: logs.join("llama-server.log"),
     };
     let started = Instant::now();
@@ -118,16 +177,18 @@ pub async fn start(
     }
     // Прогрев: ошибка здесь не критична — модель уже загружена.
     tokio::select! {
-        _ = ask(port, "Hi", 1) => {}
+        _ = ask(&endpoint, "Hi", 1) => {}
         _ = cancel.cancelled() => {
             handle.stop().await;
             return Err(CANCELLED.to_string());
         }
     }
-    let (vision, tools) = abilities(port).await;
+    let (vision, tools) = abilities(&endpoint).await;
     Ok(Llm {
-        handle,
+        handle: Some(handle),
         port,
+        endpoint,
+        remote: None,
         model: cfg.model.clone(),
         ctx: cfg.ctx,
         gpu_layers: cfg.gpu_layers,
@@ -141,14 +202,101 @@ pub async fn start(
 
 /// Спрашивает у движка, подключилось ли зрение (дополнение могло не подойти модели)
 /// и умеет ли шаблон модели вызывать инструменты.
-async fn abilities(port: u16) -> (bool, bool) {
+async fn abilities(ep: &Endpoint) -> (bool, bool) {
     let props = async {
         let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(10)).build().ok()?;
-        let resp = client.get(format!("http://127.0.0.1:{port}/props")).send().await.ok()?;
+        let resp = ep.auth(client.get(format!("{}/props", ep.llama.as_ref()?))).send().await.ok()?;
         serde_json::from_slice::<serde_json::Value>(&resp.bytes().await.ok()?).ok()
     };
     let Some(v) = props.await else { return (false, false) };
     (v["modalities"]["vision"] == true, v["chat_template_caps"]["supports_tool_calls"] == true)
+}
+
+impl Llm {
+    /// Останавливает свой движок; чужой сервер просто забываем.
+    pub async fn stop(&self) {
+        if let Some(h) = &self.handle {
+            h.stop().await;
+        }
+    }
+}
+
+/// Сколько памяти разговора считать у чужого сервера: свою он не сообщает. От неё зависят
+/// только кусок файла, который модель читает за раз, и предел длины ответа с файлами.
+const REMOTE_CTX: u32 = 16384;
+
+/// Адрес чужого сервера, как его пишут в настройках программ, — к адресу API.
+/// Без пути — добавляем `/v1`: так пишут адрес Ollama и LM Studio («http://host:11434»).
+/// Вставили адрес целиком, с `/chat/completions`, — отрезаем.
+pub fn api_url(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
+    let mut url = url::Url::parse(&with_scheme)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
+        .ok_or_else(|| t!("Адрес сервера непонятен. Пример: http://192.168.1.5:11434/v1", "The server address isn't clear. Example: http://192.168.1.5:11434/v1").to_string())?;
+    let path = url.path().trim_end_matches('/').trim_end_matches("/chat/completions").trim_end_matches("/models").to_string();
+    url.set_path(if path.is_empty() { "/v1" } else { &path });
+    url.set_query(None);
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+/// Модели на чужом сервере (`GET /models`). Ошибки — сразу человеческими словами:
+/// это то, что человек увидит под кнопкой «Проверить».
+pub async fn remote_models(api: &str, key: &str) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
+    let ep = Endpoint { api: api.into(), key: key.into(), model: String::new(), llama: None };
+    let resp = ep.auth(client.get(format!("{api}/models"))).send().await.map_err(|e| {
+        tf!(
+            "Сервер не отвечает. Проверьте адрес и что сервер запущен. ({e})",
+            "The server doesn't respond. Check the address and that the server is running. ({e})"
+        )
+    })?;
+    match resp.status().as_u16() {
+        200..=299 => {}
+        401 | 403 => return Err(t!("Сервер не принял ключ.", "The server didn't accept the key.").into()),
+        404 => {
+            return Err(t!(
+                "По этому адресу нет нужного API. Проверьте адрес — обычно он заканчивается на /v1.",
+                "There is no suitable API at this address. Check it — it usually ends with /v1."
+            )
+            .into())
+        }
+        code => return Err(tf!("Сервер ответил ошибкой {code}.", "The server returned error {code}.")),
+    }
+    let v: serde_json::Value = serde_json::from_slice(&resp.bytes().await.map_err(|e| e.to_string())?)
+        .map_err(|_| t!("Сервер ответил не так, как отвечают модели. Проверьте адрес.", "The server didn't answer the way model servers do. Check the address.").to_string())?;
+    let models: Vec<String> = v["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str().map(String::from)).collect();
+    if models.is_empty() {
+        return Err(t!("На сервере нет ни одной модели.", "There are no models on the server.").into());
+    }
+    Ok(models)
+}
+
+/// Подключается к модели на чужом сервере. Проверяем тем же списком моделей: ключ
+/// подошёл и модель на месте — значит, можно разговаривать.
+pub async fn connect(api: &str, key: &str, model: &str) -> Result<Llm, String> {
+    let started = Instant::now();
+    if !remote_models(api, key).await?.iter().any(|m| m == model) {
+        return Err(tf!("На сервере нет модели «{model}».", "There is no model “{model}” on the server."));
+    }
+    let host = url::Url::parse(api).ok().and_then(|u| Some(format!("{}{}", u.host_str()?, u.port().map(|p| format!(":{p}")).unwrap_or_default())));
+    Ok(Llm {
+        handle: None,
+        port: 0,
+        endpoint: Endpoint { api: api.into(), key: key.into(), model: model.into(), llama: None },
+        remote: Some(host.unwrap_or_else(|| api.into())),
+        model: PathBuf::from(model),
+        ctx: REMOTE_CTX,
+        gpu_layers: 0,
+        started_in: started.elapsed(),
+        // Что умеет модель, чужой сервер не говорит. Считаем, что умеет: не умеет — сервер
+        // откажет, и человек увидит его ответ. Иначе картинку и папку было бы не дать вовсе.
+        vision: true,
+        tools: true,
+        vram: 0,
+        lighter: 0,
+    })
 }
 
 /// Реплика разговора. Роли как у OpenAI: `system`, `user`, `assistant`.
@@ -238,7 +386,7 @@ pub struct Project<'a> {
 /// тогда это несколько запросов подряд: модель → инструмент → снова модель.
 #[allow(clippy::too_many_arguments)]
 pub async fn chat(
-    port: u16,
+    ep: &Endpoint,
     vision: bool,
     messages: &[Msg],
     role: &Role,
@@ -273,15 +421,21 @@ pub async fn chat(
     let mut said = String::new();
     for round in 0..=MAX_ROUNDS {
         let mut body = serde_json::json!({
+            "model": ep.model,
             "messages": wire,
             "temperature": style.temperature,
             "top_p": style.top_p,
             "stream": true,
             // Просим итоговые числа в последнем куске.
             "stream_options": {"include_usage": true},
-            "timings_per_token": true,
         });
-        if role.no_cjk {
+        // Поля llama-server. Чужой сервер может отказать во всём запросе из-за незнакомого
+        // поля (так делает API OpenAI) — ему их не шлём.
+        let llama = ep.llama.is_some();
+        if llama {
+            body["timings_per_token"] = true.into();
+        }
+        if role.no_cjk && llama {
             body["grammar"] = crate::presets::NO_CJK.into();
         }
         if let Some(t) = tools {
@@ -298,15 +452,15 @@ pub async fn chat(
         // четырёх вопросах 3,0 / 1,7 / 3,1 / 4,7 с против 7,8 / 2,4 / 3,9 / 7,8 с с рассуждениями,
         // ответы те же (docs/phase-3.md). Что открыть, модель успевает обдумать в первом запросе.
         // Модели без такого ключа его не заметят.
-        if round > 0 {
+        if round > 0 && llama {
             body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
         }
-        let mut r = round_trip(&client, port, &body, cancel, &on, &mut said).await?;
+        let mut r = round_trip(&client, ep, &body, cancel, &on, &mut said).await?;
         // Первый запрос идёт с рассуждениями. Закончила ни с чем — ни ответа, ни вызова, —
         // тот же запрос ещё раз без них: так ответ, спрятанный в рассуждениях, выйдет наружу.
-        if round == 0 && r.text.trim().is_empty() && r.calls.is_empty() && !cancel.is_cancelled() {
+        if round == 0 && llama && r.text.trim().is_empty() && r.calls.is_empty() && !cancel.is_cancelled() {
             body["chat_template_kwargs"] = serde_json::json!({"enable_thinking": false});
-            let again = round_trip(&client, port, &body, cancel, &on, &mut said).await?;
+            let again = round_trip(&client, ep, &body, cancel, &on, &mut said).await?;
             r.stats.tokens += again.stats.tokens;
             r = Round { stats: Stats { tokens: r.stats.tokens, ..again.stats }, ..again };
         }
@@ -360,22 +514,36 @@ struct Round {
     text: String,
     calls: Vec<Call>,
     stats: Stats,
+    /// Когда пришёл первый кусок — скорость для сервера, который её не сообщает.
+    first: Option<Instant>,
+}
+
+impl Round {
+    /// Чужой сервер чисел о скорости не шлёт — считаем сами: токены на время от первого куска.
+    fn finish(mut self) -> Self {
+        if let (0.0, Some(t)) = (self.stats.speed, self.first) {
+            let secs = t.elapsed().as_secs_f64();
+            if secs > 0.2 {
+                self.stats.speed = self.stats.tokens as f64 / secs;
+            }
+        }
+        self
+    }
 }
 
 /// Один запрос к движку со стримингом. `said` — что ответ уже написал в прошлых
 /// запросах: новый кусок отделяем пустой строкой, иначе «Посмотрю файл.Готово» слипнется.
 async fn round_trip(
     client: &reqwest::Client,
-    port: u16,
+    ep: &Endpoint,
     body: &serde_json::Value,
     cancel: &CancellationToken,
     on: &impl Fn(Event),
     said: &mut String,
 ) -> Result<Round, String> {
-    let resp = client
-        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+    let resp = ep
+        .post(client, format!("{}/chat/completions", ep.api))
         .body(body.to_string())
-        .header("content-type", "application/json")
         .send()
         .await
         .map_err(|e| tf!("движок не отвечает: {e}", "the engine is not responding: {e}"))?;
@@ -393,14 +561,15 @@ async fn round_trip(
 
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
-    let mut round = Round { text: String::new(), calls: vec![], stats: Stats::default() };
+    let mut round = Round { text: String::new(), calls: vec![], stats: Stats::default(), first: None };
     let mut fresh = true;
     loop {
         let chunk = tokio::select! {
             c = stream.next() => c,
-            _ = cancel.cancelled() => return Ok(round), // ответ обрываем, что успели — уже показано
+            _ = cancel.cancelled() => return Ok(round.finish()), // ответ обрываем, что успели — уже показано
         };
         let Some(chunk) = chunk else { break };
+        round.first.get_or_insert_with(Instant::now);
         let chunk = chunk.map_err(|e| tf!("связь с движком оборвалась: {e}", "connection to the engine was lost: {e}"))?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
         // Server-sent events: события разделены пустой строкой, данные — в строках `data: `.
@@ -409,7 +578,7 @@ async fn round_trip(
             for line in event.lines() {
                 let Some(data) = line.strip_prefix("data:").map(str::trim) else { continue };
                 if data == "[DONE]" {
-                    return Ok(round);
+                    return Ok(round.finish());
                 }
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else { continue };
                 if let Some(err) = v["error"]["message"].as_str() {
@@ -466,17 +635,16 @@ async fn round_trip(
             }
         }
     }
-    Ok(round)
+    Ok(round.finish())
 }
 
 // Сколько токенов займёт текст у этой модели. `None` — движок не ответил,
 /// тогда обходимся прикидкой.
-pub async fn count_tokens(port: u16, text: &str) -> Option<u64> {
+pub async fn count_tokens(ep: &Endpoint, text: &str) -> Option<u64> {
     let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(30)).build().ok()?;
-    let resp = client
-        .post(format!("http://127.0.0.1:{port}/tokenize"))
+    let resp = ep
+        .post(&client, format!("{}/tokenize", ep.llama.as_ref()?))
         .body(serde_json::json!({"content": text}).to_string())
-        .header("content-type", "application/json")
         .send()
         .await
         .ok()?;
@@ -485,20 +653,20 @@ pub async fn count_tokens(port: u16, text: &str) -> Option<u64> {
 }
 
 /// Вопрос без стриминга — для проверки движка.
-pub async fn ask(port: u16, prompt: &str, max_tokens: u32) -> Result<Answer, String> {
+pub async fn ask(ep: &Endpoint, prompt: &str, max_tokens: u32) -> Result<Answer, String> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())?;
     let body = serde_json::json!({
+        "model": ep.model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
     });
-    let resp = client
-        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+    let resp = ep
+        .post(&client, format!("{}/chat/completions", ep.api))
         .body(body.to_string())
-        .header("content-type", "application/json")
         .send()
         .await
         .map_err(|e| tf!("движок не отвечает: {e}", "the engine is not responding: {e}"))?;
@@ -522,10 +690,33 @@ mod tests {
     use crate::presets;
 
     #[test]
+    fn remote_address() {
+        assert_eq!(api_url("192.168.1.5:11434").unwrap(), "http://192.168.1.5:11434/v1");
+        assert_eq!(api_url(" http://host:8080/v1/ ").unwrap(), "http://host:8080/v1");
+        assert_eq!(api_url("https://api.example.com/v1/chat/completions").unwrap(), "https://api.example.com/v1");
+        assert_eq!(api_url("http://host/openai/v1").unwrap(), "http://host/openai/v1");
+        assert!(api_url("ftp://host").is_err() && api_url("").is_err());
+    }
+
+    /// Список моделей чужого сервера: ключ уходит заголовком, неверный ключ — понятными словами.
+    #[tokio::test]
+    async fn remote_models_and_key() {
+        let srv = crate::testserver::serve(br#"{"data":[{"id":"qwen2.5:7b"},{"id":"llama3"}]}"#.to_vec(), false, 0);
+        let api = srv.url.trim_end_matches("/file.bin").to_string() + "/v1";
+        assert_eq!(remote_models(&api, "s3cret").await.unwrap(), ["qwen2.5:7b", "llama3"]);
+        assert_eq!(srv.auth.lock().unwrap().last().unwrap(), "Bearer s3cret");
+        let l = connect(&api, "", "llama3").await.unwrap();
+        assert!(l.handle.is_none() && l.remote.is_some() && l.endpoint.llama.is_none());
+        assert!(connect(&api, "", "нет такой").await.err().unwrap().contains("нет модели"));
+        assert!(remote_models("http://127.0.0.1:1/v1", "").await.unwrap_err().contains("не отвечает"));
+    }
+
+    #[test]
     fn args_bind_localhost_without_webui() {
-        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192, gpu_layers: 21, mmproj: None };
-        let a = args(&cfg, 5000).join(" ");
+        let cfg = Config { model: PathBuf::from(r"D:\Ollivo\models\m.gguf"), ctx: 8192, gpu_layers: 21, mmproj: None, ..Default::default() };
+        let a = args(&cfg, 5000, "k1").join(" ");
         assert!(a.contains("--host 127.0.0.1 --port 5000"));
+        assert!(a.contains("--api-key k1"), "без ключа к модели обратится любой процесс");
         assert!(a.contains("--no-webui"));
         assert!(a.contains(r"-m D:\Ollivo\models\m.gguf"));
         // Подобранные настройки доходят до движка.
@@ -539,16 +730,20 @@ mod tests {
     async fn real_start_ask_stop() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-llm-test"), &CancellationToken::new())
             .await
             .unwrap();
         println!("готов за {:.1} с, порт {}", llm.started_in.as_secs_f64(), llm.port);
-        let a = ask(llm.port, "Столица Франции? Одно слово.", 16).await.unwrap();
+        let a = ask(&llm.endpoint, "Столица Франции? Одно слово.", 16).await.unwrap();
         println!("{a:?}");
         assert!(!a.text.is_empty() && a.speed > 0.0);
-        let e = llm.handle.stop().await;
+        // Без ключа движок не отвечает: другой процесс на этом ПК модель не получит.
+        let stranger = Endpoint { key: String::new(), ..llm.endpoint.clone() };
+        let refused = ask(&stranger, "Hi", 1).await.unwrap_err();
+        assert!(refused.contains("401"), "{refused}");
+        let e = llm.handle.as_ref().unwrap().stop().await;
         assert!(e.by_us);
     }
 
@@ -576,17 +771,17 @@ mod tests {
         std::fs::hard_link(root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), &model).unwrap();
 
         let engine = Installed { exe: engine_dir.join(src.exe.strip_prefix(&src.dir).unwrap()), dir: engine_dir.clone(), ..src };
-        let cfg = Config { model, ctx: 2048, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model, ctx: 2048, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &base.join("журналы"), &CancellationToken::new()).await.unwrap();
         for dll in ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"] {
-            let from = crate::testserver::loaded_from(llm.handle.pid, dll);
+            let from = crate::testserver::loaded_from(llm.handle.as_ref().unwrap().pid, dll);
             println!("{dll}: {from}");
             assert!(from.contains("Иван Петров") && from.contains("движок чата"), "{dll} загружена из {from:?}");
         }
         let msgs = vec![Msg::new("user", "Напиши числа от 1 до 5 через запятую.".into())];
         let text = std::sync::Mutex::new(String::new());
-        chat(llm.port, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| {
+        chat(&llm.endpoint, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| {
             if let Event::Text(t) = e {
                 text.lock().unwrap().push_str(t)
             }
@@ -596,7 +791,7 @@ mod tests {
         let text = text.into_inner().unwrap();
         println!("ответ: {text}");
         assert!(text.contains('3'), "{text}");
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     /// `cargo test llm::tests::real_chat_stream -- --ignored --nocapture`
@@ -605,7 +800,7 @@ mod tests {
     async fn real_chat_stream() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-chat-test"), &CancellationToken::new())
             .await
@@ -613,7 +808,7 @@ mod tests {
 
         let msgs = vec![Msg::new("user", "Напиши числа от 1 до 20 словами, через запятую.".into())];
         let chunks = std::sync::Mutex::new(Vec::<String>::new());
-        let stats = chat(llm.port, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
+        let stats = chat(&llm.endpoint, false, &msgs, presets::role(""), presets::style(""), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
             chunks.lock().unwrap().push(t.to_string())
         })
         .await
@@ -633,10 +828,10 @@ mod tests {
         });
         let t = Instant::now();
         let long = vec![Msg::new("user", "Напиши рассказ на 2000 слов.".into())];
-        chat(llm.port, false, &long, presets::role(""), presets::style(""), None, &cancel, |_| {}).await.unwrap();
+        chat(&llm.endpoint, false, &long, presets::role(""), presets::style(""), None, &cancel, |_| {}).await.unwrap();
         println!("остановлено за {:.1} с", t.elapsed().as_secs_f64());
         assert!(t.elapsed() < Duration::from_secs(5));
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     /// Разговор длиннее памяти модели: движок отвечает 400 с причиной в теле,
@@ -646,13 +841,13 @@ mod tests {
     async fn real_context_overflow() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join(r"models\qwen2.5-0.5b-instruct-q4_k_m.gguf"), ctx: 512, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-ctx-test"), &CancellationToken::new())
             .await
             .unwrap();
         let long = vec![Msg::new("user", "слово ".repeat(2000))];
-        let err = chat(llm.port, false, &long, presets::role(""), presets::style(""), None, &CancellationToken::new(), |_| {})
+        let err = chat(&llm.endpoint, false, &long, presets::role(""), presets::style(""), None, &CancellationToken::new(), |_| {})
             .await
             .err()
             .expect("должно не влезть");
@@ -660,7 +855,7 @@ mod tests {
         println!("{err}
 → {}", p.text);
         assert_eq!(p.actions, [crate::trouble::Action::NewChat]);
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     /// Роли на настоящей модели: переводчик переводит в обе стороны и не болтает.
@@ -672,17 +867,17 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         // OLLIVO_MODEL — имя файла в D:\Ollivo\models, чтобы проверить и маленькую модель.
         let file = std::env::var("OLLIVO_MODEL").unwrap_or("qwen2.5-3b-instruct-q4_k_m.gguf".into());
-        let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join("models").join(file), ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-roles-test"), &CancellationToken::new())
             .await
             .unwrap();
         let ask = |role: &'static str, style: &'static str, text: &'static str| {
-            let port = llm.port;
+            let port = llm.endpoint.clone();
             async move {
                 let out = std::sync::Mutex::new(String::new());
                 let msgs = vec![Msg::new("user", text.into())];
-                chat(port, false, &msgs, presets::role(role), presets::style(style), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
+                chat(&port, false, &msgs, presets::role(role), presets::style(style), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
                     out.lock().unwrap().push_str(t)
                 })
                 .await
@@ -708,7 +903,7 @@ mod tests {
             Msg::new("user", "The weather is nice today, let's go for a walk.".into()),
         ];
         let out = std::sync::Mutex::new(String::new());
-        chat(llm.port, false, &talk, presets::role("translator"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
+        chat(&llm.endpoint, false, &talk, presets::role("translator"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
             out.lock().unwrap().push_str(t)
         })
         .await
@@ -721,7 +916,7 @@ mod tests {
         for style in ["precise", "creative"] {
             ask("helper", style, "Придумай название для кофейни.").await;
         }
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     #[tokio::test]
@@ -733,7 +928,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from("llama-server.exe"),
         };
-        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: PathBuf::from(r"Z:\нет.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let err = start(&Supervisor::new(), &engine, &cfg, &crate::testserver::tmp(), &CancellationToken::new())
             .await
             .err()
@@ -756,7 +951,7 @@ mod tests {
             dir: PathBuf::new(),
             exe: PathBuf::from(r"C:\Windows\System32\PING.EXE"),
         };
-        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let cancel = CancellationToken::new();
         let c = cancel.clone();
@@ -777,14 +972,14 @@ mod tests {
     async fn real_document() {
         let root = PathBuf::from(r"D:\Ollivo");
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
-        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join(r"models\qwen2.5-3b-instruct-q4_k_m.gguf"), ctx: 4096, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-doc-test"), &CancellationToken::new())
             .await
             .unwrap();
         let pdf = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/borsch.pdf");
         let text = crate::attach::pdf_text_here(&pdf).unwrap();
-        let exact = count_tokens(llm.port, &text).await.unwrap();
+        let exact = count_tokens(&llm.endpoint, &text).await.unwrap();
         let guess = crate::attach::estimate_tokens(&text);
         println!("токенов: {exact}, прикидка по буквам {guess}");
         assert!(exact > 500 && guess >= exact * 9 / 10, "прикидка не должна сильно занижать");
@@ -799,7 +994,7 @@ mod tests {
             path: None,
         });
         let out = std::sync::Mutex::new(String::new());
-        chat(llm.port, false, &[q], presets::role("helper"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
+        chat(&llm.endpoint, false, &[q], presets::role("helper"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
             out.lock().unwrap().push_str(t)
         })
         .await
@@ -807,7 +1002,7 @@ mod tests {
         let out = out.into_inner().unwrap();
         println!("→ {out}");
         assert!(out.contains('3'), "{out}");
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     /// Зрение на настоящей модели из каталога: дополнение находится само, движок
@@ -821,7 +1016,7 @@ mod tests {
         let model = root.join(r"models\unsloth\Qwen3.5-2B-GGUF\Qwen3.5-2B-Q4_K_M.gguf");
         let mmproj = crate::vision::find_projector(&model);
         assert!(mmproj.is_some(), "дополнение не нашлось");
-        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj };
+        let cfg = Config { model, ctx: 4096, gpu_layers: 999, mmproj, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-vision-test"), &CancellationToken::new())
             .await
@@ -832,12 +1027,12 @@ mod tests {
         let images = crate::testserver::tmp().join("ollivo-vision-test").join("images");
         let pic = crate::attach::read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/circle42.png"), &images, None).unwrap();
         let ask = |question: &'static str, files: Vec<crate::attach::Attachment>| {
-            let port = llm.port;
+            let port = llm.endpoint.clone();
             async move {
                 let mut q = Msg::new("user", question.into());
                 q.files = files;
                 let out = std::sync::Mutex::new(String::new());
-                let stats = chat(port, true, &[q], presets::role("helper"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
+                let stats = chat(&port, true, &[q], presets::role("helper"), presets::style("precise"), None, &CancellationToken::new(), |e| if let Event::Text(t) = e {
                     out.lock().unwrap().push_str(t)
                 })
                 .await
@@ -854,7 +1049,7 @@ mod tests {
         assert!(!plain.contains("42"));
         let (color, _) = ask("Какого цвета круг? Одно слово.", vec![pic]).await;
         assert!(color.to_lowercase().contains("красн"), "{color}");
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 
     /// Папка проекта на настоящей модели: модель сама читает файл, находит текст
@@ -869,7 +1064,7 @@ mod tests {
         let engine = crate::engines::installed(&root, "llama.cpp").pop().expect("llama.cpp не установлен");
         // OLLIVO_MODEL — путь от D:\Ollivo\models, чтобы сравнить модели.
         let file = std::env::var("OLLIVO_MODEL").unwrap_or(r"unsloth\Qwen3.5-2B-GGUF\Qwen3.5-2B-Q4_K_M.gguf".into());
-        let cfg = Config { model: root.join("models").join(file), ctx: 8192, gpu_layers: 999, mmproj: None };
+        let cfg = Config { model: root.join("models").join(file), ctx: 8192, gpu_layers: 999, mmproj: None, ..Default::default() };
         let sup = Supervisor::new();
         let llm = start(&sup, &engine, &cfg, &crate::testserver::tmp().join("ollivo-project-test"), &CancellationToken::new())
             .await
@@ -897,10 +1092,10 @@ mod tests {
         // Как в программе: инструменты — заново на каждый ответ (там живёт «уже прочитан»).
         let tools = |mode| Tools::new(project::list(&dir).unwrap(), cfg.ctx, backups.clone(), mode, ask.clone());
 
-        async fn talk(port: u16, tools: Tools, question: &str) -> (String, Vec<String>) {
+        async fn talk(port: &Endpoint, tools: Tools, question: &str) -> (String, Vec<String>) {
             talk_in(port, tools, vec![Msg::new("user", question.into())]).await
         }
-        async fn talk_in(port: u16, tools: Tools, messages: Vec<Msg>) -> (String, Vec<String>) {
+        async fn talk_in(port: &Endpoint, tools: Tools, messages: Vec<Msg>) -> (String, Vec<String>) {
             let tools = &tools;
             let question = messages.last().map(|m| m.content.clone()).unwrap_or_default();
             let out = Mutex::new(String::new());
@@ -927,18 +1122,18 @@ mod tests {
             println!("\n{question}\n  шаги: {steps:?}\n  за {:.1} с\n→ {out}\n", t.elapsed().as_secs_f64());
             (out, steps)
         }
-        let port = llm.port;
-        let (out, steps) = talk(port, tools(project::Mode::Ask), "Какая скидка в проекте? Ответь числом в процентах.").await;
+        let port = llm.endpoint.clone();
+        let (out, steps) = talk(&port, tools(project::Mode::Ask), "Какая скидка в проекте? Ответь числом в процентах.").await;
         assert!(steps.iter().any(|s| s.starts_with("read") || s.starts_with("search")), "{steps:?}");
         assert!(out.contains("15"), "{out}");
 
-        let (_, steps) = talk(port, tools(project::Mode::Ask), "Создай файл hello.py, который печатает «Привет». Сразу создай, без вопросов.").await;
+        let (_, steps) = talk(&port, tools(project::Mode::Ask), "Создай файл hello.py, который печатает «Привет». Сразу создай, без вопросов.").await;
         assert!(steps.iter().any(|s| s.starts_with("write")), "{steps:?}");
         let hello = std::fs::read_to_string(dir.join("hello.py")).expect("hello.py не создан");
         assert!(hello.contains("Привет") && hello.contains("print"), "{hello}");
 
         // Маленькая правка: чем модель её делает — куском или файлом целиком — и не портит ли остальное.
-        let (_, steps) = talk(port, tools(project::Mode::Ask), "В shop/prices.py поменяй скидку на 20%.").await;
+        let (_, steps) = talk(&port, tools(project::Mode::Ask), "В shop/prices.py поменяй скидку на 20%.").await;
         let prices = std::fs::read_to_string(dir.join("shop/prices.py")).unwrap();
         println!("--- shop/prices.py после правки:\n{prices}");
         assert!(steps.iter().any(|s| s.starts_with("edit") || s.starts_with("write")), "{steps:?}");
@@ -946,21 +1141,22 @@ mod tests {
 
         // «План»: инструментов записи нет, файлы не меняются.
         let before = project::list(&dir).unwrap().files;
-        // «Авто» и история: в прошлом ответе модель создала notes.txt, теперь просим удалить.
+        // «Авто» и история: в прошлом ответе модель создала notes.txt, теперь просим удалить
+        // (удаление и в «Авто» идёт через вопрос — тестовый `ask` разрешает).
         // Qwen2.5 3B здесь ответила «удалён», ничего не удалив, — когда справка о прошлых
         // действиях шла в конце её ответа.
         std::fs::write(dir.join("notes.txt"), "hello\n").unwrap();
         let mut done = Msg::new("assistant", "Файл notes.txt создан.".into());
         done.steps.push(project::Step { kind: "write".into(), path: "notes.txt".into(), ok: true, ..Default::default() });
         let history = vec![Msg::new("user", "Создай notes.txt с текстом hello".into()), done, Msg::new("user", "Теперь удали notes.txt".into())];
-        let (_, steps) = talk_in(port, tools(project::Mode::Auto), history).await;
+        let (_, steps) = talk_in(&port, tools(project::Mode::Auto), history).await;
         assert!(steps.iter().any(|s| s.starts_with("delete notes.txt")), "{steps:?}");
         assert!(!dir.join("notes.txt").exists());
 
-        let (out, steps) = talk(port, tools(project::Mode::Plan), "Добавь скидку по промокоду: промокод SALE даёт ещё 5%.").await;
+        let (out, steps) = talk(&port, tools(project::Mode::Plan), "Добавь скидку по промокоду: промокод SALE даёт ещё 5%.").await;
         assert!(!steps.iter().any(|s| s.starts_with("write") || s.starts_with("edit") || s.starts_with("delete")), "{steps:?}");
         assert_eq!(project::list(&dir).unwrap().files, before);
         assert!(!out.trim().is_empty());
-        llm.handle.stop().await;
+        llm.stop().await;
     }
 }

@@ -57,6 +57,12 @@ fn problem(text: &str, hint: Option<&str>, actions: &[Action], raw: &str) -> Pro
 
 /// Движка чата нет — ядро само передаёт это вместо текста ошибки.
 pub const NO_ENGINE: &str = "no-engine";
+/// Стоит только движок Vulkan, а карта его не видит (Tesla в режиме TCC).
+pub const NO_GPU_ENGINE: &str = "no-gpu-engine";
+
+/// Нарушение доступа (0xC0000005): движок упал сам, ещё до модели. На GTX 1070 так
+/// падала сборка Vulkan (отчёты на GitHub, 2026-09-30); запасной путь — сборка CUDA.
+const ACCESS_VIOLATION: &str = "-1073741819";
 
 /// Windows не нашла DLL (`STATUS_DLL_NOT_FOUND`, 0xC0000135) или она не той
 /// разрядности (0xC000007B): у llama.cpp это почти всегда VC++ Runtime или vulkan-1.dll.
@@ -90,6 +96,17 @@ pub fn start(raw: &str, can_lighter: bool) -> Problem {
         return problem(
             t!("Движок чата не установлен.", "The chat engine is not installed."),
             Some(t!("Он скачивается один раз, это около 30 МБ.", "It downloads once, about 30 MB.")),
+            &[Engine],
+            raw,
+        );
+    }
+    if raw == NO_GPU_ENGINE {
+        return problem(
+            t!("Движок чата не видит эту видеокарту.", "The chat engine can't see this graphics card."),
+            Some(t!(
+                "Карта работает в режиме без графики, как серверные. Для неё нужна другая сборка движка — поставьте её на странице «Компьютер».",
+                "The card runs in a mode without graphics, like server cards. It needs a different engine build — install it on the “Computer” page."
+            )),
             &[Engine],
             raw,
         );
@@ -165,6 +182,18 @@ pub fn start(raw: &str, can_lighter: bool) -> Problem {
             raw,
         );
     }
+    // Упал без понятных слов в логе — значит, не модель, а сам движок на этой карте.
+    if raw.contains(ACCESS_VIOLATION) {
+        return problem(
+            t!("Движок чата упал при запуске.", "The chat engine crashed on start."),
+            Some(t!(
+                "Обычно помогает свежий драйвер NVIDIA. Не помогло — на странице «Компьютер» поставьте сборку движка CUDA.",
+                "A fresh NVIDIA driver usually helps. If not, install the CUDA engine build on the “Computer” page."
+            )),
+            &[Engine, Retry],
+            raw,
+        );
+    }
     problem(t!("Модель не запустилась.", "The model did not start."), Some(t!("Попробуйте ещё раз.", "Try again.")), &[Retry], raw)
 }
 
@@ -228,6 +257,59 @@ pub fn chat(raw: &str) -> Problem {
     problem(t!("Не получилось получить ответ.", "Couldn't get an answer."), None, &[Retry], raw)
 }
 
+/// Не получилось получить ответ от модели на чужом сервере. «Запустить заново» тут
+/// не поможет — сервер не наш; чинится он там, где стоит, или переподключением.
+pub fn remote_chat(raw: &str) -> Problem {
+    use Action::*;
+    if has(raw, &["exceed_context_size", "exceeds the available context size", "context length", "maximum context"]) {
+        return chat("exceed_context_size").with_details(raw);
+    }
+    if has(raw, &["не отвечает", "оборвалась", "not responding", "connection to the engine was lost"]) {
+        return problem(
+            t!("Сервер с моделью не отвечает.", "The model server doesn't respond."),
+            Some(t!(
+                "Проверьте, что он запущен и доступен с этого компьютера, и повторите вопрос.",
+                "Check that it is running and reachable from this computer, then repeat the question."
+            )),
+            &[Retry],
+            raw,
+        );
+    }
+    if has(raw, &["ошибкой 401", "ошибкой 403", "error 401", "error 403"]) {
+        return problem(
+            t!("Сервер не принял ключ.", "The server didn't accept the key."),
+            Some(t!("Подключитесь заново на странице «Модели».", "Connect again on the “Models” page.")),
+            &[Models],
+            raw,
+        );
+    }
+    if has(raw, &["ошибкой 404", "error 404"]) {
+        return problem(
+            t!("На сервере больше нет этой модели.", "This model is no longer on the server."),
+            Some(t!("Выберите другую на странице «Модели».", "Pick another one on the “Models” page.")),
+            &[Models],
+            raw,
+        );
+    }
+    problem(
+        t!("Сервер не дал ответ.", "The server didn't give an answer."),
+        // Чужая модель может не уметь картинки или файлы — мы этого заранее не знаем.
+        Some(t!(
+            "Его объяснение — в подробностях. Если к вопросу приложена картинка или папка, возможно, эта модель так не умеет.",
+            "Its explanation is in the details. If an image or folder is attached, this model may not support that."
+        )),
+        &[Retry],
+        raw,
+    )
+}
+
+impl Problem {
+    fn with_details(mut self, raw: &str) -> Self {
+        self.details = raw.trim().into();
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,8 +347,18 @@ mod tests {
     fn own_errors_are_recognized() {
         assert_eq!(start(r"файл модели не найден: D:\m.gguf", true).actions, [Forget]);
         assert_eq!(start(NO_ENGINE, true).actions, [Engine]);
+        assert_eq!(start(NO_GPU_ENGINE, true).actions, [Engine]);
+        assert_eq!(start("движок завершился при запуске (код Some(-1073741819))\n", true).actions, [Engine, Retry]);
         assert_eq!(start("движок завершился при запуске (код Some(-1073741515))\n", true).actions, [Engine, Vcredist]);
         assert_eq!(start("что-то совсем новое", true).actions, [Retry]);
+    }
+
+    #[test]
+    fn remote_chat_errors() {
+        assert_eq!(remote_chat("движок не отвечает: connection refused").actions, [Retry]);
+        assert_eq!(remote_chat("движок ответил ошибкой 401: Unauthorized").actions, [Models]);
+        assert_eq!(remote_chat("движок ответил ошибкой 400: This model's maximum context length is 8192").actions, [NewChat]);
+        assert!(remote_chat("движок ответил ошибкой 400: image input not supported").hint.unwrap().contains("картинка"));
     }
 
     #[test]

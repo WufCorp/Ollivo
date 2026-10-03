@@ -12,6 +12,10 @@ pub struct Gpu {
     pub cc: (u32, u32),
     /// Пропускная способность видеопамяти, байт/с (оценка).
     pub vram_bw: u64,
+    /// Карта работает без графики — драйвер в режиме TCC или MCDM (так по умолчанию у Tesla
+    /// и других серверных карт). CUDA её видит, а Vulkan — нет: движок Vulkan молча
+    /// считал бы на процессоре (отзыв с Tesla P4, 2026-10-03).
+    pub compute_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +65,13 @@ pub struct Hardware {
     pub profile_risky: bool,
 }
 
+impl Hardware {
+    /// Пойдёт ли движок Vulkan: нужен `vulkan-1.dll` и карта с графикой.
+    pub fn vulkan_ok(&self) -> bool {
+        crate::setup::has_vulkan() && !self.gpu.as_ref().is_some_and(|g| g.compute_only)
+    }
+}
+
 pub fn detect() -> Hardware {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
@@ -102,12 +113,19 @@ fn detect_gpu() -> (Option<Gpu>, String, i32) {
     let clk = dev
         .max_clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory)
         .unwrap_or(0) as u64;
+    // Режим, которого NVML этой версии не знает (MCDM у новых драйверов), — тоже не WDDM.
+    let compute_only = match dev.driver_model() {
+        Ok(m) => m.current != nvml_wrapper::enum_wrappers::device::DriverModel::WDDM,
+        Err(nvml_wrapper::error::NvmlError::UnexpectedVariant(_)) => true,
+        Err(_) => false,
+    };
     let gpu = Gpu {
         name: dev.name().unwrap_or_default(),
         vram_total,
         vram_free,
         cc,
         vram_bw: clk * 1_000_000 * 2 * bus / 8,
+        compute_only,
     };
     (Some(gpu), driver, cuda_driver)
 }

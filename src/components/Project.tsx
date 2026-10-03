@@ -18,8 +18,8 @@ export const fileModes = (): { id: FileMode; name: string; hint: string }[] => [
     id: "auto",
     name: t("Авто", "Auto"),
     hint: t(
-      "Модель сама создаёт, меняет и удаляет файлы в папке. Старые версии сохраняются — их можно вернуть",
-      "The model creates, changes and deletes files in the folder by itself. Old versions are kept — you can restore them",
+      "Модель сама создаёт и меняет файлы в папке, а удалить — спрашивает. Старые версии сохраняются — их можно вернуть",
+      "The model creates and changes files in the folder by itself, and asks before deleting. Old versions are kept — you can restore them",
     ),
   },
   {

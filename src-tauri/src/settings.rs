@@ -19,6 +19,9 @@ pub struct Settings {
     pub setup_done: bool,
     pub updates: UpdateSettings,
     pub models: ModelSettings,
+    pub downloads: DownloadSettings,
+    pub share: ShareSettings,
+    pub remote: RemoteSettings,
     pub theme: Theme,
     /// Язык окна и всего, что говорит ядро. В файле его может не быть — см. `Store::open`.
     pub language: Lang,
@@ -62,6 +65,41 @@ impl Default for ModelSettings {
     fn default() -> Self {
         Self { unload_after: 10 }
     }
+}
+
+/// Модель, открытая для других программ (SillyTavern, qwen-code и т.п.): постоянный
+/// адрес на 127.0.0.1 и постоянный ключ (он — в диспетчере учётных данных). Выключено —
+/// ключ случайный на каждый запуск, порт любой свободный.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShareSettings {
+    pub enabled: bool,
+    pub port: u16,
+}
+
+impl Default for ShareSettings {
+    /// 11500 — рядом с Ollama (11434), но не он: обе программы могут стоять на одном ПК.
+    fn default() -> Self {
+        Self { enabled: false, port: 11500 }
+    }
+}
+
+/// Чужой OpenAI-совместимый сервер с моделью: последний, к которому подключались.
+/// Ключ — в диспетчере учётных данных.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteSettings {
+    /// Адрес API, уже приведённый `llm::api_url`.
+    pub url: String,
+    pub model: String,
+}
+
+/// Загрузки моделей и движков.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadSettings {
+    /// Предел скорости всех загрузок вместе, байт/с; 0 — без предела.
+    pub limit: u64,
 }
 
 /// Обновления программы. Выключенная проверка = ни одного сетевого запроса.

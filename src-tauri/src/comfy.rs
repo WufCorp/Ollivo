@@ -11,9 +11,6 @@
 //!   не должна ходить в сеть без спроса, а запуск быстрее.
 //! - Модели не копируются: папки с ними перечислены в `model-paths.yaml`.
 
-// Окно зовёт генерацию со следующего шага фазы 4 (экран «Картинки»); пока ядро проверено тестами.
-#![allow(dead_code)]
-
 use crate::process::{self, Handle, Supervisor};
 use crate::pyenv::Env;
 use futures_util::{SinkExt, StreamExt};
@@ -32,6 +29,7 @@ pub struct Comfy {
     pub handle: Handle,
     pub port: u16,
     pub output: PathBuf,
+    /// Сколько запускался: из этого замера — оценка времени до первой картинки.
     pub started_in: Duration,
     client: reqwest::Client,
 }
@@ -170,6 +168,13 @@ pub async fn start(
 impl Comfy {
     fn url(&self, path: &str) -> String {
         format!("http://127.0.0.1:{}{path}", self.port)
+    }
+
+    /// Выгружает модели из видеокарты: её просит модель чата. Сам ComfyUI остаётся
+    /// запущенным (~0,3 ГБ на контекст CUDA) — следующая картинка не ждёт 30 с запуска.
+    pub async fn free(&self) {
+        let body = json!({ "unload_models": true, "free_memory": true });
+        let _ = self.client.post(self.url("/free")).json(&body).send().await;
     }
 
     /// Выполняет workflow (формат API ComfyUI) и возвращает пути к готовым картинкам.
@@ -336,6 +341,8 @@ pub struct Txt2Img<'a> {
     pub cfg: f32,
     pub seed: u64,
     pub batch: u32,
+    pub sampler: &'a str,
+    pub scheduler: &'a str,
     pub prefix: &'a str,
 }
 
@@ -349,7 +356,7 @@ impl Txt2Img<'_> {
             "5": {"class_type": "KSampler", "inputs": {
                 "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0],
                 "seed": self.seed, "steps": self.steps, "cfg": self.cfg,
-                "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+                "sampler_name": self.sampler, "scheduler": self.scheduler, "denoise": 1.0}},
             "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
             "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0], "filename_prefix": self.prefix}},
         })
@@ -436,6 +443,8 @@ mod tests {
                 cfg: 7.0,
                 seed: rand_suffix() as u64 + run,
                 batch: 1,
+                sampler: "euler",
+                scheduler: "normal",
                 prefix: "Ollivo",
             }
             .workflow();
@@ -457,7 +466,8 @@ mod tests {
 
         // Ошибка в задаче — понятный текст, а не зависание.
         let bad = Txt2Img { checkpoint: "нет-такой.safetensors", ..Txt2Img {
-            checkpoint: "", prompt: "x", negative: "", width: 64, height: 64, steps: 1, cfg: 1.0, seed: 1, batch: 1, prefix: "x" } }
+            checkpoint: "", prompt: "x", negative: "", width: 64, height: 64, steps: 1, cfg: 1.0, seed: 1, batch: 1,
+            sampler: "euler", scheduler: "normal", prefix: "x" } }
         .workflow();
         let err = comfy.run(&bad, &c, &|_| {}).await.unwrap_err();
         println!("{err}");

@@ -75,6 +75,10 @@ pub mod secret {
     const SERVICE: &str = "Ollivo";
     pub const PROXY_PASSWORD: &str = "proxy";
     pub const HF_TOKEN: &str = "huggingface";
+    /// Постоянный ключ модели, открытой для других программ.
+    pub const SHARE_KEY: &str = "share-key";
+    /// Ключ чужого сервера с моделью.
+    pub const REMOTE_KEY: &str = "remote-key";
 
     pub fn load(name: &str) -> String {
         keyring::Entry::new(SERVICE, name).and_then(|e| e.get_password()).unwrap_or_default()

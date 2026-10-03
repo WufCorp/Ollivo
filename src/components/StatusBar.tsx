@@ -52,7 +52,8 @@ export default function StatusBar() {
         <i className={`light ${llm?.state === "ready" ? "green" : llm?.state === "crashed" ? "red" : llm?.state === "starting" ? "yellow" : "none"}`} />
         {on ? (
           <>
-            <b className="status-model">{modelName(llm.model!)}</b> {stateName(llm.state)}
+            <b className="status-model">{modelName(llm.model!)}</b> {llm.remote && `${t("на", "on")} ${llm.remote} `}
+            {stateName(llm.state)}
           </>
         ) : (
           t("Модель не запущена", "Model not running")

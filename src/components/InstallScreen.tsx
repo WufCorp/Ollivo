@@ -80,6 +80,8 @@ export default function InstallScreen({
   onStart,
   onPause,
   onLater,
+  tips,
+  extraSeconds = 0,
 }: {
   items: InstallItem[];
   started: boolean;
@@ -88,14 +90,19 @@ export default function InstallScreen({
   onStart: () => void;
   onPause: () => void;
   onLater?: () => void;
+  /** Свои подсказки на время установки; по умолчанию — про чат. */
+  tips?: string[];
+  /** Сколько идёт установка после скачивания (у картинок — пакеты, ~5 минут). */
+  extraSeconds?: number;
 }) {
   const [details, setDetails] = useState(false);
   const [hint, setHint] = useState(0);
+  const hintList = tips ?? hints();
 
   const running = items.some((i) => i.state === "active");
   useEffect(() => {
     if (!running) return;
-    const timer = setInterval(() => setHint((h) => (h + 1) % HINT_COUNT), 7000);
+    const timer = setInterval(() => setHint((h) => (h + 1) % (tips?.length ?? HINT_COUNT)), 7000);
     return () => clearInterval(timer);
   }, [running]);
 
@@ -126,7 +133,7 @@ export default function InstallScreen({
       <div className="card install">
         <p>
           {t("Скачаем", "We'll download")} <b>{formatBytes(need)}</b> — {t("обычно это", "usually that's")}{" "}
-          {formatEta(need / TYPICAL_SPEED)}.
+          {formatEta(need / TYPICAL_SPEED + extraSeconds)}.
         </p>
         <Steps items={items} />
         <div className="actions">
@@ -146,7 +153,10 @@ export default function InstallScreen({
       <Steps items={items} />
 
       <div className="install-total">
-        {connecting || active?.progress?.stage === "unpack" || (active && !active.progress?.total) ? (
+        {/* Python и пакеты: сколько их осталось, заранее не известно — полоса без конца. */}
+        {connecting ||
+        ["unpack", "python", "packages", "warmup"].includes(active?.progress?.stage ?? "") ||
+        (active && !active.progress?.total) ? (
           <progress />
         ) : (
           <progress max={total || 1} value={done} />
@@ -160,7 +170,7 @@ export default function InstallScreen({
 
       {error && <ErrorBox error={error} />}
 
-      {running && <p className="muted small hint">{hints()[hint]}</p>}
+      {running && <p className="muted small hint">{hintList[hint % hintList.length]}</p>}
 
       <div className="actions">
         {running && active?.progress?.stage === "download" && (

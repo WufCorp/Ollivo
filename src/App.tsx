@@ -9,17 +9,19 @@ import { openSupport } from "./support";
 import Catalog from "./pages/Catalog";
 import Chat from "./pages/Chat";
 import Computer from "./pages/Computer";
+import Images from "./pages/Images";
 import Models from "./pages/Models";
 import Settings from "./pages/Settings";
 import Wizard from "./pages/Wizard";
 import "./App.css";
 
-const TABS = ["chat", "catalog", "models", "computer", "settings"] as const;
+const TABS = ["chat", "images", "catalog", "models", "computer", "settings"] as const;
 type Tab = (typeof TABS)[number];
 
 const tabName = (tab: Tab) =>
   ({
     chat: t("Чат", "Chat"),
+    images: t("Картинки", "Images"),
     catalog: t("Каталог", "Catalog"),
     models: t("Модели", "Models"),
     computer: t("Компьютер", "Computer"),
@@ -28,6 +30,7 @@ const tabName = (tab: Tab) =>
 
 const TAB_ICONS: Record<Tab, IconName> = {
   chat: "chat",
+  images: "image",
   catalog: "catalog",
   models: "models",
   computer: "computer",
@@ -135,17 +138,23 @@ export default function App() {
           </div>
         )}
         <div className="content">
-          {tab === "chat" ? (
+          {/* Чат не размонтируется на других вкладках: ответ модели идёт, пока человек смотрит
+              «Компьютер», и не теряется (раньше вопрос пропадал, а ответ дописывался к прошлому). */}
+          <div style={{ display: tab === "chat" ? "contents" : "none" }}>
             <Chat
+              active={tab === "chat"}
               chatId={chatId}
-              onSaved={(c) => {
-                setChatId(c.id);
+              onSaved={(c, open) => {
+                if (open) setChatId(c.id);
                 setChatsKey((n) => n + 1);
               }}
               onGoToModels={() => setTab("models")}
               onGo={setTab}
               onNewChat={() => setChatId(null)}
             />
+          </div>
+          {tab === "chat" ? null : tab === "images" ? (
+            <Images onGo={setTab} />
           ) : tab === "catalog" ? (
             <Catalog onGoToChat={() => setTab("chat")} />
           ) : tab === "models" ? (

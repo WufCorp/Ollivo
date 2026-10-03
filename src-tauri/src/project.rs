@@ -609,7 +609,9 @@ pub fn undo(root: &Path, step: &Step, backups: &Path) -> Result<(), String> {
 pub enum Mode {
     /// «Вручную»: каждое создание, правку и удаление человек подтверждает.
     Ask,
-    /// «Авто»: модель меняет файлы сама; копии старых всё равно делаются.
+    /// «Авто»: модель создаёт и меняет файлы сама; копии старых всё равно делаются.
+    /// Удаление — всё равно с вопросом: документ в папке может подсказать модели
+    /// что-то удалить, а граница папки этого не остановит (отзыв, 2026-10-03).
     Auto,
     /// «План»: ничего не меняет — инструментов записи у модели просто нет.
     Plan,
@@ -813,12 +815,13 @@ impl Tools {
             ),
             (Mode::Auto, true) => t!(
                 "Поправить часть существующего файла — edit_file (точный кусок и на что его заменить), \
-                 создать файл или переписать целиком — write_file, удалить — delete_file. Изменения \
-                 применяются сразу, без подтверждения, — меняй только то, о чём просили. Запускать \
-                 программы ты не можешь.",
+                 создать файл или переписать целиком — write_file, удалить — delete_file. Создание \
+                 и правки применяются сразу, без подтверждения, — меняй только то, о чём просили. \
+                 Удаление пользователь подтверждает. Запускать программы ты не можешь.",
                 "To fix part of an existing file — edit_file (the exact piece and what to replace it with), \
-                 to create a file or rewrite it entirely — write_file, to delete — delete_file. Changes \
-                 apply at once, without confirmation — change only what was asked. You can't run programs."
+                 to create a file or rewrite it entirely — write_file, to delete — delete_file. Creating \
+                 and editing apply at once, without confirmation — change only what was asked. \
+                 The user confirms deletion. You can't run programs."
             ),
         };
         let how = format!("{see} {change}");
@@ -910,7 +913,8 @@ impl Tools {
         (res.unwrap_or_else(|e| tf!("Ошибка: {e}", "Error: {e}")), step)
     }
 
-    /// Записать или удалить файл — в «Вручную» после согласия человека. `kind` — `write`
+    /// Записать или удалить файл. Запись — в «Вручную» после согласия человека, удаление —
+    /// всегда после него. `kind` — `write`
     /// (целиком), `edit` (кусок: `change` — было и стало, для карточки) или `delete`
     /// (`content` — `None`); у записи `content` — всегда файл целиком.
     async fn save(&self, kind: &str, path: String, content: Option<String>, change: Option<(String, String)>) -> (String, Step) {
@@ -925,7 +929,7 @@ impl Tools {
         if content.is_none() && old.is_none() {
             return fail(no_file(&path));
         }
-        if self.mode == Mode::Ask {
+        if self.mode == Mode::Ask || content.is_none() {
             let ask = WriteAsk {
                 kind: kind.into(),
                 path: path.clone(),
@@ -1175,18 +1179,26 @@ mod tests {
         assert_eq!(encode_like(None, "a\r\nb"), b"a\nb");
     }
 
-    /// «Авто» не спрашивает, «План» не даёт инструментов записи и не пишет даже по выдуманному вызову.
+    /// «Авто» пишет без вопроса, но удаляет только с согласия; «План» не даёт инструментов
+    /// записи и не пишет даже по выдуманному вызову.
     #[tokio::test]
     async fn modes_auto_and_plan() {
         let names = |t: &Tools| t.specs().as_array().unwrap().iter().map(|s| s["function"]["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         let never: AskWrite = Arc::new(|_| panic!("в этом режиме спрашивать нельзя"));
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let a = asked.clone();
+        let refuse: AskWrite = Arc::new(move |w| {
+            a.lock().unwrap().push(format!("{} {}", w.kind, w.path));
+            Box::pin(async { false })
+        });
         let root = tmp("modes");
         put(&root, "a.txt", "1\n");
-        let auto = Tools::new(list(&root).unwrap(), 4096, tmp("modes-backups"), Mode::Auto, never.clone());
+        let auto = Tools::new(list(&root).unwrap(), 4096, tmp("modes-backups"), Mode::Auto, refuse);
         assert!(names(&auto).contains(&"delete_file".to_string()));
         assert_eq!(auto.call("write_file", r#"{"path":"b.txt","content":"2"}"#).await.0, "Файл сохранён.");
-        assert_eq!(auto.call("delete_file", r#"{"path":"a.txt"}"#).await.0, "Файл удалён.");
-        assert!(!root.join("a.txt").exists() && root.join("b.txt").exists());
+        assert!(auto.call("delete_file", r#"{"path":"a.txt"}"#).await.0.contains("не разрешил"));
+        assert!(root.join("a.txt").exists() && root.join("b.txt").exists());
+        assert_eq!(*asked.lock().unwrap(), ["delete a.txt"], "спросили только про удаление");
 
         let plan = Tools::new(list(&root).unwrap(), 4096, tmp("modes-backups"), Mode::Plan, never);
         assert_eq!(names(&plan), ["read_file", "list_files", "search_files"]);

@@ -492,6 +492,7 @@ mod tests {
                 vram_free: v * GIB - GIB / 2,
                 cc: (6, 1),
                 vram_bw: 320_000_000_000,
+                compute_only: false,
             }),
             driver: String::new(),
             cuda_driver: 0,

@@ -17,6 +17,7 @@ import {
 } from "../api";
 import Fit, { Light } from "../components/Fit";
 import License from "../components/License";
+import RemoteForm from "../components/RemoteForm";
 import RunningModel from "../components/RunningModel";
 import { decimal, t } from "../i18n";
 
@@ -171,6 +172,8 @@ export default function Models({
           </div>
         </div>
       )}
+
+      <RemoteForm />
 
       <RunningModel onGoToChat={onGoToChat} onGo={onGo} onRemoved={refresh} />
 
